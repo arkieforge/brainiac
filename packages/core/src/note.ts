@@ -56,14 +56,23 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
-    // Front-matter is stored as JSON, and must survive it unchanged: an alias that contains itself
-    // (`a: &a [*a]`) can't be stored, nor can .inf or .nan. A `__proto__` key reads as an object's prototype in
-    // most code that touches it, so no field may have that name.
+    // Front-matter is stored as JSON and judged on that copy (approvals compare and sign it), so it must survive
+    // JSON unchanged: anything JSON would lose or blur is refused. An alias that contains itself (`a: &a [*a]`)
+    // can't be stored. A `__proto__` key reads as an object's prototype in most code that touches it.
     JSON.stringify(data, (key, value: unknown) => {
       if (key === "__proto__") throw new Error("__proto__ can't be a field name.");
-      // JSON would store .inf and .nan as null, so a change between them would go unseen.
+      // .inf and .nan would be stored as null.
       if (typeof value === "number" && !Number.isFinite(value))
         throw new Error(`${key} must be a finite number.`);
+      // Past 2^53 two different integers store as one number.
+      if (Number.isInteger(value) && !Number.isSafeInteger(value))
+        throw new Error(`${key} is too long for a number: quote it.`);
+      // !!omap and !!set read as a Map or a Set, which JSON stores as {}.
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const proto: unknown = Object.getPrototypeOf(value);
+        if (proto !== Object.prototype && proto !== null)
+          throw new Error(`${key} must be a plain mapping, list or value.`);
+      }
       return value;
     });
   } catch (error) {

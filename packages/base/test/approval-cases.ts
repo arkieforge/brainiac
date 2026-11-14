@@ -5,6 +5,7 @@
 import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 
 import {
+  findClash,
   parseNote,
   resolveRelation,
   ulid,
@@ -124,12 +125,13 @@ function verifiedSet(sql: Sql) {
     "SELECT id, path, fm FROM notes WHERE deletedAt IS NULL ORDER BY id",
   );
   const checked = notes.filter(({ fm }) => Object.hasOwn(JSON.parse(fm), "verified"));
-  const paths = new Set(checked.map((note) => note.path));
+  const paths = checked.map((note) => note.path);
   const supersede = notes.flatMap(({ id, path, fm }) => {
     const target: unknown = JSON.parse(fm)["supersedes"];
     if (typeof target !== "string") return [];
     try {
-      return paths.has(resolveRelation(path, target)) ? [[id, target]] : [];
+      // Matched as the record matches paths, whatever their case.
+      return findClash(paths, resolveRelation(path, target)) === undefined ? [] : [[id, target]];
     } catch {
       return [];
     }
@@ -475,6 +477,26 @@ export const approvalCases: Record<string, Case> = {
     }
   },
 
+  "front-matter refuses what JSON would blur: tagged collections and integers past 2^53": (sql, fixtures) => {
+    const { tum } = record(sql, fixtures);
+    const note = getNote(sql, tum);
+    ok(note);
+    for (const value of ["!!omap [{writing: 7.5}]", "!!set {a, b}", "2612345678901234567"]) {
+      const text: string = note.raw.replace("status: preparing", `status: preparing\nscore: ${value}`);
+      equal(
+        mutate(sql, { op: "put", noteId: tum, baseRev: note.rev, raw: text }, agent()).status,
+        "invalid",
+        value,
+      );
+    }
+    // Quoted, the long number is text, and kept exactly.
+    const quoted: string = note.raw.replace(
+      "status: preparing",
+      'status: preparing\nscore: "2612345678901234567"',
+    );
+    applied(mutate(sql, { op: "put", noteId: tum, baseRev: note.rev, raw: quoted }, agent()));
+  },
+
   "adding, removing or redirecting an edge into a verified note is held, whatever the path's case": (
     sql,
     fixtures,
@@ -549,7 +571,7 @@ export const approvalCases: Record<string, Case> = {
     let round = 0;
     const actions = fc.array(
       fc.record({
-        target: fc.constantFrom("ielts", "tum"),
+        target: fc.constantFrom("ielts", "tum", "bridge"),
         actor: fc.constantFrom("human", "connection:agent", "client:laptop"),
         grant: fc.constantFrom(
           "none",
@@ -632,7 +654,11 @@ export const approvalCases: Record<string, Case> = {
       fc.property(actions, (steps) => {
         // Each run gets its own folder and ids in the one database: earlier runs' notes must hold too.
         const dir = `r${++round}/`;
-        const ids = { ielts: ulid(T0 + round * 2), tum: ulid(T0 + round * 2 + 1) };
+        const ids = {
+          ielts: ulid(T0 + round * 3),
+          tum: ulid(T0 + round * 3 + 1),
+          bridge: ulid(T0 + round * 3 + 2),
+        };
         const ieltsRaw = raw(fixtures, IELTS).replace(/^id: .*$/m, `id: ${ids.ielts}`);
         const tumRaw = raw(fixtures, TUM).replace(/^id: .*$/m, `id: ${ids.tum}`);
         const ieltsPath = `${dir}${IELTS}`;
@@ -662,6 +688,26 @@ export const approvalCases: Record<string, Case> = {
         );
         applied(
           mutate(sql, { op: "create", path: `${dir}${TUM}`, raw: tumRaw, class: "normal" }, human(LATER)),
+        );
+        // An unverified note with an edge into the verified 2025 score (by another case of its path), approved:
+        // removing or moving the edge changes which verified score is current.
+        withApproval(
+          sql,
+          {
+            op: "create",
+            path: `${dir}facts/tests/bridge.md`,
+            raw: [
+              "---",
+              `id: ${ids.bridge}`,
+              "type: TestScore",
+              "overall: 6",
+              "supersedes: IELTS-2025-03.md",
+              "---",
+              "",
+            ].join("\n"),
+            class: "sensitive",
+          },
+          human(LATER),
         );
         const runs = [created.runId];
         // Grants an actor without the person's passkey can hold: none of them is for what it is doing.
