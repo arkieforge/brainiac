@@ -54,19 +54,23 @@ const authConfig = (request: Request, env: Env, database: AuthConfig["database"]
   github: oauthApp(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
 });
 
-/** Auth's config per request, over a pool Hyperdrive backs (it keeps the real connections warm). */
+/**
+ * Auth's config per request, over a pool Hyperdrive backs (it keeps the real connections warm). `keepOpen` hands
+ * over work that may still use the pool after the response; the pool ends once it settles.
+ */
 async function withAuthConfig(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
-  use: (config: AuthConfig) => Promise<Response>,
+  use: (config: AuthConfig, keepOpen: (work: Promise<unknown>) => void) => Promise<Response>,
 ): Promise<Response> {
   // Up to 5, because Better Auth runs some queries beside an open transaction.
   const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 5 });
+  const pending: Promise<unknown>[] = [];
   try {
-    return await use(authConfig(request, env, pool));
+    return await use(authConfig(request, env, pool), (work) => pending.push(work));
   } finally {
-    ctx.waitUntil(pool.end());
+    ctx.waitUntil(Promise.allSettled(pending).then(() => pool.end()));
   }
 }
 
@@ -75,7 +79,17 @@ const withAuth = (
   env: Env,
   ctx: ExecutionContext,
   use: (auth: ReturnType<typeof createAuth>) => Promise<Response>,
-) => withAuthConfig(request, env, ctx, (config) => use(createAuth(config)));
+) =>
+  withAuthConfig(request, env, ctx, (config, keepOpen) => {
+    const auth = createAuth(config);
+    // Better Auth starts its setup (seeding the /mcp resource) as soon as it's made; a quick answer, like /mcp's
+    // 401, mustn't end the pool under it.
+    // shortcut: the seed's read is one Neon round trip that every request reaching a Better Auth handler waits for
+    // (Better Auth awaits plugin setup before any handler), because its "done" mark is per Better Auth instance and a Worker can't keep a pool
+    // across requests; upgrade when Better Auth can skip the seed or remember it per isolate (#83).
+    keepOpen(auth.$context);
+    return use(auth);
+  });
 
 async function account(request: Request, auth: ReturnType<typeof createAuth>): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
