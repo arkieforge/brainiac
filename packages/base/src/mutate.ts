@@ -397,8 +397,8 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       if (Object.keys(clash.fields).length > 0 || body) propose(note.id, { ...clash, ...(body && { body }) });
     }
 
-    // A conflict whose target is where the note already is (undoing twice, or a run that created and deleted
-    // a note) asks nothing of the person and is dropped.
+    // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
+    // and is dropped.
     const conflicts: UndoConflict[] = [];
     for (const [noteId, p] of pending) {
       const same = <T>(c: Change<T>) =>
