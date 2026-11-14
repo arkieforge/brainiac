@@ -1,8 +1,9 @@
 // Dev sign-in, Brainiac's version of T3 Code's reusable dev credential. A stage that has DEV_SIGN_IN_TOKEN
 // (Doppler `dev` only) signs whoever holds it in as the fictional fixture student, with no email code or passkey:
 //   /dev/sign-in[?as=<tag>][&next=/path]#token=<t>   a link to open once per browser. The token rides in the
-//     fragment, which browsers never send, so it stays out of request logs and history: the page reads it and
-//     POSTs it back in a header, and the answer sets the session cookie.
+//     fragment, which browsers never send, so request logs never see it: the page reads it, drops it from the
+//     address bar, POSTs it back in a header, and the answer sets the session cookie. The browser's own history list
+//     may still keep the link as opened, so treat it like a password.
 //   POST /dev/token[?as=<tag>], `authorization: Bearer <t>`   an access token for /mcp, for agents and scripts
 // `as` signs in a separate fixture account (ada.okafor+<tag>@example.edu), so an e2e run starts from a new one.
 // `vp run dev:sign-in` and `vp run dev:token` build these for a stage. Never on prod: alchemy.run.ts doesn't bind the
@@ -52,7 +53,7 @@ const landing = (next: string | null, origin: string) => {
   return target?.origin === origin ? target.href : `${origin}/account`;
 };
 
-// Moves the fragment's token into a header, drops it from the address bar and history, then follows the answer.
+// Moves the fragment's token into a header, drops it from the address bar, then follows the answer.
 const SIGN_IN_PAGE = `<!doctype html><meta charset="utf-8"><title>Dev sign-in · Brainiac</title><p id="status">Signing in…</p>
 <script>
 const token = new URLSearchParams(location.hash.slice(1)).get("token") ?? "";

@@ -38,7 +38,10 @@ describe("worker", () => {
   it("has no dev sign-in on prod, even with a token bound", async () => {
     const env = { STAGE: "prod", DEV_SIGN_IN_TOKEN: "t" } as Env;
     const res = await worker.fetch(
-      new Request("https://brainiac.test/dev/sign-in?token=t"),
+      new Request("https://brainiac.test/dev/sign-in", {
+        method: "POST",
+        headers: { authorization: "Bearer t" },
+      }),
       env,
       {} as ExecutionContext,
     );

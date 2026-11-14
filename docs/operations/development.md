@@ -80,8 +80,8 @@ on by `DEV_SIGN_IN_TOKEN` in Doppler `dev`, the way T3 Code's reusable dev crede
   authenticator (DevTools → More tools → WebAuthn) or a real one; on a fresh `--as` account the first one can
   approve at once, as on any new account. `vp run e2e` does this on its own.
 
-The token rides in the link's `#fragment`, which the browser never sends, so it stays out of request logs and
-history; still, treat the link like a password and never paste one into an issue, PR or chat. Prod has none: the
+The token rides in the link's `#fragment`, which the browser never sends, so request logs never see it, and the
+page drops it from the address bar. Your browser's own history may still keep the link, so treat it like a password and never paste one into an issue, PR or chat. Prod has none: the
 token is never bound there, the Worker refuses `/dev/` on prod anyway, and the deploy doctor fails if the prod
 Worker ever has it bound.
 
