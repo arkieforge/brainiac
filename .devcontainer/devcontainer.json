@@ -1,0 +1,22 @@
+// Dev container for Brainiac. Mirrors CI: Ubuntu 24.04, Node 26, Vite+ (`vp`), GitHub CLI.
+// Guide: docs/operations/development.md
+{
+  "name": "Brainiac",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "26" },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "mounts": [
+    // Keep the pnpm store and node_modules off the slow host bind mount and across rebuilds.
+    "source=brainiac-pnpm-store,target=/home/vscode/.cache/pnpm,type=volume",
+    "source=brainiac-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume"
+  ],
+  "onCreateCommand": "bash .devcontainer/on-create.sh",
+  "updateContentCommand": "vp i",
+  "customizations": {
+    "vscode": {
+      "extensions": ["oxc.oxc-vscode", "TypeScriptTeam.native-preview", "effectful-tech.effect-vscode"]
+    }
+  }
+}

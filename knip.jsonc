@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of our contracts before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
+  "workspaces": {
+    ".": {
+      // alchemy.run.ts is loaded by the alchemy CLI; scripts run from package.json and t3.json.
+      "entry": ["alchemy.run.ts", "scripts/*.ts"],
+      "project": ["*.ts", "scripts/**/*.ts"],
+      // Loaded as a tsconfig plugin, so no import references it.
+      "ignoreDependencies": ["@effect/language-service"],
+    },
+    // workers-types is loaded through tsconfig "types".
+    "apps/worker": { "entry": ["src/index.ts"], "ignoreDependencies": ["@cloudflare/workers-types"] },
+  },
+}

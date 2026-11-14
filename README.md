@@ -8,8 +8,8 @@ to the site, phones and any laptop that keeps a local copy, and people manage it
 already use (Claude Code, claude.ai, T3 Code) through MCP. Brainiac runs no model of its own and needs no
 API key.
 
-- **Plan**: [`docs/plan.html`](docs/plan.html) (open it in a browser). "The contract" section wins over
-  everything else.
+- **Docs**: [`docs/`](docs/README.md): product, internals, operations. [The contract](docs/internals/contract.md)
+  wins over everything else.
 - **Tracker**: issues grouped by milestone (M0 record + sync, M1 retrieval + filing + trust,
   M2 applications, M3 hands-off) with an epic per milestone.
 - **Stack**: Cloudflare Workers, Durable Objects (one per record, SQLite), R2, Queues and Workflows; Neon;
@@ -18,9 +18,10 @@ API key.
 ## Develop
 
 ```sh
-pnpm install
-pnpm lint && pnpm typecheck && pnpm test
-pnpm dev        # local stack via Alchemy (needs Cloudflare credentials for remote-only resources)
+vp i              # install (Vite+ on pnpm 12) and git hooks
+vp run doctor     # check your machine
+vp check && vp test run && vp run typecheck
+vp run dev        # local stack via Alchemy
 ```
 
 See [`AGENTS.md`](AGENTS.md) for commands and rules, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the

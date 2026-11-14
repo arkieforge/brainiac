@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="background:#000" viewBox="0 0 1000 400" width="100%" role="img" aria-label="Knowledge graph example: the TUM application in the center links to the transcript document, the IELTS score, a letter (status) written by Dr Okafor, the SOP draft, and a missing APS certificate. The transcript proves the BSc education fact; the SOP cites a project and a paper.">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a8a"/></marker></defs>
+  <g stroke="#8a8a8a" stroke-width="1.3" fill="none" marker-end="url(#ar2)">
+    <line x1="232" y1="92" x2="392" y2="178"/>
+    <line x1="232" y1="200" x2="388" y2="200"/>
+    <line x1="232" y1="310" x2="392" y2="222"/>
+    <line x1="728" y1="202" x2="610" y2="202"/>
+    <line x1="728" y1="306" x2="610" y2="226"/>
+    <line x1="140" y1="72" x2="140" y2="42"/>
+    <line x1="820" y1="180" x2="820" y2="112"/>
+  </g>
+  <line x1="608" y1="172" x2="726" y2="38" stroke="#f0524f" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <g font-size="11" fill="#8a8a8a">
+    <text x="262" y="122">meets</text><text x="290" y="194">meets</text><text x="262" y="282">meets</text>
+    <text x="640" y="194">meets</text><text x="640" y="282">meets</text><text x="150" y="58">proves</text>
+    <text x="830" y="148">cites</text>
+  </g>
+  <text x="680" y="122" font-size="11" fill="#f0524f">missing</text>
+  <rect x="392" y="170" width="216" height="60" fill="#1a1400" stroke="#ffb000"/>
+  <text x="404" y="194" fill="#ffb000" font-size="13">Application</text><text x="404" y="214" fill="#fff" font-size="12">TUM MSc Informatics 2027</text>
+  <rect x="48" y="72" width="184" height="44" fill="#111" stroke="#444"/><text x="60" y="92" fill="#a3a3a3" font-size="11">Document</text><text x="60" y="108" fill="#fff" font-size="12">BSc transcript</text>
+  <rect x="48" y="6" width="184" height="34" fill="#111" stroke="#444"/><text x="60" y="28" fill="#fff" font-size="12">Education: BSc Northvale</text>
+  <rect x="48" y="178" width="184" height="44" fill="#111" stroke="#444"/><text x="60" y="198" fill="#a3a3a3" font-size="11">TestScore</text><text x="60" y="214" fill="#fff" font-size="12">IELTS 7.5 (exp 2027-03)</text>
+  <rect x="48" y="288" width="184" height="44" fill="#111" stroke="#444"/><text x="60" y="308" fill="#a3a3a3" font-size="11">Letter (status)</text><text x="60" y="324" fill="#fff" font-size="12">Dr Okafor for TUM</text>
+  <rect x="48" y="356" width="184" height="34" fill="#111" stroke="#444"/><text x="60" y="378" fill="#fff" font-size="12">Referee: Dr Okafor</text>
+  <line x1="140" y1="332" x2="140" y2="354" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ar2)"/><text x="150" y="348" font-size="11" fill="#8a8a8a">written_by</text>
+  <rect x="728" y="180" width="200" height="44" fill="#111" stroke="#444"/><text x="740" y="200" fill="#a3a3a3" font-size="11">Draft</text><text x="740" y="216" fill="#fff" font-size="12">SOP v3 (980 words)</text>
+  <rect x="728" y="70" width="200" height="40" fill="#111" stroke="#444"/><text x="740" y="88" fill="#fff" font-size="12">Project: seat finder</text><text x="740" y="103" fill="#a3a3a3" font-size="11">+ Paper: Swahili NER</text>
+  <rect x="728" y="290" width="200" height="44" fill="#111" stroke="#444"/><text x="740" y="310" fill="#a3a3a3" font-size="11">Draft</text><text x="740" y="326" fill="#fff" font-size="12">CV tailored v2</text>
+  <rect x="728" y="6" width="200" height="40" fill="none" stroke="#f0524f" stroke-dasharray="5 4"/><text x="740" y="31" fill="#f0524f" font-size="12">APS certificate (none)</text>
+</svg>
