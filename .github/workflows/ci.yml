@@ -14,25 +14,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Runners: GitHub's own, free and unlimited on a public repo. Blacksmith (installed on the org, 3,000 free
+  # minutes) was measured on the deploy and lost: 11s queue vs 3s, same setup and deploy time, since these
+  # jobs wait on the network, not the CPU. Set the RUNNER repo variable (e.g. blacksmith-2vcpu-ubuntu-2404)
+  # to move every job there if a CPU-heavy job ever lands.
+  # Every job stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
+  # One job per check, all in parallel, so the slowest check sets the wall time and a failure names itself.
   check:
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.name }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Format and lint
+            run: vp check
+          - name: Typecheck
+            run: vp run typecheck
+          - name: Test
+            run: vp test run
+          - name: Unused code
+            run: knip
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      - name: Format and lint
-        run: pnpm exec vp check
-      - name: Typecheck
-        run: pnpm run typecheck
-      - name: Test
-        run: pnpm exec vp test run
-      - name: Unused files, exports and dependencies
-        run: pnpm exec knip
+      - run: ${{ matrix.run }}
 
-  # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive.
+  # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive. It runs beside the
+  # checks rather than after them, so the preview is up as soon as possible.
   # Fork PRs get no secrets, so only same-repo PRs deploy. preview-cleanup.yml destroys it on close.
   preview:
+    name: Deploy preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -44,12 +60,14 @@ jobs:
           stage: pr-${{ github.event.pull_request.number }}
           doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
 
-  # Prod deploys only from here, after the checks pass. The prd token lives in the production environment,
+  # Prod deploys only from here, after every check passes. The prd token lives in the production environment,
   # which only main can use.
   prod:
+    name: Deploy prod
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
     environment: production
     concurrency:
       group: deploy-prod

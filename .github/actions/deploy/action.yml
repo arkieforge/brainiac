@@ -21,7 +21,7 @@ runs:
       run: |
         set -o pipefail
         status=0
-        pnpm run deploy --stage "$STAGE" 2>&1 | tee deploy.log || status=$?
+        doppler run -- alchemy deploy --stage "$STAGE" 2>&1 | tee deploy.log || status=$?
         {
           echo "### Stage \`$STAGE\`"
           echo '```'
