@@ -72,7 +72,8 @@ Settings for this repo, which the skills read from here:
   [`test-brainiac`](.agents/skills/test-brainiac/SKILL.md). Its table maps each kind of change to the
   command and evidence that prove it. Minimum: `vp check && vp run typecheck && vp test run && vp run knip`.
 - **Council**: the newest Claude Opus, GPT Sol and Gemini Pro at high effort. If a provider isn't
-  available, report it; don't substitute. Stop at 9.5 from every member.
+  available, report it; don't substitute. Stop at 9.5 from every member. Issues labelled `council` run
+  the council skill to 9.5 before the PR; others use `sol-loop`.
 - **PRs** (`file-pr`): conventional titles, the problem first, how it was proved. No AI attribution lines.
 - **Merging**: squash. `main` has no branch protection yet, so CI green plus the merge gate in `full-send`
   is the bar.

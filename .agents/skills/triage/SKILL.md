@@ -19,6 +19,9 @@ For each open issue without a milestone, or the ones named:
 2. Look for duplicates (`gh issue list --search "<key words>" --state all`). Close a duplicate with a link to
    the original and a one-line reason.
 3. Set labels and milestone: `gh issue edit <n> --add-label area:sync,type:feature --milestone "M0 Record + sync"`.
+   Add `council` when it touches security, auth, sync or retrieval (`area:security`, `area:auth`,
+   `area:sync`, `area:rag`), and give its brief a `## Review` section saying to run the `council` skill
+   until every member scores 9.5/10 before filing the PR.
 4. Link a feature to its epic as a sub-issue:
    `gh api -X POST repos/arkieforge/brainiac/issues/<epic>/sub_issues -F sub_issue_id=$(gh api repos/arkieforge/brainiac/issues/<n> --jq .id)`.
 5. Make it a brief: every feature issue needs Goal, What ships, Out of scope, Where, Depends on, Done when
