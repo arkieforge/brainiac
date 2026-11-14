@@ -8,6 +8,12 @@ import { serveMcp } from "./mcp/handler.ts";
 const ORIGIN = "https://brainiac.test";
 const TOKEN = "a-dev-sign-in-token-for-tests";
 
+/** Where the sign-in answer sends the page. */
+const landsOn = async (res: Response) => {
+  const body: unknown = await res.json();
+  return body && typeof body === "object" && "location" in body ? body.location : undefined;
+};
+
 function setup() {
   const config: AuthConfig = {
     database: memoryAdapter({
@@ -43,16 +49,12 @@ function setup() {
     const session = await auth.api.getSession({ headers: new Headers({ cookie }) });
     return session?.user.email;
   };
-  const landsOn = async (res: Response) => {
-    const body: unknown = await res.json();
-    return body && typeof body === "object" && "location" in body ? body.location : undefined;
-  };
-  return { config, auth, signIn, whoIs, landsOn };
+  return { config, auth, signIn, whoIs };
 }
 
 describe("dev sign-in", () => {
   it("signs the holder of the token in as the fixture student", async () => {
-    const { signIn, whoIs, landsOn } = setup();
+    const { signIn, whoIs } = setup();
     const res = await signIn("");
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toMatch(/HttpOnly.*Secure.*Max-Age=\d+/);
@@ -82,7 +84,7 @@ describe("dev sign-in", () => {
   });
 
   it("only lands within the site", async () => {
-    const { signIn, landsOn } = setup();
+    const { signIn } = setup();
     expect(await landsOn(await signIn("next=/consent?x=1"))).toBe(`${ORIGIN}/consent?x=1`);
     for (const next of [
       "//evil.example/",
