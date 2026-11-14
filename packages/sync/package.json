@@ -3,17 +3,22 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p .",
     "test": "vp test run --dir ."
   },
   "dependencies": {
+    "@brainiac/base": "workspace:*",
     "@brainiac/core": "workspace:*"
   },
   "devDependencies": {
-    "@brainiac/base": "workspace:*",
-    "fast-check": "4.10.2"
+    "@types/bun": "1.4.4",
+    "bun": "1.4.4",
+    "fake-indexeddb": "6.2.7",
+    "fast-check": "4.10.2",
+    "happy-dom": "21.0.4"
   }
 }

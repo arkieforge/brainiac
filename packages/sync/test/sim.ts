@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { patch, type ClientMessage, type ServerMessage } from "@brainiac/core";
 import { getNote, migrate, mutate, serve, type NoteRow, type Sql, type SqlValue } from "@brainiac/base";
 
-import { emptyState, SyncClient, type State } from "../src/index.ts";
+import { emptyState, SyncClient, type State, type Store } from "../src/index.ts";
 
 function nodeSql(db: DatabaseSync): Sql {
   const statements = new Map<string, ReturnType<DatabaseSync["prepare"]>>();
@@ -54,23 +54,30 @@ export class World {
   }
 
   /** A note made directly in the record, as the site would. */
-  seed(id: string, path: string, body = "## Log\n\nstart\n"): void {
+  seed(id: string, path: string, body = "## Log\n\nstart\n", cls: "normal" | "sensitive" = "normal"): void {
     const raw = `---\nid: ${id}\ntype: Note\ntitle: "${path}"\n---\n${body}`;
-    mutate(this.sql, { op: "create", path, raw, class: "normal" }, { actor: "site", now: this.#now });
+    mutate(this.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: this.#now });
   }
 
-  /** A device starting from `state` (fresh, or a copy of another's). */
-  device(name: string, state: State = emptyState(this.newClientId())): Device {
+  /** A device starting from `state` (fresh, or a copy of another's), writing to `store` if given. */
+  device(name: string, state: State = emptyState(this.newClientId()), store?: Store): Device {
     const link: Link = { up: [], down: [], connected: false };
     const client = new SyncClient(state, {
       send: (message) => link.connected && link.up.push(message),
       newClientId: () => this.newClientId(),
       schemaVersion: 1,
       appVersion: "test",
+      ...(store && { store }),
     });
     const device = { name, client, link };
     this.devices.push(device);
     return device;
+  }
+
+  /** The app closes and starts again: `device` is gone, with whatever it had in flight, and a new one loads `store`. */
+  async restart(device: Device, store: Store): Promise<Device> {
+    this.retire(device);
+    return this.device(device.name, (await store.load()) ?? emptyState(this.newClientId()), store);
   }
 
   /** Takes a device off the network for good (replaced by a restored copy). */

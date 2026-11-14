@@ -8,3 +8,4 @@ export {
   type Remote,
   type State,
 } from "./client.ts";
+export { sqlStore, type Saved, type Store, type Write } from "./store.ts";
