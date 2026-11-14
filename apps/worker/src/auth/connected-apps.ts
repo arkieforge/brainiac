@@ -84,11 +84,14 @@ export const connectedApps = () =>
             { field: "clientId", operator: "in", value: consents.map((c) => c.clientId) },
           ]);
           const names = new Map(clients.map((c) => [c.clientId, c.name ?? undefined]));
-          return consents.map((c) => ({
-            clientId: c.clientId,
-            name: names.get(c.clientId),
-            connectedAt: c.createdAt,
-          }));
+          // Newest first; pages come in id order, which is random.
+          return consents
+            .map((c) => ({
+              clientId: c.clientId,
+              name: names.get(c.clientId),
+              connectedAt: new Date(c.createdAt),
+            }))
+            .toSorted((a, b) => b.connectedAt.getTime() - a.connectedAt.getTime());
         },
       ),
       disconnectApp: createAuthEndpoint("/connected-apps/disconnect", { method: "POST" }, async (ctx) => {

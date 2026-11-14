@@ -810,7 +810,7 @@ describe("MCP clients", () => {
     expect(issued).toMatchObject({ status: 400, body: { error: "invalid_target" } });
   });
 
-  it("lists every connected app, past the adapter's 100-row default", async () => {
+  it("lists every connected app, newest first, past the adapter's 100-row default", async () => {
     const ctx = setup();
     network(() => Response.json(metadata));
     const { tab } = await connect(ctx);
@@ -823,7 +823,8 @@ describe("MCP clients", () => {
           clientId: `https://app-${i}.example/client.json`,
           userId,
           scopes: ["openid"],
-          createdAt: new Date(),
+          // Connected before the real client, a minute apart.
+          createdAt: new Date(Date.now() - (i + 1) * 60_000),
           updatedAt: new Date(),
         },
       });
@@ -832,9 +833,13 @@ describe("MCP clients", () => {
     expect(
       Array.isArray(listed) && new Set(listed.map((app: { clientId: string }) => app.clientId)).size,
     ).toBe(101);
-    expect(listed).toContainEqual(
-      expect.objectContaining({ clientId: CLIENT_ID, name: "Example MCP client" }),
-    );
+    expect(Array.isArray(listed) && listed[0]).toMatchObject({
+      clientId: CLIENT_ID,
+      name: "Example MCP client",
+    });
+    expect(Array.isArray(listed) && listed.at(-1)).toMatchObject({
+      clientId: "https://app-99.example/client.json",
+    });
   });
 
   it("refuses tokens for a grant whose consent is gone, as when a refresh races a disconnect", async () => {
