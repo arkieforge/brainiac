@@ -22,7 +22,7 @@ Target, to confirm with real usage: infrastructure cost well under $0.25 per act
 | First screen (returning user)                       | < 300 ms, from IndexedDB | Playwright trace on a preview stage, every PR |
 | Edit on site → other tab / phone                    | < 300 ms                 | Sync e2e with two browsers                    |
 | Edit on site → file on a laptop                     | < 1 s                    | Sync e2e with a simulated daemon              |
-| MCP `query` / `get` / `related`, warm DO            | < 80 ms server time      | Bench in the Workers test pool                |
+| MCP `query` / `get` / `related`, warm DO            | < 80 ms server time      | Bench in workerd (Miniflare)                  |
 | MCP `search` / `ask context`, warm                  | < 150 ms                 | Bench on the fixture and a 20k-chunk record   |
 | Same, cold DO (after hibernation, vectors reloaded) | < 600 ms                 | Bench with forced eviction                    |
 | Upload → searchable (10-page PDF)                   | < 20 s                   | Ingest test                                   |
@@ -31,7 +31,7 @@ Target, to confirm with real usage: infrastructure cost well under $0.25 per act
 
 - **Unit**: `packages/core` (schema, merges, filter compiler, chunker, YAML patching), `packages/base` (SQL and migrations on both bun:sqlite and the DO).
 - **Property tests** (fast-check): random edits across 3 simulated clients with disconnects and offline periods always converge with nothing lost; random filters return the same rows locally and in the DO; a YAML or body edit leaves every byte outside the edited node unchanged; and the **approval invariant**: random sequences of update, delete, undo, move, type change, schema change and superseding create from actors without an approval never change a verified value or the verified set, and never escape the hold.
-- **DO integration** in the Workers test pool: protocol, high-water marks, client reset, jobs outbox, migrations, scopes, approvals, hibernation.
+- **DO integration** in workerd through Miniflare (`apps/worker/test`; Cloudflare's vitest pool needs vitest 4): protocol, high-water marks, client reset, jobs outbox, migrations, scopes, approvals, hibernation.
 - **End to end** on an Alchemy preview stage per PR (its own Neon branch): sign-up with a passkey, import, edit, approve, a web edit reaching a laptop file, an offline conflict, a blocked local edit.
 - **Real filesystem**: the daemon's file adapter runs against real editors' save patterns (atomic rename, in-place write) with concurrent saves interleaved at every step of the swap, on macOS and Linux in M0 and Windows in M1.
 - **Chaos**: kill a DO mid-write, drop and reorder messages, a laptop offline for 100 days, a cloned vault, a machine restored from a week-old backup, a deleted vault.

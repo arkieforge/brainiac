@@ -1,3 +1,6 @@
+import { splitNote } from "@brainiac/core";
+
+import type { NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 /** Chunks never mix privacy classes: each family has its own FTS table. */
@@ -17,10 +20,11 @@ export interface ChunkInput {
 }
 
 /**
- * Replaces every chunk of a note, in both families, with `chunks` for revision `rev`. Removing the old
- * ones from both families is what makes a note that turned sensitive leave the normal index at once.
+ * Replaces every chunk of a note, in both families, with `chunks` for revision `rev`; the old chunks'
+ * vectors go with them. Removing the old ones from both families is what makes a note that turned sensitive leave the normal index at once.
  */
 export function putChunks(sql: Sql, noteId: string, rev: number, chunks: readonly ChunkInput[]): void {
+  sql.all("DELETE FROM vectors WHERE chunkId IN (SELECT id FROM chunks WHERE noteId = ?)", noteId);
   for (const table of Object.values(FTS)) {
     sql.all(`DELETE FROM ${table} WHERE rowid IN (SELECT id FROM chunks WHERE noteId = ?)`, noteId);
   }
@@ -74,4 +78,18 @@ export function search(sql: Sql, family: Family, text: string, limit = 20): Hit[
     query,
     limit,
   );
+}
+
+/**
+ * The chunks an `index` job installs for a note, in the family of its class.
+ * shortcut: one chunk per note, header plus body; #20 replaces it with per-field families and one chunk per H2.
+ */
+export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title" | "path">): ChunkInput[] {
+  return [
+    {
+      family: note.class,
+      header: `[${note.type ?? "Note"} · ${note.title ?? note.path}]`,
+      text: splitNote(note.raw).body,
+    },
+  ];
 }

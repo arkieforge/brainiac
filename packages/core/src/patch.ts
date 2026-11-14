@@ -314,7 +314,8 @@ function render(value: unknown): string {
   return yaml.includes("\n") ? JSON.stringify(value) : yaml;
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+/** Structural equality for parsed front-matter values: what `set` uses to decide a field didn't change. */
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;

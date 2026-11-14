@@ -1,50 +1,15 @@
-import { doSql, migrate, schemaVersion, type Sql } from "@brainiac/base";
-import { DurableObject } from "cloudflare:workers";
 import { Client, Pool } from "pg";
 
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { accountPage, signInPage } from "./auth/pages.ts";
 import { vouchedUntil } from "./auth/recovery.ts";
+import type { JobMessage } from "./base.ts";
+import type { Env } from "./env.ts";
+import { consume } from "./jobs.ts";
 
-export interface Env {
-  BASE: DurableObjectNamespace<Base>;
-  BLOBS: R2Bucket;
-  JOBS: Queue;
-  /** Postgres (this stage's Neon branch) for accounts, billing and the base registry. */
-  HYPERDRIVE: Hyperdrive;
-  /** Signs sessions and encrypts the JWT keys; generated per stage by alchemy.run.ts. */
-  BETTER_AUTH_SECRET: string;
-  TURNSTILE_SITE_KEY: string;
-  TURNSTILE_SECRET_KEY?: string;
-  GOOGLE_CLIENT_ID?: string;
-  GOOGLE_CLIENT_SECRET?: string;
-  GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: string;
-  /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */
-  EMAIL?: SendEmail;
-  EMAIL_FROM?: string;
-}
-
-/**
- * One instance per person's record. Holds the record in SQLite (notes, change feed, index; the schema is
- * `@brainiac/base`) and its live connections. The mutation path and sync protocol land through their own
- * issues.
- */
-export class Base extends DurableObject<Env> {
-  private readonly sql: Sql;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.sql = doSql(ctx.storage);
-    // Every wake: a record migrates the first time it is used after a deploy.
-    migrate(this.sql);
-  }
-
-  schemaVersion(): number {
-    return schemaVersion(this.sql);
-  }
-}
+export { Base } from "./base.ts";
+export type { Env } from "./env.ts";
 
 /** Runs one query against this stage's Neon branch through Hyperdrive; proves the whole path is wired. */
 async function checkDb(env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -130,4 +95,5 @@ export default {
     }
     return new Response("Not found", { status: 404 });
   },
-} satisfies ExportedHandler<Env>;
+  queue: consume,
+} satisfies ExportedHandler<Env, JobMessage>;

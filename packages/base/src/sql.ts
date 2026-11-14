@@ -3,8 +3,8 @@ export type SqlValue = string | number | null;
 
 /**
  * The one way this package touches SQLite, so the DO and the CLI run the same statements.
- * Functions in this package never open a transaction themselves (except `migrate`): the caller's mutation
- * owns it.
+ * Whole operations (`migrate`, `mutate`, `undoRun`, the job functions) each run in one transaction of their
+ * own; the building blocks they use (`putNote`, `putChunks`, `enqueue`) run in the caller's.
  */
 export interface Sql {
   /** Runs one statement and returns its rows. The row type is the query's claim, checked by the tests. */
