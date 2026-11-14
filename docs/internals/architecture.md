@@ -54,19 +54,20 @@ brainiac/
 ```
 // alchemy.run.ts (sketch, Alchemy 1.x API; 2.0 beta renames some resources, so pin the version)
 const app    = await alchemy("brainiac");                                  // --stage dev | pr-123 | prod
-const neon   = await NeonProject("db", { name: "brainiac" });               // one project
-const branch = await NeonBranch(`b-${app.stage}`, { project: neon });   // a branch per stage
-const pg     = await Hyperdrive("pg", { origin: branch /* connection string per provider docs */ });
+// brainiac-dev (dev and PR stages) and brainiac-prod are made once by hand; a branch per stage
+const db     = await NeonBranch("db", { project: alchemy.env("NEON_PROJECT_ID"), name: app.stage });
+const pg     = await Hyperdrive("hyperdrive", { origin: db.connectionUris[0].connection_uri });
 const blobs  = await R2Bucket("blobs");
 const jobs   = await Queue("jobs");                                     // + dead-letter queue
 const Base   = DurableObjectNamespace("Base", { className: "Base", sqlite: true });
 export const worker = await Worker("brainiac", {
   entrypoint: "apps/worker/src/index.ts",
-  bindings: { BASE: Base, PG: pg, BLOBS: blobs, JOBS: jobs /* + AI, Images, Browser Rendering, Secrets Store */ },
+  bindings: { BASE: Base, HYPERDRIVE: pg, BLOBS: blobs, JOBS: jobs /* + AI, Images, Browser Rendering, Secrets Store */ },
   routes: ["<domain>/*", "mcp.<domain>/*", "usercontent.<domain>/*"],
   eventSources: [jobs],
 });
 await app.finalize();
 ```
 
-Stateful resources (R2, the DO namespace, Neon) are protected from deletion, and CI reviews the plan diff before every deploy.
+Stateful resources (R2, the DO namespace, Neon) are protected from deletion, and every CI deploy lists what it
+created, replaced or deleted. [infra/README.md](../../infra/README.md) has the stages, secrets and guards.

@@ -13,15 +13,16 @@ links the main checkout's `.env`.
 
 ## Commands
 
-| Command                        | Does                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `vp check`                     | Format check, lint and type-aware checks                                  |
-| `vp test run [files]`          | Tests (Vitest through Vite+)                                              |
-| `vp run typecheck`             | `effect-tsgo` type check in every workspace                               |
-| `vp run knip`                  | Unused files, exports and dependencies                                    |
-| `vp run dev`                   | Local stack through Alchemy                                               |
-| `vp run deploy --stage <name>` | Deploy a stage (needs Cloudflare credentials; never `prod` from a laptop) |
-| `vp run doctor`                | Environment check                                                         |
+| Command                        | Does                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `vp check`                     | Format check, lint and type-aware checks                                    |
+| `vp test run [files]`          | Tests (Vitest through Vite+)                                                |
+| `vp run typecheck`             | `effect-tsgo` type check in every workspace                                 |
+| `vp run knip`                  | Unused files, exports and dependencies                                      |
+| `vp run dev`                   | Local Worker on `localhost:1337`, with your own Neon branch (stage `$USER`) |
+| `vp run deploy --stage <name>` | Deploy a stage (defaults to `$USER`; never `prod` from a laptop)            |
+| `vp run destroy`               | Tear down your stage, Neon branch included                                  |
+| `vp run doctor`                | Environment check                                                           |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
@@ -46,8 +47,9 @@ needs one).
 
 ## Secrets
 
-Secrets (Cloudflare, Neon, treg) live in Doppler: workplace **LaunchPad**, project **braniac**, config
-`dev`. Nothing secret goes in `.env` or the repo. Doppler logins are scoped per folder, so a laptop with
+Secrets (Cloudflare, Neon, Alchemy state, later treg) live in Doppler: workplace **LaunchPad**, project
+**braniac**, config `dev` (`prd` is for CI's prod deploy only). [infra/README.md](../../infra/README.md) lists
+each one, the stages and how prod is protected. Nothing secret goes in `.env` or the repo. Doppler logins are scoped per folder, so a laptop with
 several workplaces picks the right one by directory:
 
 ```sh
