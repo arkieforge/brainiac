@@ -38,7 +38,7 @@ export const toSaved = (state: State): Saved => ({
   ackedUpTo: state.ackedUpTo,
   cursor: state.cursor,
   answered: [...state.answered],
-  pending: state.pending,
+  pending: [...state.pending], // a later put (IndexedDB) must not see edits queued after this write
   blocked: [...state.blocked],
 });
 

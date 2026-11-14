@@ -109,22 +109,25 @@ export class SyncClient {
   }
 
   /**
-   * The text a person sees (remote + pending); undefined if gone. Pending edits made on an older version are
-   * shown over the newest one, merged the way the record will merge them, with their own side kept where both
-   * changed the same thing: the record then keeps the edit as a conflict, so it is never hidden here.
+   * The text a person sees (remote + pending); undefined if gone. Each pending edit, in order, is merged over
+   * the text so far from its own base, the way the record will merge it, with the edit kept where both sides
+   * changed the same thing: the record then keeps it as a conflict, so it is never hidden here.
    */
   working(noteId: string): string | undefined {
-    const remote = this.state.remote.get(noteId);
-    const mine = this.state.pending.filter((p) => p.noteId === noteId);
-    const [first, last] = [mine[0]?.change, mine.at(-1)?.change];
-    if (!first || !last) return remote?.raw;
-    if (last.kind === "delete") return undefined;
-    if (!remote || first.kind === "create" || first.base === remote.raw) return last.raw;
-    try {
-      return merge(first.base, remote.raw, last.raw).raw;
-    } catch {
-      return last.raw; // unreadable front-matter: shown as written, and the record will say why it refuses it
+    let text = this.state.remote.get(noteId)?.raw;
+    for (const { noteId: id, change } of this.state.pending) {
+      if (id !== noteId) continue;
+      if (change.kind === "delete") text = undefined;
+      else if (change.kind === "create" || text === undefined) text = change.raw;
+      else {
+        try {
+          text = merge(change.base, text, change.raw).raw;
+        } catch {
+          text = change.raw; // unreadable front-matter: shown as written; the record will say why it refuses it
+        }
+      }
     }
+    return text;
   }
 
   /** Calls `listener` with the notes that changed after every change to the state, local or remote. */
@@ -200,10 +203,11 @@ export class SyncClient {
       const write = this.#write();
       const done = store.write(write);
       this.#saved = done;
-      // The store may now lack remote notes it was given: rewrite everything, at once or with the next change.
+      // The store may now lack remote notes it was given: rewrite everything now, unless this was already a
+      // full rewrite with nothing after it (then the next change does it, so a full disk is not retried in a loop).
       done.catch(() => {
         this.#clear = this.#dirty = true;
-        if (!write.clear) this.#commit();
+        if (!write.clear || this.#saved !== done) this.#commit();
       });
     }
     if (this.#touched.size === 0) return;

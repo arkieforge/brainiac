@@ -99,12 +99,19 @@ export const cases: Record<string, Case> = {
     world.connect(laptop);
     ok(world.up(laptop)); // hello; the mutate it sends after welcome stays in flight
     while (world.down(laptop));
-    const shown = laptop.client.working(A) ?? "";
+    const first = laptop.client.working(A) ?? "";
     ok(
-      shown.includes("status: mine") && shown.includes("title: theirs") && shown.includes("their line"),
-      shown,
+      first.includes("status: mine") && first.includes("title: theirs") && first.includes("their line"),
+      first,
     );
     ok(seen.includes(A));
+    // A second edit on top, then the title moves again: the newer title shows, since neither edit changed it.
+    ok(setField(laptop, A, "overall", "also mine"));
+    ok(setField(phone, A, "title", "theirs again"));
+    while (world.up(phone) || world.down(phone));
+    while (world.down(laptop));
+    const shown = laptop.client.working(A) ?? "";
+    ok(shown.includes("title: theirs again") && shown.includes("overall: also mine"), shown);
     const again = await world.restart(laptop, open("laptop"));
     equal(again.client.working(A), shown);
     world.settle();
@@ -138,6 +145,57 @@ export const cases: Record<string, Case> = {
     equal(again.client.state.blocked.size, 0);
     world.settle();
     synced(world, again);
+  },
+
+  async "a crash between two writes leaves a queue that numbers on correctly"(open) {
+    const { world, laptop } = start(open);
+    world.disconnect(laptop);
+    const real = open("laptop");
+    let writes = 0;
+    // The app dies after the first write starts: every later one is lost.
+    const dying: Store = {
+      load: () => real.load(),
+      write: (w) => (++writes === 1 ? real.write(w) : real.load().then(() => {})),
+    };
+    const doomed = await world.restart(laptop, dying);
+    ok(addLine(doomed, A, "first"));
+    ok(addLine(doomed, A, "second"));
+    await doomed.client.saved();
+    const again = await world.restart(doomed, open("laptop"));
+    const { lastAssigned, pending } = again.client.state;
+    ok(
+      pending.every((p) => p.clientSeq <= lastAssigned),
+      "a stored change never has a number not yet given out",
+    );
+    ok(addLine(again, A, "third"));
+    world.settle();
+    equal(times(world, A, "first"), 1);
+    equal(times(world, A, "third"), 1);
+    synced(world, again);
+  },
+
+  async "a failed write with newer ones behind it is redone at once"(open) {
+    const world = new World();
+    world.seed(A, "notes/a.md");
+    world.seed(B, "notes/b.md");
+    const phone = world.device("phone");
+    world.settle();
+    const real = open("laptop");
+    let fail = true;
+    const flaky: Store = {
+      load: () => real.load(),
+      write: (write) => {
+        if (!fail) return real.write(write);
+        fail = false;
+        return Promise.reject(new Error("disk full"));
+      },
+    };
+    const laptop = world.device("laptop", undefined, flaky);
+    world.settle(); // the snapshot's write fails, and the failure is not seen yet
+    ok(setField(phone, B, "status", "pushed"));
+    world.settle(); // a delta for B starts behind it
+    await laptop.client.saved();
+    synced(world, await world.restart(laptop, open("laptop")));
   },
 
   async "after a failed write, the next one rewrites the whole remote layer"(open) {
