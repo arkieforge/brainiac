@@ -7,18 +7,19 @@ description: Prove a Brainiac change works: pick the right checks for the files 
 
 Proof is output you saw yourself in this session. Match the proof to the change:
 
-| You changed                                   | Run                                                                 | Evidence                              |
-| --------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------- |
-| Any code                                      | `vp check` and `vp test run <files you touched>`                    | The command output                    |
-| Types, schemas, tool descriptions             | `vp run typecheck`                                                  | Output                                |
-| A bug                                         | A test that fails on `main`, then passes                            | Both runs                             |
-| Sync, merges, approvals                       | The property tests for that module                                  | Output, including the seed on failure |
-| The Worker or DO                              | `vp test run apps/worker`, and the Workers test pool once it exists | Output                                |
-| Model-facing text (MCP tools, skill, prompts) | The eval cases that cover it (`evals/README.md`)                    | The run's `summary.md`                |
-| A UI, static                                  | Run it and look: screenshots before and after, same viewport        | Both images inline in the PR          |
-| Motion, a flow, or any visible behaviour      | Run it and record before and after                                  | Both videos inline in the PR          |
-| Lint rules                                    | `vp test run oxlint-plugin-brainiac`                                | Output                                |
-| `alchemy.run.ts`                              | `vp run plan --stage <stage>`, then the PR stage deploy in CI       | The plan, the CI job summary          |
+| You changed                                   | Run                                                                  | Evidence                              |
+| --------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------- |
+| Any code                                      | `vp check` and `vp test run <files you touched>`                     | The command output                    |
+| Types, schemas, tool descriptions             | `vp run typecheck`                                                   | Output                                |
+| A bug                                         | A test that fails on `main`, then passes                             | Both runs                             |
+| Sync, merges, approvals                       | The property tests for that module                                   | Output, including the seed on failure |
+| `packages/base` (SQL, migrations)             | `vp test run packages/base`: every case on bun:sqlite and in workerd | Output                                |
+| The Worker or DO                              | `vp test run apps/worker`, and the Workers test pool once it exists  | Output                                |
+| Model-facing text (MCP tools, skill, prompts) | The eval cases that cover it (`evals/README.md`)                     | The run's `summary.md`                |
+| A UI, static                                  | Run it and look: screenshots before and after, same viewport         | Both images inline in the PR          |
+| Motion, a flow, or any visible behaviour      | Run it and record before and after                                   | Both videos inline in the PR          |
+| Lint rules                                    | `vp test run oxlint-plugin-brainiac`                                 | Output                                |
+| `alchemy.run.ts`                              | `vp run plan --stage <stage>`, then the PR stage deploy in CI        | The plan, the CI job summary          |
 
 ## Rules
 

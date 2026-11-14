@@ -1,3 +1,4 @@
+import { doSql, migrate, schemaVersion, type Sql } from "@brainiac/base";
 import { DurableObject } from "cloudflare:workers";
 import { Client } from "pg";
 
@@ -10,22 +11,22 @@ export interface Env {
 }
 
 /**
- * One instance per person's record. Holds the record in SQLite (notes, change feed, index)
- * and its live connections. The schema and sync protocol land through their own issues;
- * for now it only reports which schema version it is on.
+ * One instance per person's record. Holds the record in SQLite (notes, change feed, index; the schema is
+ * `@brainiac/base`) and its live connections. The mutation path and sync protocol land through their own
+ * issues.
  */
 export class Base extends DurableObject<Env> {
+  private readonly sql: Sql;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    ctx.storage.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', '0')");
+    this.sql = doSql(ctx.storage);
+    // Every wake: a record migrates the first time it is used after a deploy.
+    migrate(this.sql);
   }
 
   schemaVersion(): number {
-    const row = this.ctx.storage.sql
-      .exec<{ value: string }>("SELECT value FROM meta WHERE key = 'schemaVersion'")
-      .one();
-    return Number(row.value);
+    return schemaVersion(this.sql);
   }
 }
 

@@ -1,0 +1,26 @@
+// Blobs are left out until a table that stores them gets queries: the DO returns ArrayBuffer, Bun Uint8Array.
+export type SqlValue = string | number | null;
+
+/**
+ * The one way this package touches SQLite, so the DO and the CLI run the same statements.
+ * Functions in this package never open a transaction themselves (except `migrate`): the caller's mutation
+ * owns it.
+ */
+export interface Sql {
+  /** Runs one statement and returns its rows. The row type is the query's claim, checked by the tests. */
+  all<Row>(query: string, ...params: SqlValue[]): Row[];
+  /** Runs `fn` in one transaction: every write in it commits, or none does. */
+  transaction<T>(fn: () => T): T;
+}
+
+/** The part of a Durable Object's `ctx.storage` used here; the real one satisfies it structurally. */
+export interface DurableObjectSql {
+  readonly sql: { exec(query: string, ...bindings: SqlValue[]): { toArray(): unknown[] } };
+  transactionSync<T>(fn: () => T): T;
+}
+
+export const doSql = (storage: DurableObjectSql): Sql => ({
+  // DO SQLite rejects BEGIN and COMMIT; transactionSync is its transaction.
+  all: <Row>(query: string, ...params: SqlValue[]) => storage.sql.exec(query, ...params).toArray() as Row[],
+  transaction: (fn) => storage.transactionSync(fn),
+});

@@ -1,0 +1,21 @@
+{
+  "name": "@brainiac/base",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bun": "./src/bun.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  },
+  "dependencies": {
+    "@brainiac/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "bun": "1.4.4",
+    "miniflare": "4.20260730.0"
+  }
+}

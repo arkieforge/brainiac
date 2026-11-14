@@ -13,6 +13,9 @@
       "ignoreDependencies": ["@effect/language-service"],
     },
     // workers-types is loaded through tsconfig "types".
+    // The engine runners are started by engines.test.ts (Bun by path, workerd from a bundle), and Bun is
+    // run from its package's binary rather than imported.
+    "packages/base": { "entry": ["test/bun.ts", "test/workerd.ts"], "ignoreDependencies": ["bun"] },
     "apps/worker": { "entry": ["src/index.ts"], "ignoreDependencies": ["@cloudflare/workers-types"] },
   },
 }

@@ -12,10 +12,17 @@ usage_daily  { baseId, day, toolCalls, ingestPages, storageBytes, tregCents }
 
 ## Base DO SQLite (the record)
 
+`packages/base` owns this schema, its migrations and its queries; the DO and the CLI's bun:sqlite run the
+same code, and its tests run every case on both engines. Columns are camelCase, so rows read as TypeScript
+objects. Migrations are additive for one release, so the previous Worker still runs on a migrated record;
+each DO migrates itself the first time it wakes after a deploy.
+
 ```
-notes        { id ULID, path, type, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt? }
+meta         { key PK, value }                                      // schemaVersion: the SQL schema's version
+notes        { id ULID, path, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt?,
+               type, title, kind, status, date, deadline, expires }  // the last row generated from fm
 revisions    { noteId, rev, raw, patch, actor, runId?, at }        // undo = inverse patches
-changes      { seq PK, noteId, rev, op, actor }                     // sync feed, 90 days
+changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed, 90 days
 clients      { clientId PK, highWater, lastHash, lastSeenAt, appVersion }   // strict in-order apply
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
 proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema }
@@ -31,11 +38,11 @@ files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vaul
 chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }
 chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
 vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory
-edges        { from, to, rel }
-schema       { version, manifest TEXT }
+edges        { fromId, toId, rel }
+schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
 tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
 secrets      { name PK, ciphertext, policy, domain }
-audit        { at, actor, tool, noteIds, secretName?, approvalId? }
+audit        { id, at, actor, tool, noteIds, secretName?, approvalId? }
 ```
 
 ## R2

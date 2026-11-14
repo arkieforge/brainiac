@@ -7,6 +7,7 @@
     "test": "vp test run --dir ."
   },
   "dependencies": {
+    "@brainiac/base": "workspace:*",
     "pg": "8.23.1"
   },
   "devDependencies": {

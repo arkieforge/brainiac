@@ -13,6 +13,11 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-x64@0.69.0"
   - "@effect/tsgo@0.69.0"
 allowBuilds:
+  bun: true
   esbuild: true
   workerd: true
   sharp: false
+# miniflare 4 pins sharp 0.35.2 and undici 7.28.0, which have advisories fixed in these patch versions.
+overrides:
+  miniflare>sharp: 0.35.5
+  miniflare>undici: 7.30.1
