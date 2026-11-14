@@ -514,8 +514,15 @@ describe("MCP clients", () => {
     });
   };
 
-  /** What the client's browser tab sees first: the authorize endpoint, answered with a redirect. */
-  const authorize = async (auth: ReturnType<typeof setup>["auth"], codeChallenge: string) => {
+  /**
+   * What the client's browser tab sees first: the authorize endpoint, answered with a redirect. `resource: ""`
+   * leaves the parameter out, as a client that doesn't follow RFC 8707 would.
+   */
+  const authorize = async (
+    auth: ReturnType<typeof setup>["auth"],
+    codeChallenge: string,
+    resource = RESOURCE,
+  ) => {
     const query = new URLSearchParams({
       response_type: "code",
       client_id: CLIENT_ID,
@@ -524,7 +531,7 @@ describe("MCP clients", () => {
       code_challenge_method: "S256",
       state: "client-state",
       scope: "openid offline_access",
-      resource: RESOURCE,
+      ...(resource && { resource }),
     });
     const res = await auth.handler(
       new Request(`${ORIGIN}/api/auth/oauth2/authorize?${query}`, { headers: { accept: "text/html" } }),
@@ -541,7 +548,9 @@ describe("MCP clients", () => {
       new Request(`${ORIGIN}/api/auth/oauth2/token`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
-        body: new URLSearchParams({ client_id: CLIENT_ID, resource: RESOURCE, ...params }),
+        body: new URLSearchParams(
+          Object.entries({ client_id: CLIENT_ID, resource: RESOURCE, ...params }).filter(([, v]) => v !== ""),
+        ),
       }),
     );
     return { status: res.status, body: await res.json() };
@@ -580,9 +589,10 @@ describe("MCP clients", () => {
   const grant = async (
     auth: ReturnType<typeof setup>["auth"],
     browser: ReturnType<typeof setup>["browser"],
+    resource = RESOURCE,
   ) => {
     const { verifier, codeChallenge } = await pkce();
-    const start = await authorize(auth, codeChallenge);
+    const start = await authorize(auth, codeChallenge, resource);
     expect(start.status).toBe(302);
     const signIn = new URL(start.location, ORIGIN);
     expect(signIn.pathname).toBe("/sign-in");
@@ -762,6 +772,9 @@ describe("MCP clients", () => {
 
     // Better Auth's own consent delete would leave the refresh token working, so it isn't served.
     expect((await tab.call("/oauth2/delete-consent", { body: { id: "any" } })).status).toBe(404);
+    expect(
+      (await tab.call("/oauth2/update-consent", { body: { id: "any", update: { scopes: [] } } })).status,
+    ).toBe(404);
     // Someone else's session can't disconnect this person's app.
     const other = ctx.browser();
     await other.signInWithCode("someone.else@example.edu");
@@ -781,6 +794,45 @@ describe("MCP clients", () => {
     // Connecting again asks again, and works.
     const again = await connect(ctx);
     expect((await initialize(ctx.auth, again.access)).status).toBe(200);
+  });
+
+  it("issues no grant without the MCP resource, since an opaque token can't be checked against Disconnect", async () => {
+    const { auth, browser } = setup();
+    network(() => Response.json(metadata));
+    const { code, verifier } = await grant(auth, browser, "");
+    const issued = await token(auth, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: verifier,
+      resource: "",
+    });
+    expect(issued).toMatchObject({ status: 400, body: { error: "invalid_target" } });
+  });
+
+  it("lists every connected app, past the adapter's 100-row default", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const { tab } = await connect(ctx);
+    const { adapter } = await ctx.auth.$context;
+    const userId = await ctx.studentId();
+    for (let i = 0; i < 100; i++) {
+      await adapter.create({
+        model: "oauthConsent",
+        data: {
+          clientId: `https://app-${i}.example/client.json`,
+          userId,
+          scopes: ["openid"],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+    }
+    const listed = await tab.ok("/connected-apps");
+    expect(Array.isArray(listed) && listed.length).toBe(101);
+    expect(listed).toContainEqual(
+      expect.objectContaining({ clientId: CLIENT_ID, name: "Example MCP client" }),
+    );
   });
 
   it("refuses tokens for a grant whose consent is gone, as when a refresh races a disconnect", async () => {

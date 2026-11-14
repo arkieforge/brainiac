@@ -35,15 +35,32 @@ const disconnect = async (ctx: Ctx, userId: string, clientId: string) => {
 };
 
 /**
- * Who and what a fresh token response is for: the access token we just signed names both. An opaque token (one
- * issued without an audience) is never accepted by /mcp, so there's nothing to check.
+ * Who and what a fresh token response is for: the access token we just signed names both. `"opaque"` when it isn't
+ * a JWT: a client that named no resource gets one, and it can't be traced back to a consent.
  */
 const issuedTo = (returned: unknown) => {
   if (typeof returned !== "object" || returned === null || !("access_token" in returned)) return;
-  if (typeof returned.access_token !== "string" || returned.access_token.split(".").length !== 3) return;
-  const { sub, azp } = decodeJwt(returned.access_token);
-  return typeof sub === "string" && typeof azp === "string" ? { userId: sub, clientId: azp } : undefined;
+  const token = returned.access_token;
+  if (typeof token !== "string" || token.split(".").length !== 3) return "opaque";
+  const { sub, azp } = decodeJwt(token);
+  return typeof sub === "string" && typeof azp === "string" ? { userId: sub, clientId: azp } : "opaque";
 };
+
+const PAGE = 100;
+
+/** Every matching row: the adapter returns 100 at most unless asked for more. */
+async function findAll<T>(
+  ctx: Ctx,
+  model: string,
+  where: Parameters<Ctx["context"]["adapter"]["findMany"]>[0]["where"],
+) {
+  const rows: T[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const page = await ctx.context.adapter.findMany<T>({ model, where, limit: PAGE, offset });
+    rows.push(...page);
+    if (page.length < PAGE) return rows;
+  }
+}
 
 export const connectedApps = () =>
   ({
@@ -53,15 +70,13 @@ export const connectedApps = () =>
         "/connected-apps",
         { method: "GET", use: [sessionMiddleware] },
         async (ctx): Promise<ConnectedApp[]> => {
-          const consents = await ctx.context.adapter.findMany<Consent>({
-            model: "oauthConsent",
-            where: [{ field: "userId", value: ctx.context.session.user.id }],
-          });
+          const consents = await findAll<Consent>(ctx, "oauthConsent", [
+            { field: "userId", value: ctx.context.session.user.id },
+          ]);
           if (consents.length === 0) return [];
-          const clients = await ctx.context.adapter.findMany<Client>({
-            model: "oauthClient",
-            where: [{ field: "clientId", operator: "in", value: consents.map((c) => c.clientId) }],
-          });
+          const clients = await findAll<Client>(ctx, "oauthClient", [
+            { field: "clientId", operator: "in", value: consents.map((c) => c.clientId) },
+          ]);
           const names = new Map(clients.map((c) => [c.clientId, c.name ?? undefined]));
           return consents.map((c) => ({
             clientId: c.clientId,
@@ -91,6 +106,13 @@ export const connectedApps = () =>
           handler: createAuthMiddleware(async (ctx) => {
             const grant = issuedTo(ctx.context.returned);
             if (!grant) return;
+            // /mcp takes only its own JWTs, and an opaque grant couldn't be checked against Disconnect.
+            if (grant === "opaque") {
+              throw new APIError("BAD_REQUEST", {
+                error: "invalid_target",
+                error_description: "Brainiac issues tokens only for its MCP endpoint: send its resource",
+              });
+            }
             const consent = await ctx.context.adapter.findOne<Consent>({
               model: "oauthConsent",
               where: [

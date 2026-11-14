@@ -186,7 +186,7 @@ for (const button of document.querySelectorAll("[data-remove]")) {
 }
 for (const button of document.querySelectorAll("[data-disconnect]")) {
   button.onclick = run(async () => {
-    if (!confirm("Disconnect " + button.dataset.name + "? It loses access to your record.")) return;
+    if (!confirm("Disconnect " + button.dataset.name + "? It loses access to your record on every device.")) return;
     await api("/connected-apps/disconnect", { method: "POST", body: JSON.stringify({ clientId: button.dataset.disconnect }) });
     location.reload();
   });

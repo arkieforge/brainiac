@@ -56,8 +56,9 @@ export const authOptions = (config: AuthConfig) =>
       "/email-otp/request-password-reset",
       "/forget-password/email-otp",
       "/email-otp/reset-password",
-      // Leaves the client's refresh tokens working; Disconnect (connected-apps.ts) ends the grant instead.
+      // These change a consent but not the tokens issued under it; Disconnect (connected-apps.ts) ends the grant.
       "/oauth2/delete-consent",
+      "/oauth2/update-consent",
     ],
     // Session checks skip Neon for 5 minutes, so a short Neon outage doesn't sign anyone out.
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
