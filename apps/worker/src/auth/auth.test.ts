@@ -1,7 +1,10 @@
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { serveMcp } from "../mcp/handler.ts";
 import { createAuth } from "./config.ts";
+import { consent } from "./consent.ts";
 import { nextPasskeyStep } from "./pages.ts";
 import { type ApprovingPasskey, canApprove, RECOVERY_WAIT_MS, SIGN_UP_MS, VOUCH_MS } from "./recovery.ts";
 import { createAuthenticator } from "./test-authenticator.ts";
@@ -34,6 +37,13 @@ function setup({ noticesFail = false } = {}) {
     verification: [],
     passkey: [],
     jwks: [],
+    oauthClient: [],
+    oauthResource: [],
+    oauthClientResource: [],
+    oauthRefreshToken: [],
+    oauthAccessToken: [],
+    oauthConsent: [],
+    oauthClientAssertion: [],
   });
   const auth = createAuth({
     database: (options: Parameters<typeof memory>[0]) => {
@@ -93,14 +103,18 @@ function setup({ noticesFail = false } = {}) {
 
     return {
       call,
-      async signInWithCode(email = EMAIL) {
+      /** The session cookie, for pages served outside the auth handler. */
+      cookie: () => [...cookies].map(([k, v]) => `${k}=${v}`).join("; "),
+      /** `oauthQuery`: the signed query an MCP client's authorize request put on the sign-in page. */
+      async signInWithCode(email = EMAIL, oauthQuery?: string) {
         await ok("/email-otp/send-verification-otp", {
           body: { email, type: "sign-in" },
           headers: { "x-captcha-response": "passed" },
         });
         const otp = mail.at(-1)?.text.match(/\d{6}/)?.[0];
-        await ok("/sign-in/email-otp", { body: { email, otp } });
+        return ok("/sign-in/email-otp", { body: { email, otp, oauth_query: oauthQuery } });
       },
+      ok,
       async addPasskey(authenticator: ReturnType<typeof createAuthenticator>) {
         const options = challenge(await ok("/passkey/generate-register-options"));
         return call("/passkey/verify-registration", { body: { response: authenticator.register(options) } });
@@ -159,6 +173,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("sign-up", () => {
@@ -387,4 +402,288 @@ describe("recovery", () => {
     expect((await tab.passkeys())[0]?.approvesAt?.getTime()).toBe(Date.now() + RECOVERY_WAIT_MS);
     expect(notices(mail)).toHaveLength(1);
   });
+});
+
+const base64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+/** A PKCE pair, as an OAuth client makes one per sign-in. */
+const pkce = async () => {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return { verifier, codeChallenge: base64url(new Uint8Array(digest)) };
+};
+
+/** Where a JSON reply from the auth API sends the browser next. */
+const redirectTo = (body: unknown) => {
+  if (typeof body === "object" && body && "url" in body && typeof body.url === "string") return body.url;
+  throw new Error(`no redirect in ${JSON.stringify(body)}`);
+};
+
+/** The tokens in a token endpoint reply. */
+const tokens = (body: unknown) => {
+  if (
+    typeof body === "object" &&
+    body &&
+    "access_token" in body &&
+    typeof body.access_token === "string" &&
+    "refresh_token" in body &&
+    typeof body.refresh_token === "string"
+  ) {
+    return { access: body.access_token, refresh: body.refresh_token };
+  }
+  throw new Error(`no tokens in ${JSON.stringify(body)}`);
+};
+
+// Workers hand back a manual redirect as the 3xx itself; the Fetch spec makes it an opaque status 0.
+const opaqueRedirect = () =>
+  Object.defineProperties(new Response(null), { type: { value: "opaqueredirect" }, status: { value: 0 } });
+const plainRedirect = () =>
+  new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } });
+
+// /mcp caches signing keys per isolate (mcp/handler.ts); a test with fresh keys moves past that cache.
+const pastKeyCache = () => later(6 * 60_000);
+
+describe("MCP clients", () => {
+  // A client the way claude.ai and Claude Code identify: client_id is the URL of its metadata document (CIMD).
+  const CLIENT_ID = "https://client.example/oauth/metadata.json";
+  const REDIRECT_URI = "http://127.0.0.1:33418/callback";
+  const RESOURCE = `${ORIGIN}/mcp`;
+  const metadata = {
+    client_id: CLIENT_ID,
+    client_name: "Example MCP client",
+    redirect_uris: [REDIRECT_URI],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  };
+
+  /**
+   * The network as a Worker sees it: the metadata host answers `document` and Turnstile passes. Our own origin
+   * isn't reachable, so `/mcp` has to check tokens without calling itself, and `Request` refuses
+   * `redirect: "error"` the way workerd does.
+   */
+  const network = (document: () => Response) => {
+    vi.stubGlobal(
+      "Request",
+      class extends Request {
+        constructor(input: RequestInfo | URL, init?: RequestInit) {
+          if (init?.redirect === "error")
+            throw new TypeError('Invalid redirect value, must be "follow" or "manual"');
+          super(input, init);
+        }
+      },
+    );
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === CLIENT_ID) return document();
+      if (url.startsWith("https://challenges.cloudflare.com/")) return Response.json({ success: true });
+      throw new TypeError(`no route to ${url}`);
+    });
+  };
+
+  /** What the client's browser tab sees first: the authorize endpoint, answered with a redirect. */
+  const authorize = async (auth: ReturnType<typeof setup>["auth"], codeChallenge: string) => {
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      state: "client-state",
+      scope: "openid offline_access",
+      resource: RESOURCE,
+    });
+    const res = await auth.handler(
+      new Request(`${ORIGIN}/api/auth/oauth2/authorize?${query}`, { headers: { accept: "text/html" } }),
+    );
+    return { status: res.status, location: res.headers.get("location") ?? "", body: await res.text() };
+  };
+
+  const token = async (
+    auth: ReturnType<typeof setup>["auth"],
+    params: Record<string, string>,
+    headers: Record<string, string> = {},
+  ) => {
+    const res = await auth.handler(
+      new Request(`${ORIGIN}/api/auth/oauth2/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+        body: new URLSearchParams({ client_id: CLIENT_ID, resource: RESOURCE, ...params }),
+      }),
+    );
+    return { status: res.status, body: await res.json() };
+  };
+
+  const initialize = (auth: ReturnType<typeof setup>["auth"], accessToken?: string) =>
+    serveMcp(
+      auth,
+      new Request(RESOURCE, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...(accessToken && { authorization: `Bearer ${accessToken}` }),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1" },
+          },
+        }),
+      }),
+    );
+
+  /**
+   * A person signs in to a client: the server fetches the client's document, sends them to sign in, carries on
+   * to consent, and back to the client with a code.
+   */
+  const grant = async (
+    auth: ReturnType<typeof setup>["auth"],
+    browser: ReturnType<typeof setup>["browser"],
+  ) => {
+    const { verifier, codeChallenge } = await pkce();
+    const start = await authorize(auth, codeChallenge);
+    expect(start.status).toBe(302);
+    const signIn = new URL(start.location, ORIGIN);
+    expect(signIn.pathname).toBe("/sign-in");
+    const tab = browser();
+    const consentUrl = new URL(redirectTo(await tab.signInWithCode(EMAIL, signIn.search.slice(1))), ORIGIN);
+    expect(consentUrl.pathname).toBe("/consent");
+    const accepted = await tab.ok("/oauth2/consent", {
+      body: { accept: true, oauth_query: consentUrl.search.slice(1) },
+    });
+    const callback = new URL(redirectTo(accepted));
+    expect(`${callback.origin}${callback.pathname}`).toBe(REDIRECT_URI);
+    expect(callback.searchParams.get("state")).toBe("client-state");
+    return { tab, consentUrl, verifier, code: callback.searchParams.get("code") ?? "" };
+  };
+
+  it("signs in by metadata URL, consents, calls /mcp and refreshes", async () => {
+    const { auth, browser } = setup();
+    network(() => Response.json(metadata));
+
+    // No token: the 401 points the client at the protected-resource metadata, which names this server.
+    const challenged = await initialize(auth);
+    expect(challenged.status).toBe(401);
+    expect(challenged.headers.get("www-authenticate")).toContain(
+      `resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp"`,
+    );
+    const resourceMetadata = await auth.handler(
+      new Request(`${ORIGIN}/.well-known/oauth-protected-resource/mcp`),
+    );
+    expect(await resourceMetadata.json()).toMatchObject({
+      resource: RESOURCE,
+      authorization_servers: [`${ORIGIN}/api/auth`],
+    });
+    expect(await auth.api.getOAuthServerConfig()).toMatchObject({
+      client_id_metadata_document_supported: true,
+    });
+
+    const { tab, consentUrl, code, verifier } = await grant(auth, browser);
+    const page = (url: URL) =>
+      consent(new Request(url, { headers: { cookie: tab.cookie() } }), auth).then((res) => res.text());
+    expect(await page(consentUrl)).toContain("<strong>Example MCP client</strong>");
+    // The page names only the client the server signed for.
+    const tampered = new URL(consentUrl);
+    tampered.searchParams.set("redirect_uri", "https://attacker.example/callback");
+    expect(await page(tampered)).toContain("This link has expired");
+
+    const issued = await token(auth, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: verifier,
+    });
+    expect(issued.status).toBe(200);
+    expect(issued.body).toMatchObject({ token_type: "Bearer" });
+    const first = tokens(issued.body);
+
+    const connected = await initialize(auth, first.access);
+    expect(connected.status).toBe(200);
+    expect(await connected.text()).toContain('"name":"brainiac"');
+    // Signed by us but not for /mcp: the ID token's audience is the client.
+    const idToken =
+      issued.body && typeof issued.body === "object" && "id_token" in issued.body ? issued.body.id_token : "";
+    for (const wrong of [String(idToken), "not-a-token", "a.b.c"]) {
+      const refused = await initialize(auth, wrong);
+      expect(refused.status).toBe(401);
+      expect(refused.headers.get("www-authenticate")).toContain('error="invalid_token"');
+    }
+
+    const refreshed = await token(auth, {
+      grant_type: "refresh_token",
+      refresh_token: first.refresh,
+    });
+    expect(refreshed.status).toBe(200);
+    expect((await initialize(auth, tokens(refreshed.body).access)).status).toBe(200);
+  });
+
+  it("answers 503, not a bad token, when it can't load signing keys", async () => {
+    const { auth, browser, neon } = setup();
+    network(() => Response.json(metadata));
+    const { code, verifier } = await grant(auth, browser);
+    const issued = await token(auth, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: verifier,
+    });
+    pastKeyCache();
+    neon.down = true;
+    // A 401 would send the client to refresh, which needs Neon too, and then maybe to sign the person in again.
+    const res = await initialize(auth, tokens(issued.body).access);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("www-authenticate")).toBeNull();
+  });
+
+  it("refuses a DPoP-bound token sent as a bearer token", async () => {
+    const { auth, browser } = setup();
+    network(() => Response.json(metadata));
+    const { code, verifier } = await grant(auth, browser);
+    const key = await generateKeyPair("ES256");
+    const proof = await new SignJWT({
+      htm: "POST",
+      htu: `${ORIGIN}/api/auth/oauth2/token`,
+      jti: crypto.randomUUID(),
+    })
+      .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: await exportJWK(key.publicKey) })
+      .setIssuedAt()
+      .sign(key.privateKey);
+    const issued = await token(
+      auth,
+      { grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI, code_verifier: verifier },
+      { dpop: proof },
+    );
+    expect(issued.body).toMatchObject({ token_type: "DPoP" });
+    pastKeyCache();
+    const res = await initialize(auth, tokens(issued.body).access);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain('error="invalid_token"');
+  });
+
+  it.each([plainRedirect, opaqueRedirect])(
+    "refuses a metadata document that redirects (%#)",
+    async (document) => {
+      const { auth } = setup();
+      const fetch = network(document);
+      const start = await authorize(auth, (await pkce()).codeChallenge);
+      expect(start.status).toBe(400);
+      // Refused by our transport, not just for being something other than a 200.
+      expect(JSON.parse(start.body)).toMatchObject({
+        error: "invalid_client",
+        error_description: expect.stringContaining("redirect blocked"),
+      });
+      expect(fetch.mock.calls.map(([input, init]) => [String(input), init?.redirect])).toEqual([
+        [CLIENT_ID, "manual"],
+      ]);
+    },
+  );
 });

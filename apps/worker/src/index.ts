@@ -1,12 +1,18 @@
+import {
+  oauthProviderAuthServerMetadata,
+  oauthProviderOpenIdConfigMetadata,
+} from "@better-auth/oauth-provider";
 import { Client, Pool } from "pg";
 
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
+import { consent } from "./auth/consent.ts";
 import { accountPage, signInPage } from "./auth/pages.ts";
 import { vouchedUntil } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
 import { consume } from "./jobs.ts";
+import { serveMcp } from "./mcp/handler.ts";
 
 export { Base } from "./base.ts";
 export type { Env } from "./env.ts";
@@ -74,13 +80,32 @@ async function account(request: Request, auth: ReturnType<typeof createAuth>): P
   return accountPage(session.user.email, passkeys, vouchedUntil(session.session, passkeys));
 }
 
+// OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may
+// ask under either RFC 8414's path insertion or OIDC's path appending.
+const AUTH_SERVER_METADATA = new Set([
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-authorization-server/api/auth",
+]);
+const OPENID_METADATA = new Set([
+  "/.well-known/openid-configuration",
+  "/.well-known/openid-configuration/api/auth",
+  "/api/auth/.well-known/openid-configuration",
+]);
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return Response.json({ ok: true });
     if (pathname === "/health/db") return checkDb(env, ctx);
-    if (pathname.startsWith("/api/auth/"))
+    if (AUTH_SERVER_METADATA.has(pathname))
+      return withAuth(request, env, ctx, (auth) => oauthProviderAuthServerMetadata(auth)(request));
+    if (OPENID_METADATA.has(pathname))
+      return withAuth(request, env, ctx, (auth) => oauthProviderOpenIdConfigMetadata(auth)(request));
+    // The protected-resource metadata (RFC 9728) for /mcp, which the mcp() plugin serves.
+    if (pathname.startsWith("/api/auth/") || pathname.startsWith("/.well-known/oauth-protected-resource"))
       return withAuth(request, env, ctx, (auth) => auth.handler(request));
+    if (pathname === "/mcp") return withAuth(request, env, ctx, (auth) => serveMcp(auth, request));
+    if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
     if (pathname === "/account") return withAuth(request, env, ctx, (auth) => account(request, auth));
     if (pathname === "/sign-in") {
       const providers = [
