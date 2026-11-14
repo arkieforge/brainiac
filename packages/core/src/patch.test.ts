@@ -113,6 +113,23 @@ describe("patch front-matter", () => {
     expect(parseNote(out).data["title"]).toBe("line one\nline two");
   });
 
+  it("keeps the line break after a replaced block scalar", () => {
+    const raw = "---\na: |\n  old\nnext: kept\n---\n";
+    expect(patch(raw, [{ op: "set", path: ["a"], value: "new" }])).toBe("---\na: new\nnext: kept\n---\n");
+  });
+
+  it("keeps a space before the comment of an empty value", () => {
+    const raw = "---\na: # comment\n---\n";
+    expect(patch(raw, [{ op: "set", path: ["a"], value: 3 }])).toBe("---\na: 3 # comment\n---\n");
+    expect(patch(raw, [{ op: "append", path: ["a"], value: 3 }])).toBe("---\na: [3] # comment\n---\n");
+  });
+
+  it("removes the first key of a list item's mapping and keeps the item valid", () => {
+    const raw = "---\na:\n  - first: old\n    second: kept\n    third: kept\n---\n";
+    const out = patch(raw, [{ op: "unset", path: ["a", 0, "first"] }]);
+    expect(out).toBe("---\na:\n  - second: kept\n    third: kept\n---\n");
+  });
+
   it("adds front-matter to a note without any", () => {
     expect(patch("# Hi\n", [{ op: "set", path: ["type"], value: "Fact" }])).toBe(
       "---\ntype: Fact\n---\n# Hi\n",
@@ -147,6 +164,11 @@ describe("patch sections", () => {
     expect(patch(body, [{ op: "section", heading: "Trip", content: "short" }])).toBe(
       "# Trip\n\nshort\n\n# Next\n",
     );
+  });
+
+  it("keeps a # that is part of the heading text", () => {
+    const body = "## C#\n\nold\n";
+    expect(patch(body, [{ op: "section", heading: "C#", content: "new" }])).toBe("## C#\n\nnew\n");
   });
 
   it("ignores headings inside code fences", () => {

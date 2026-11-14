@@ -55,6 +55,12 @@ describe("validate", () => {
     expect(issues.map((issue) => issue.field)).toEqual(["id", "supersedes"]);
   });
 
+  it("treats object built-ins as unknown types instead of crashing", () => {
+    for (const type of ["constructor", "toString", "__proto__"]) {
+      expect(validate(manifest, { ...valid, type }).map((issue) => issue.field)).toEqual(["type"]);
+    }
+  });
+
   it("lists the declared types when the type is unknown", () => {
     expect(validate(manifest, { ...valid, type: "Trip" })).toEqual([
       { field: "type", message: 'type must be "Fact" or "TestScore" (was "Trip"). Example: type: TestScore' },

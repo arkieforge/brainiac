@@ -75,7 +75,11 @@ export function validate(manifest: Manifest, data: Readonly<Record<string, unkno
   const issues = [check("id", ID, data["id"], ULID)];
   const typeNames = Object.keys(manifest.types);
   const noteType = data["type"];
-  const spec = typeof noteType === "string" ? manifest.types[noteType] : undefined;
+  // Own keys only: a note typed `constructor` must not find Object.prototype's.
+  const spec =
+    typeof noteType === "string" && Object.hasOwn(manifest.types, noteType)
+      ? manifest.types[noteType]
+      : undefined;
   if (!spec) {
     const choice: FieldSpec = {
       values: typeNames.length > 0 ? typeNames : ["(none declared)"],

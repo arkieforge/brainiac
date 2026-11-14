@@ -131,7 +131,17 @@ class Editor {
     );
     // The value's own end, not its outer range, which can swallow comment lines that follow it.
     const last = isNode(node) && node.range ? node.range[1] : first.range[1];
-    return this.splice(start, this.lineEnd(last), "");
+    let end = this.lineEnd(last);
+    // In a compact `- key: value` item, the next key moves up after the dash to take this one's place.
+    if (
+      slot.kind === "pair" &&
+      start === first.range[0] &&
+      this.src.slice(this.lineStart(start), start).trim()
+    ) {
+      const next = slot.parent.items[slot.parent.items.indexOf(slot.pair) + 1]?.key;
+      if (isNode(next) && next.range) end = next.range[0];
+    }
+    return this.splice(start, end, "");
   }
 
   append(path: Path, value: YamlValue): string {
@@ -195,17 +205,26 @@ class Editor {
     }
     if (isNode(node) && node.range && !isBlockCollection(node)) {
       const [start, end] = node.range;
-      return this.splice(start, end, this.spaced(start, text));
+      return this.splice(start, end, this.spaced(start, text) + this.closing(end));
     }
     if (slot.kind === "item") {
       if (!isNode(node) || !node.range) throw new PatchError("List item has no position in the source.");
       const [start, end] = node.range;
-      return this.splice(start, end, this.src[end - 1] === "\n" ? `${text}\n` : text);
+      return this.splice(start, end, text + this.closing(end));
     }
     // A pair whose value is a block collection (or missing): rewrite everything after the colon.
     const colon = this.colonAfter(slot.pair);
     const end = isNode(node) && node.range ? node.range[1] : colon;
-    return this.splice(colon, end, ` ${text}${this.src[end - 1] === "\n" ? "\n" : ""}`);
+    return this.splice(colon, end, ` ${text}${this.closing(end)}`);
+  }
+
+  /**
+   * What must follow a value that replaced the span ending at `end`: the line break a block value ended
+   * with, or a space when a comment comes straight after (`a: # note`), since `3# note` is one string.
+   */
+  private closing(end: number): string {
+    if (end > 0 && this.src[end - 1] === "\n") return "\n";
+    return this.src[end] === "#" ? " " : "";
   }
 
   private insertPair(map: YAMLMap, key: string, value: YamlValue): string {
@@ -320,7 +339,8 @@ function setSection(body: string, heading: string, content: string, level: numbe
       continue;
     }
     if (fence !== undefined) continue;
-    const match = /^(#{1,6})[ \t]+(.*?)[ \t#]*\r?\n?$/.exec(line);
+    // Closing hashes count only after whitespace, so `## C#` is the heading "C#".
+    const match = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*\r?\n?$/.exec(line);
     if (!match) continue;
     const hashes = match[1]?.length ?? 0;
     if (found) {
