@@ -94,8 +94,14 @@ export default Alchemy.Stack(
           }
         : {};
 
+      // A custom hostname in a Cloudflare zone of this account, kept in Doppler so moving domains needs no code
+      // change. The workers.dev URL keeps working beside it. Passkeys are bound to the hostname they were
+      // made on, so a passkey from one won't sign in on the other.
+      const domain = yield* optional("DOMAIN");
+
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
+        ...(domain && { domain }),
         main: "apps/worker/src/index.ts",
         compatibility: { flags: ["nodejs_compat"] },
         env: {
