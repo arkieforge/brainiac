@@ -1,0 +1,74 @@
+# Quality bar
+
+"Works 100 out of 100" means two things. The **deterministic parts** (sync, schema, filters, permissions, approvals, merges, secrets, requirement checks, the verify step) must be correct every time, and tests check it from many angles, including property tests over thousands of random cases. The **model parts** run in the user's own Claude, so Brainiac's job is to make the right answer easy and a wrong number catchable, and evals measure how well that works on the models people actually use.
+
+## Cheap where it costs money: infrastructure, not models
+
+| Lever                                  | Effect                                                                                                                                                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No model bill by default**           | Thinking runs on the user's own subscription. Brainiac pays only for deterministic infrastructure: storage, sync, search, document-to-text, embeddings                                                                                                              |
+| **No paid eval or observability SaaS** | Evals live in the repo and write JSONL rows plus a summary (T3 Code's layout), instead of Braintrust or Langfuse. Logs and traces: Workers Logs; metrics: Analytics Engine; both included with Workers Paid. Sentry's free tier only if the CLI needs crash reports |
+| **One platform**                       | Cloudflare covers compute, storage, queues, workflows, extraction, embeddings, email routing and bot protection; Neon only holds shared account data and scales to zero                                                                                             |
+| **Pay once per file**                  | Extraction and embeddings are keyed by sha256 + pipeline version; re-uploads and moves cost nothing                                                                                                                                                                 |
+| **Idle costs nothing**                 | DOs hibernate with sockets open; Neon scales to zero; R2 has no egress fees                                                                                                                                                                                         |
+| **Paid data per call, not per seat**   | treg for drift checks and link text, cached for a day, only when the user triggers it                                                                                                                                                                               |
+
+Target, to confirm with real usage: infrastructure cost well under $0.25 per active user per month for a typical record (a few hundred notes, a few dozen files). Analytics Engine records cost per job so it's a measured number.
+
+## Fast, with numbers
+
+| Path                                                | Target (p95)             | Checked by                                    |
+| --------------------------------------------------- | ------------------------ | --------------------------------------------- |
+| First screen (returning user)                       | < 300 ms, from IndexedDB | Playwright trace on a preview stage, every PR |
+| Edit on site → other tab / phone                    | < 300 ms                 | Sync e2e with two browsers                    |
+| Edit on site → file on a laptop                     | < 1 s                    | Sync e2e with a simulated daemon              |
+| MCP `query` / `get` / `related`, warm DO            | < 80 ms server time      | Bench in the Workers test pool                |
+| MCP `search` / `ask context`, warm                  | < 150 ms                 | Bench on the fixture and a 20k-chunk record   |
+| Same, cold DO (after hibernation, vectors reloaded) | < 600 ms                 | Bench with forced eviction                    |
+| Upload → searchable (10-page PDF)                   | < 20 s                   | Ingest test                                   |
+
+## Tests (deterministic, every PR, free)
+
+- **Unit**: `packages/core` (schema, merges, filter compiler, chunker, YAML patching), `packages/base` (SQL and migrations on both bun:sqlite and the DO).
+- **Property tests** (fast-check): random edits across 3 simulated clients with disconnects and offline periods always converge with nothing lost; random filters return the same rows locally and in the DO; a YAML or body edit leaves every byte outside the edited node unchanged; and the **approval invariant**: random sequences of update, delete, undo, move, type change, schema change and superseding create from actors without an approval never change a verified value or the verified set, and never escape the hold.
+- **DO integration** in the Workers test pool: protocol, high-water marks, client reset, jobs outbox, migrations, scopes, approvals, hibernation.
+- **End to end** on an Alchemy preview stage per PR (its own Neon branch): sign-up with a passkey, import, edit, approve, a web edit reaching a laptop file, an offline conflict, a blocked local edit.
+- **Real filesystem**: the daemon's file adapter runs against real editors' save patterns (atomic rename, in-place write) with concurrent saves interleaved at every step of the swap, on macOS and Linux in M0 and Windows in M1.
+- **Chaos**: kill a DO mid-write, drop and reorder messages, a laptop offline for 100 days, a cloned vault, a machine restored from a week-old backup, a deleted vault.
+- **Security**: cross-tenant suite on every route and tool, canary non-disclosure across every read surface (including that a new connection gets no sensitive data until you grant the scope), forged and replayed approval signatures, vault documents never reaching an agent, injection corpus, XSS uploads, secret-leak scan of all test logs and outputs.
+- **Parity**: the fixture record and questions, local (online) vs cloud: identical results.
+
+## Evals (model behavior, T3 Code's shape)
+
+One folder per eval with `run.ts`, a README (what it measures, how to run it, what a run costs) and cases as data. Cases import the real tool descriptions, prompts and schemas from source. The world is the fixture record running in `packages/base`, so tools return real results and no model has to play the server.
+
+| Eval               | Measures                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mcp-tool-use`     | `describe` first, `query` before `search`, update instead of create, new events as new notes, dry-run bulk changes, `verify` before numbers, `request_info` instead of guessing, no direct file writes |
+| `retrieval`        | Recall@8 and citation precision on golden questions per route, local and cloud                                                                                                                         |
+| `answers`          | With `ask context` + `verify`: values quoted exactly, unverified values labeled, "not in your record" when it isn't                                                                                    |
+| `filing`           | "File my inbox": the right proposals on the right notes; the injection corpus never gets past the approval list; background filing never touches sensitive or unclassified items                       |
+| `structure`        | New info lands in the right type and folder; controls check no invented types                                                                                                                          |
+| `drafts`           | Every claim cited, no invented numbers, house rules followed, `verify` clean                                                                                                                           |
+| `review-detectors` | Precision and recall of "looks wrong" flags on seeded errors (deterministic, so this one also runs in CI)                                                                                              |
+
+- **Models**: each run covers the models users bring: Claude Opus and Sonnet (Claude Code and claude.ai), and GPT Sol through Codex or T3 Code. The gate is no regression on any of them; models are never downgraded to save money.
+- **Case rules** (from T3): each case reproduces a real bad experience or guards a good one and names its source; `bad`, `guard` or `control`; added before its fix and failing on the old text; only the fictional fixture student, no real data. The first cases come from real past mistakes with personal-record tools, rewritten for the fixture.
+- **Sampling**: 2 samples per case, a 3rd when they disagree; a case fails when half or more fail. **Exception**: exact-value and canary cases fail if _any_ sample fails.
+- **Running**: graders' unit tests and `--dry-run` in CI; paid runs of touched cases before merge on the team's own subscriptions or keys; a full run per model before each release, with its token use recorded in the summary.
+
+## Release gates
+
+Tests and evals are evidence, not proof, so the gates set floors for usefulness as well as correctness: refusing everything can't pass.
+
+| Gate                                                                                                              | Floor                                       |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Deterministic tests (unit, property, integration, e2e, chaos, security)                                           | 100% pass                                   |
+| Exact-value and canary eval cases                                                                                 | No failing sample on any supported model    |
+| Retrieval recall@8 on the golden questions                                                                        | ≥ 0.95                                      |
+| Answerability: questions whose answer is in the record get one (not "not in your record")                         | ≥ 0.95                                      |
+| Extraction coverage: fixture document fields filled automatically and correctly                                   | ≥ 0.90 (the rest become questions)          |
+| Review detectors on seeded errors                                                                                 | recall ≥ 0.90, precision ≥ 0.90             |
+| `mcp-tool-use` tasks completed correctly                                                                          | ≥ 0.90 per model, no regression on any case |
+| Latency targets above                                                                                             | Met on the preview stage                    |
+| Infrastructure cost on the benchmark workload (300 notes, 40 files, 50 tool calls and 3 uploads a day, one month) | ≤ $0.25 per record                          |

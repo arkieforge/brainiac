@@ -2,23 +2,34 @@
   "name": "brainiac",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.18.0",
-  "engines": {
-    "node": ">=24"
-  },
   "scripts": {
+    "prepare": "vp config --no-agent",
     "dev": "alchemy dev",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
-    "typecheck": "tsc -p . && pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "lint": "biome check .",
-    "format": "biome check --write ."
+    "check": "vp check",
+    "fmt": "vp fmt",
+    "lint": "vp lint --report-unused-disable-directives",
+    "test": "vp test run",
+    "typecheck": "effect-tsgo tsc -p . && vp run -r typecheck",
+    "knip": "knip",
+    "doctor": "node scripts/doctor.ts",
+    "repos:sync": "node scripts/sync-reference-repos.ts",
+    "setup": "node scripts/setup-worktree.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.7",
+    "@effect/language-service": "0.87.5",
+    "@effect/tsgo": "0.69.0",
+    "@effect/vitest": "4.1.4",
+    "@oxlint/plugins": "1.93.0",
+    "@types/node": "24.19.2",
     "alchemy": "0.94.0",
-    "typescript": "7.0.2",
-    "@types/node": "24.19.2"
-  }
+    "effect": "4.1.4",
+    "knip": "6.45.1",
+    "vite-plus": "1.6.0"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "packageManager": "pnpm@12.18.0"
 }

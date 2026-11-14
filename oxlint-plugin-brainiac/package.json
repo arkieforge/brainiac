@@ -1,0 +1,9 @@
+{
+  "name": "@brainiac/oxlint-plugin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  }
+}

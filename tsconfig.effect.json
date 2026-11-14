@@ -1,0 +1,18 @@
+{
+  // Effect's language service: editor diagnostics and `effect-tsgo` type checks share these rules.
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["effect", "@effect/platform-node"],
+        "diagnosticSeverity": {
+          "runEffectInsideEffect": "error",
+          "tryCatchInEffectGen": "error",
+          "catchUnfailableEffect": "error",
+          "unnecessaryEffectGen": "error",
+          "redundantMapError": "error"
+        }
+      }
+    ]
+  }
+}
