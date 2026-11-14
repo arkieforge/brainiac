@@ -7,7 +7,7 @@
 3. `vp run doctor` checks your machine and tells you what's missing.
 4. Optional: `vp run repos:sync` clones the reference repos into `.repos/` (see below).
 
-In a T3 Code worktree, `t3.json` runs `scripts/setup-worktree.ts` on creation, which does steps 2 to 4 and
+In a T3 Code worktree, `t3.json` runs `scripts/setup-worktree.ts` on creation, which does steps 2 and 4 and
 links the main checkout's `.env`.
 
 ## Commands

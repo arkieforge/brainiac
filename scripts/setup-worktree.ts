@@ -2,7 +2,7 @@
 // Runs when T3 Code creates a worktree (t3.json): install, link the main checkout's .env, and share
 // reference repos cloned once into the main checkout.
 import { spawnSync } from "node:child_process";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -27,12 +27,16 @@ if (import.meta.main) {
     console.log("linked .env from the main checkout");
   }
   // This worktree's own sync script, aimed at the main checkout, so it works even when main is older.
+  // The shared folder exists before cloning, so the link is made even if every clone fails offline.
+  mkdirSync(join(main, ".repos"), { recursive: true });
   const synced = run("node", ["scripts/sync-reference-repos.ts", "--root", main, "--missing"]);
   if (main !== ROOT && existsSync(join(main, ".repos")) && !existsSync(join(ROOT, ".repos"))) {
     symlinkSync(join(main, ".repos"), join(ROOT, ".repos"));
   }
   if (!synced) {
     // Reference repos are optional for building; say so loudly instead of failing the worktree.
-    console.warn("WARN: some reference repos are missing. Retry with `vp run repos:sync -- --missing`.");
+    console.warn(
+      `WARN: some reference repos are missing. Retry with: node scripts/sync-reference-repos.ts --root ${main} --missing`,
+    );
   }
 }
