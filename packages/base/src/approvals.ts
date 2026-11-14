@@ -60,6 +60,8 @@ function verifiedFields(verified: unknown): string[] | "all" {
 /**
  * The live verified note a `supersedes` relation (a path relative to the note, or an id) names, if any. Paths
  * match as the record matches them, whatever their case or Unicode form, as a Mac or Obsidian would open them.
+ * Anything else that reads `supersedes` (an edges table, a "current score" query) must resolve it exactly like
+ * this, or a form it accepts and this doesn't would carry an edge past approvals.
  */
 function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): string | undefined {
   if (!from || typeof relation !== "string") return undefined;
@@ -88,7 +90,8 @@ function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown):
 function edgesMoved(sql: Sql, { before, after }: Effect): string[] {
   const was = liveData(before)?.["supersedes"];
   const is = liveData(after)?.["supersedes"];
-  if (deepEqual(was, is)) return [];
+  // A relative relation reads from its note's path, so the same text on a moved note can point elsewhere.
+  if (deepEqual(was, is) && before?.path === after.path) return [];
   return [verifiedTarget(sql, before, was), verifiedTarget(sql, after, is)].filter((id) => id !== undefined);
 }
 
@@ -239,6 +242,7 @@ export function recordApproval(
     const hash = planHash(items);
     // A used approval must outlive any chance of its plan recurring (a create at revision 0 after a purge), or
     // a replayed signature from a passkey whose counter stays at 0 would open a fresh one: never prune them.
+    // The cost: an identical plan after a purge and recreate can't be approved again.
     const [given] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE planHash = ?", hash);
     if (given)
       return given.usedAt === null ? { approvalId: given.id } : { error: "This plan was already applied." };

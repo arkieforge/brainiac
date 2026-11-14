@@ -515,6 +515,7 @@ export const approvalCases: Record<string, Case> = {
       "&k status: preparing\n*k : submitted",
       'status: preparing\n~: a\n"": b',
       "status: preparing\n? [a]\n: 1",
+      "status: preparing\nscore: -0",
       "status: preparing\n9007199254740993: x",
     ]) {
       equal(put(yaml), "invalid", yaml);

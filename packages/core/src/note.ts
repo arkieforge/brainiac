@@ -78,6 +78,8 @@ function assertJson(value: unknown, key: string, path: readonly unknown[] = []):
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`${key} must be a finite number.`);
+    // JSON stores -0 as 0.
+    if (Object.is(value, -0)) throw new Error(`${key} can't be -0.`);
     if (Number.isInteger(value) && !Number.isSafeInteger(value))
       throw new Error(`${key} is too long for a number: quote it.`);
     return;
