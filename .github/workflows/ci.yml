@@ -14,6 +14,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Runners: checks run on GitHub's own runners, free and unlimited on a public repo. Deploys are the
+  # slowest job of every run, so they get Blacksmith (co-located cache) on 2 vCPU ARM, its cheapest draw on
+  # the 3,000 free minutes (0.625x). If those run out, set the DEPLOY_RUNNER repo variable to ubuntu-24.04.
   # Every job stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
   # One job per check, all in parallel, so the slowest check sets the wall time and a failure names itself.
   check:
@@ -43,7 +46,7 @@ jobs:
   preview:
     name: Deploy preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'blacksmith-2vcpu-ubuntu-2404-arm' }}
     timeout-minutes: 5
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -62,7 +65,7 @@ jobs:
     name: Deploy prod
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'blacksmith-2vcpu-ubuntu-2404-arm' }}
     timeout-minutes: 5
     environment: production
     concurrency:
