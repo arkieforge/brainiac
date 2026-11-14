@@ -17,3 +17,6 @@ allowBuilds:
   esbuild: true
   workerd: true
   sharp: false
+# miniflare pins sharp 0.35.2 (libheif and librsvg advisories, fixed in 0.35.5); only its Images binding uses it.
+overrides:
+  sharp: 0.35.5
