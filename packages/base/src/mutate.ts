@@ -14,18 +14,25 @@ import {
   splitNote,
   ulid,
   validate,
+  type Diff,
   type Issue,
   type PatchOp,
   type YamlValue,
 } from "@brainiac/core";
 
+import { settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
+import { diff, side, stateOf, type State } from "./diff.ts";
 import { enqueue } from "./jobs.ts";
 import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
 import { putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
-/** Who is changing the record, and when. Every mutation belongs to a run, so it can be undone with its run. */
-export interface Context {
+/**
+ * Who is changing the record, and when. Every mutation belongs to a run, so it can be undone with its run.
+ * The grant (`approvalId`, `review`) is only a reference: it lets a change through only if a passkey signed
+ * exactly its effect, or opened a review session over its notes.
+ */
+export interface Context extends Grant {
   /** For example `human` or `connection:<id>`; recorded on the revision and the change. */
   readonly actor: string;
   /** Groups the changes an agent or `organize` made together; a mutation without one is its own run. */
@@ -57,52 +64,53 @@ export type MutationResult =
     }
   /** `baseRev` is not the note's current revision. */
   | { readonly status: "conflict"; readonly noteId: string; readonly rev: number }
-  | { readonly status: "invalid"; readonly issues: readonly Issue[] };
+  | { readonly status: "invalid"; readonly issues: readonly Issue[] }
+  /** Nothing was written: the effect needs a passkey signature over `planHash` (contract §4). */
+  | NeedsApproval;
 
 interface Change<T> {
   readonly before?: T;
   readonly after?: T;
 }
 
-/**
- * What one revision changed, stored on it as its inverse patch: each top-level front-matter field's value
- * before and after (a missing side means the field was absent), the body, and whether the note was live.
- */
-export interface Diff {
-  readonly fields: Readonly<Record<string, Change<unknown>>>;
-  readonly body?: Change<string>;
-  readonly live?: Change<boolean>;
-}
+/** The notes one transaction wrote, each as it started, for judging the transaction's effect at its end. */
+type Started = Map<string, NoteRow | undefined>;
 
-interface State {
-  readonly data: Readonly<Record<string, unknown>>;
-  readonly body: string;
-  readonly live: boolean;
-}
-
-const NOTHING: State = { data: {}, body: "", live: false };
-
-const stateOf = (note: Pick<NoteRow, "raw" | "fm" | "deletedAt"> | undefined): State =>
-  note
-    ? { data: JSON.parse(note.fm), body: splitNote(note.raw).body, live: note.deletedAt === null }
-    : NOTHING;
-
-const side = <K extends "before" | "after", T>(key: K, has: boolean, value: T) =>
-  (has ? { [key]: value } : {}) as Partial<Record<K, T>>;
-
-function diff(before: State, after: State): Diff {
-  const fields: Record<string, Change<unknown>> = {};
-  for (const key of new Set([...Object.keys(before.data), ...Object.keys(after.data)])) {
-    const had = Object.hasOwn(before.data, key);
-    const has = Object.hasOwn(after.data, key);
-    if (had === has && deepEqual(before.data[key], after.data[key])) continue;
-    fields[key] = { ...side("before", had, before.data[key]), ...side("after", has, after.data[key]) };
+/** Thrown to roll back a transaction whose effect needs an approval it doesn't have. */
+class Held extends Error {
+  readonly verdict: NeedsApproval;
+  constructor(verdict: NeedsApproval) {
+    super("needs approval");
+    this.verdict = verdict;
   }
-  return {
-    fields,
-    ...(before.body !== after.body && { body: { before: before.body, after: after.body } }),
-    ...(before.live !== after.live && { live: { before: before.live, after: after.live } }),
-  };
+}
+
+/**
+ * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
+ * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
+ */
+function judged<T>(
+  sql: Sql,
+  ctx: Context,
+  scope: "change" | "undo",
+  fn: (started: Started) => T,
+): T | NeedsApproval {
+  try {
+    return sql.transaction(() => {
+      const started: Started = new Map();
+      const result = fn(started);
+      const effects: Effect[] = [...started].flatMap(([id, before]) => {
+        const after = getNote(sql, id);
+        return after ? [{ before, after }] : [];
+      });
+      const verdict = settle(sql, effects, ctx, scope, ctx.now);
+      if (verdict) throw new Held(verdict);
+      return result;
+    });
+  } catch (error) {
+    if (error instanceof Held) return error.verdict;
+    throw error;
+  }
 }
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -146,12 +154,14 @@ type Op = "create" | "update" | "delete" | "restore";
 /** Writes the next revision of a note: the row, its revision with the inverse patch, its change, its job. */
 function write(
   sql: Sql,
+  started: Started,
   ctx: Context,
   runId: string,
   prev: NoteRow | undefined,
   next: Pick<NoteRow, "id" | "path" | "raw" | "class" | "deletedAt">,
   op: Op,
 ): Extract<MutationResult, { status: "applied" }> {
+  if (!started.has(next.id)) started.set(next.id, prev);
   const seq = nextSeq(sql);
   const rev = (prev?.rev ?? 0) + 1;
   putNote(sql, { ...next, rev, seq, hash: sha256(next.raw) });
@@ -186,15 +196,15 @@ function write(
 }
 
 /**
- * The one way a note changes: read its revision, validate, write, enqueue follow-up jobs, commit, all in
- * one transaction with no I/O, so the DO never interleaves another request inside it.
+ * The one way a note changes: read its revision, validate, write, enqueue follow-up jobs, judge the effect,
+ * commit, all in one transaction with no I/O, so the DO never interleaves another request inside it. Inside a
+ * caller's transaction (the sync handler records the client's result in it too) it is a savepoint.
  */
 export function mutate(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
-  return sql.transaction(() => applyMutation(sql, mutation, ctx));
+  return judged(sql, ctx, "change", (started) => applyOne(sql, started, mutation, ctx));
 }
 
-/** `mutate` inside the caller's transaction, for the sync handler, which records the client's result in it too. */
-export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
+function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context): MutationResult {
   const runId = ctx.runId ?? ulid(ctx.now);
   if (mutation.op === "create") {
     let path: string;
@@ -216,6 +226,7 @@ export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): Mutat
     if (clash !== undefined) return invalid("path", `${path} clashes with ${clash}.`);
     return write(
       sql,
+      started,
       ctx,
       runId,
       undefined,
@@ -231,7 +242,7 @@ export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): Mutat
   }
   if (note.rev !== mutation.baseRev) return { status: "conflict", noteId: note.id, rev: note.rev };
   if (mutation.op === "delete")
-    return write(sql, ctx, runId, note, { ...note, deletedAt: ctx.now }, "delete");
+    return write(sql, started, ctx, runId, note, { ...note, deletedAt: ctx.now }, "delete");
 
   let raw: string;
   try {
@@ -248,7 +259,15 @@ export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): Mutat
   const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
   if (taken !== undefined)
     return invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
-  return write(sql, ctx, runId, note, { ...note, raw, deletedAt: null }, deleted ? "restore" : "update");
+  return write(
+    sql,
+    started,
+    ctx,
+    runId,
+    note,
+    { ...note, raw, deletedAt: null },
+    deleted ? "restore" : "update",
+  );
 }
 
 /** Records a conflict proposal: `change` goes from the note as it is (`before`) to the side it kept out (`after`). */
@@ -273,6 +292,7 @@ export interface UndoConflict {
 }
 
 export interface UndoResult {
+  readonly status: "applied";
   /** The undo's own run, so it can be undone too. */
   readonly runId: string;
   readonly undone: readonly string[];
@@ -308,11 +328,11 @@ const livePaths = (sql: Sql) =>
  * run created and someone edited since, a deleted note whose path is taken, a note deleted since, or an
  * undo that would leave the note failing its type.
  */
-export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
+export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult | NeedsApproval {
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
-  return sql.transaction(() => {
+  return judged(sql, ctx, "undo", (started): UndoResult => {
     // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
     // part; keep whole runs if people undo month-old runs.
     const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
@@ -360,7 +380,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         }
         const then = parseNote(revision.raw);
         if (!held && deepEqual(now.data, then.data) && now.body === then.body) {
-          write(sql, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
+          write(sql, started, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
           undone.add(note.id);
         } else hold(note.id, inverseFrom(now, d));
         continue;
@@ -372,7 +392,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         if (held?.live || findClash(livePaths(sql), note.path) !== undefined)
           hold(note.id, inverseFrom(now, d));
         else {
-          write(sql, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
+          write(sql, started, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
           undone.add(note.id);
         }
         continue;
@@ -415,7 +435,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         continue;
       }
       if (raw !== note.raw) {
-        write(sql, undo, undoRunId, note, { ...note, raw }, "update");
+        write(sql, started, undo, undoRunId, note, { ...note, raw }, "update");
         undone.add(note.id);
       }
       const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
@@ -437,6 +457,6 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
       conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
     }
-    return { runId: undoRunId, undone: [...undone], conflicts };
+    return { status: "applied", runId: undoRunId, undone: [...undone], conflicts };
   });
 }

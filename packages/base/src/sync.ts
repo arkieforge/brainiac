@@ -5,6 +5,7 @@ import {
   NoteParseError,
   parseNote,
   type ClientMessage,
+  type Diff,
   type Hello,
   type Mutate,
   type NoteState,
@@ -12,7 +13,7 @@ import {
   type ServerMessage,
 } from "@brainiac/core";
 
-import { applyMutation, propose, type Context, type Diff, type MutationResult } from "./mutate.ts";
+import { mutate, propose, type Context, type MutationResult } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
@@ -153,7 +154,10 @@ export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage 
     );
     const result: Result = landed
       ? { ...JSON.parse(landed.result), clientId: message.clientId, clientSeq: message.clientSeq }
-      : apply(sql, message, ctx);
+      : apply(sql, message, {
+          ...ctx,
+          ...(message.approvalId !== undefined && { approvalId: message.approvalId }),
+        });
     if (!landed) {
       sql.all(
         "INSERT INTO landed (changeId, result, at) VALUES (?, ?, ?)",
@@ -200,8 +204,21 @@ function parseError(raw: string): string | undefined {
   }
 }
 
-const refusal = (result: MutationResult) =>
-  result.status === "invalid" ? result.issues.map((issue) => issue.message).join(" ") : "The note changed.";
+/** Why the record kept a change out, as a result: invalid, changed under it, or waiting for an approval. */
+function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { status: "applied" }>): Result {
+  if (result.status === "needsApproval") {
+    const { planHash, items } = result;
+    return {
+      ...done,
+      ok: false,
+      needsApproval: { planHash, items },
+      error: "This changes a verified value: approve it with your passkey.",
+    };
+  }
+  const error =
+    result.status === "invalid" ? result.issues.map((issue) => issue.message).join(" ") : "The note changed.";
+  return { ...done, ok: false, error };
+}
 
 /** Applies one client change under the merge rules: nothing is dropped silently. */
 function apply(sql: Sql, message: Mutate, ctx: Context): Result {
@@ -221,14 +238,12 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
   if (change.kind === "create" && !current) {
     const id = parseNote(change.raw).data["id"];
     if (id !== noteId) return { ...done, ok: false, error: "The note's id must match noteId." };
-    const created = applyMutation(
+    const created = mutate(
       sql,
       { op: "create", path: change.path, raw: change.raw, class: change.class },
       ctx,
     );
-    return created.status === "applied"
-      ? { ...done, ok: true, rev: created.rev }
-      : { ...done, ok: false, error: refusal(created) };
+    return created.status === "applied" ? { ...done, ok: true, rev: created.rev } : refused(done, created);
   }
   if (!current) return { ...done, ok: false, error: `No note with id ${noteId}.` };
 
@@ -239,8 +254,8 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
       const proposalId = propose(sql, noteId, { fields: {}, live: { before: true, after: false } }, ctx);
       return { ...done, ok: false, conflict: { proposalId, fields: [], body: false, deleted: true } };
     }
-    const deleted = applyMutation(sql, { op: "delete", noteId, baseRev: current.rev }, ctx);
-    return { ...done, ok: true, rev: deleted.status === "applied" ? deleted.rev : current.rev };
+    const deleted = mutate(sql, { op: "delete", noteId, baseRev: current.rev }, ctx);
+    return deleted.status === "applied" ? { ...done, ok: true, rev: deleted.rev } : refused(done, deleted);
   }
 
   // An edit, or a create for a note that exists (a client repairing): merge it into the current text. A
@@ -258,10 +273,8 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
   const deleted = current.deletedAt !== null;
   // Edited here, deleted on the other side: the note comes back with the edit, and the delete becomes the
   // proposal.
-  const written = applyMutation(sql, { op: "put", noteId, baseRev: current.rev, raw: merged.raw }, ctx);
-  if (written.status !== "applied") {
-    return { ...done, ok: false, error: refusal(written) };
-  }
+  const written = mutate(sql, { op: "put", noteId, baseRev: current.rev, raw: merged.raw }, ctx);
+  if (written.status !== "applied") return refused(done, written);
   if (merged.fields.length === 0 && !merged.body && !deleted) return { ...done, ok: true, rev: written.rev };
   const diff = conflictDiff(current.raw, mine, merged.fields, merged.body);
   const proposalId = propose(

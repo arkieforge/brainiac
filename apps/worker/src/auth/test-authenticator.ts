@@ -28,6 +28,13 @@ export function createAuthenticator(origin: string) {
   const jwk = publicKey.export({ format: "jwk" });
   const credentialId = randomBytes(16);
   let counter = 0;
+  const coseKey = new Map<Cbor, Cbor>([
+    [1, 2], // EC2
+    [3, -7], // ES256
+    [-1, 1], // P-256
+    [-2, Buffer.from(jwk.x ?? "", "base64url")],
+    [-3, Buffer.from(jwk.y ?? "", "base64url")],
+  ]);
 
   const clientData = (type: string, challenge: string) =>
     Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }));
@@ -40,15 +47,10 @@ export function createAuthenticator(origin: string) {
 
   return {
     id: b64url(credentialId),
+    /** The COSE public key, base64, as Better Auth stores it in the passkey table. */
+    publicKey: cbor(coseKey).toString("base64"),
     /** Answers `/passkey/generate-register-options`. */
     register(options: { challenge: string }) {
-      const coseKey = new Map<Cbor, Cbor>([
-        [1, 2], // EC2
-        [3, -7], // ES256
-        [-1, 1], // P-256
-        [-2, Buffer.from(jwk.x ?? "", "base64url")],
-        [-3, Buffer.from(jwk.y ?? "", "base64url")],
-      ]);
       const credentialLength = Buffer.alloc(2);
       credentialLength.writeUInt16BE(credentialId.length);
       // Flags: user present, user verified, attested credential data.
@@ -70,14 +72,14 @@ export function createAuthenticator(origin: string) {
       return {
         id: b64url(credentialId),
         rawId: b64url(credentialId),
-        type: "public-key",
+        type: "public-key" as const,
         response: {
           clientDataJSON: b64url(clientData("webauthn.create", options.challenge)),
           attestationObject: b64url(attestationObject),
           transports: ["internal"],
         },
         clientExtensionResults: {},
-        authenticatorAttachment: "platform",
+        authenticatorAttachment: "platform" as const,
       };
     },
     /** Answers `/passkey/generate-authenticate-options`. */
@@ -92,14 +94,14 @@ export function createAuthenticator(origin: string) {
       return {
         id: b64url(credentialId),
         rawId: b64url(credentialId),
-        type: "public-key",
+        type: "public-key" as const,
         response: {
           clientDataJSON: b64url(clientDataJSON),
           authenticatorData: b64url(authenticatorData),
           signature: b64url(signature),
         },
         clientExtensionResults: {},
-        authenticatorAttachment: "platform",
+        authenticatorAttachment: "platform" as const,
       };
     },
   };

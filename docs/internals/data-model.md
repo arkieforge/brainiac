@@ -28,9 +28,9 @@ landed       { changeId PK, result JSON, at }                       // every syn
 clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion }   // strict in-order apply; ackedUpTo: the highest it sent
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
 proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema }
-approvals    { id, planHash, items JSON [(noteId, baseRev, patch)], assertion, credentialId, at, usedAt? }
-review_runs  { nonce, items JSON, assertion, credentialId, expiresAt }   // one signature, only for the items shown
-passkey_keys { credentialId PK, publicKey, counter }                // cached from Better Auth's passkey table
+approvals    { id, planHash, items JSON [(noteId, baseRev, path, patch)], assertion, credentialId, at, usedAt? }   // used once
+review_runs  { nonce, items JSON, assertion, credentialId, expiresAt }   // one signature, only for the items shown; assertion '' until signed
+passkey_keys { credentialId PK, publicKey, counter }                // the last counter each passkey signed with here
 connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, createdAt }
 inbox_leases { itemId, agent, expiresAt }                            // one filer per item
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
