@@ -71,4 +71,4 @@ The score is labeled unverified until you mark it checked in review."
 - **Skill** (Claude Code plugin, also at `<domain>/skill.md`): call `describe` first; `query` before `search`; update rather than create; new events are new notes; quote values exactly as returned; run `verify` before giving numbers; dry-run bulk changes; never write vault files directly.
 - **Hook**: the plugin installs a Claude Code hook that blocks Edit, Write and shell commands touching the vault path, plus Read, Grep and Glob on sensitive folders, `documents/files/` and `inbox/`, and points to the tools.
 - **Prompts**: "file my inbox", "what's missing for <application>", "review my record", so a subscription user starts common jobs in one line.
-- **Tested**: the `mcp-tool-use` eval runs real tasks on the models people use (see "Quality bar").
+- **Tested**: contract tests hold each tool to its schema and the connection's level through `/mcp`. Online, stdio returns the same tools and answers as remote. The `mcp-tool-use` eval runs real tasks on the models people use (see "Quality bar").

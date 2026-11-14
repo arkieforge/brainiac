@@ -29,14 +29,16 @@ Target, to confirm with real usage: infrastructure cost well under $0.25 per act
 
 ## Tests (deterministic, every PR, free)
 
-- **Unit**: `packages/core` (schema, merges, filter compiler, chunker, YAML patching), `packages/base` (SQL and migrations on both bun:sqlite and the DO).
+- **Unit**: `packages/core` (schema, merges, filter compiler, chunker, YAML patching), `packages/base` (SQL, migrations and each MCP tool's logic, as cases run on both bun:sqlite and the DO).
 - **Property tests** (fast-check): random edits across 3 simulated clients with disconnects and offline periods always converge with nothing lost; random filters return the same rows locally and in the DO; a YAML or body edit leaves every byte outside the edited node unchanged; and the **approval invariant**: random sequences of update, delete, undo, move, type change, schema change and superseding create from actors without an approval never change a verified value or the verified set, and never escape the hold.
 - **DO integration** in workerd through Miniflare (`apps/worker/test`; Cloudflare's vitest pool needs vitest 4): protocol, high-water marks, client reset, jobs outbox, migrations, scopes, approvals, hibernation.
+- **MCP contract**: the real `serveMcp` handler, signed in as a fixture connection, with tools reaching a real Base DO in workerd through Miniflare. Every tool's advertised schema matches what it accepts; an argument a tool doesn't declare is rejected rather than dropped; an optional argument sent as `null` reads as omitted and a required one rejects it, while a `null` inside a value (a `set` patch, a filter) is data, never a dropped argument; a read connection can't write; a change on the approval list returns `needsApproval`; the base comes from the token; and an outside service's error text never reaches the agent. Tools are thin, so their logic is tested in `packages/base` and this layer tests the transport. The handler runs in Node like the OAuth tests beside it (`apps/worker/src/auth/auth.test.ts`), because sign-in needs their in-memory Neon; only services outside the record (Neon, Workers AI) are faked.
 - **End to end** on an Alchemy preview stage per PR (its own Neon branch): sign-up with a passkey, import, edit, approve, a web edit reaching a laptop file, an offline conflict, a blocked local edit.
 - **Real filesystem**: the daemon's file adapter runs against real editors' save patterns (atomic rename, in-place write) with concurrent saves interleaved at every step of the swap, on macOS and Linux in M0 and Windows in M1.
 - **Chaos**: kill a DO mid-write, drop and reorder messages, a laptop offline for 100 days, a cloned vault, a machine restored from a week-old backup, a deleted vault.
 - **Security**: cross-tenant suite on every route and tool, canary non-disclosure across every read surface (including that a new connection gets no sensitive data until you grant the scope), forged and replayed approval signatures, vault documents never reaching an agent, injection corpus, XSS uploads, secret-leak scan of all test logs and outputs.
-- **Parity**: the fixture record and questions, local (online) vs cloud: identical results.
+- **Parity**: the fixture record and questions, local (online) vs cloud: identical results. Online, the same tool calls over remote MCP and `brainiac mcp serve` return the same tool list and the same answers, with the device holding sensitive notes and without them.
+- **Real clients**, by hand before each release and after any change to `/mcp`'s sign-in or transport: Claude Code, the claude.ai connector, T3 Code and MCP Inspector sign in to a dev stage, list the tools, call one and refresh; over `brainiac mcp serve`, Claude Code and Codex list the tools and call one. This is the only layer that sees a client's own OAuth and UI.
 
 ## Evals (model behavior, T3 Code's shape)
 
@@ -53,7 +55,7 @@ One folder per eval with `run.ts`, a README (what it measures, how to run it, wh
 | `review-detectors` | Precision and recall of "looks wrong" flags on seeded errors (deterministic, so this one also runs in CI)                                                                                              |
 
 - **Models**: each run covers the models users bring: Claude Opus and Sonnet (Claude Code and claude.ai), and GPT Sol through Codex or T3 Code. The gate is no regression on any of them; models are never downgraded to save money.
-- **Case rules** (from T3): each case reproduces a real bad experience or guards a good one and names its source; `bad`, `guard` or `control`; added before its fix and failing on the old text; only the fictional fixture student, no real data. The first cases come from real past mistakes with personal-record tools, rewritten for the fixture.
+- **Case rules** (from T3): each case reproduces a real bad experience or guards a good one and names its source; `bad`, `guard` or `control`; a `bad` case is added before its fix, fails on the old text and passes on the new, while `guard` and `control` cases pass on both; only the fictional fixture student, no real data. The first cases come from real past mistakes with personal-record tools, rewritten for the fixture.
 - **Sampling**: 2 samples per case, a 3rd when they disagree; a case fails when half or more fail. **Exception**: exact-value and canary cases fail if _any_ sample fails.
 - **Running**: graders' unit tests and `--dry-run` in CI; paid runs of touched cases before merge on the team's own subscriptions or keys; a full run per model before each release, with its token use recorded in the summary.
 
@@ -63,7 +65,7 @@ Tests and evals are evidence, not proof, so the gates set floors for usefulness 
 
 | Gate                                                                                                              | Floor                                       |
 | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Deterministic tests (unit, property, integration, e2e, chaos, security)                                           | 100% pass                                   |
+| Deterministic tests (unit, property, integration, MCP contract, parity, e2e, chaos, security)                     | 100% pass                                   |
 | Exact-value and canary eval cases                                                                                 | No failing sample on any supported model    |
 | Retrieval recall@8 on the golden questions                                                                        | ≥ 0.95                                      |
 | Answerability: questions whose answer is in the record get one (not "not in your record")                         | ≥ 0.95                                      |
