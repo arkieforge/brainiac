@@ -103,7 +103,9 @@ export default Alchemy.Stack(
         name: name("worker"),
         ...(domain && { domain }),
         main: "apps/worker/src/index.ts",
-        compatibility: { flags: ["nodejs_compat"] },
+        // Strictly public fetch: a fetch to one of our own hostnames goes through Cloudflare's front door, not
+        // straight to an origin. The MCP client metadata fetch relies on it (apps/worker/src/auth/cimd-fetch.ts).
+        compatibility: { flags: ["nodejs_compat", "global_fetch_strictly_public"] },
         env: {
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),

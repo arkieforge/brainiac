@@ -7,10 +7,15 @@
     "test": "vp test run --dir ."
   },
   "dependencies": {
+    "@better-auth/cimd": "1.7.22",
+    "@better-auth/mcp": "1.7.22",
+    "@better-auth/oauth-provider": "1.7.22",
     "@better-auth/passkey": "1.7.22",
     "@brainiac/base": "workspace:*",
     "@brainiac/core": "workspace:*",
+    "@modelcontextprotocol/server": "2.4.0",
     "better-auth": "1.7.22",
+    "jose": "6.2.17",
     "pg": "8.23.1"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
-// The two pages auth needs before the web app exists (#50): sign in or up, then enroll passkeys. Plain HTML
-// with a little inline script; the WebAuthn ceremonies use the browser's own JSON helpers.
+// The pages auth needs before the web app exists (#50): sign in or up, enroll passkeys, and let an MCP client
+// in. Plain HTML with a little inline script; the WebAuthn ceremonies use the browser's own JSON helpers.
 import { canApprove, type ApprovingPasskey } from "./recovery.ts";
 
 /** What the account page asks for next: a first passkey is required, a second strongly suggested. */
@@ -32,10 +32,14 @@ const run = (fn) => async (event) => {
   document.getElementById("error").textContent = "";
   try { await fn(event); } catch (error) { document.getElementById("error").textContent = error.message; }
 };
+// An MCP client's sign-in arrives with the authorize request, signed by the server. Sent back with the sign-in,
+// it makes the server carry on to consent, so the page goes where the reply says instead of the account page.
+const oauthQuery = new URLSearchParams(location.search).has("sig") ? location.search.slice(1) : undefined;
+const next = (reply, fallback) => { location.href = reply?.redirect && reply.url ? reply.url : fallback; };
 const passkeySignIn = async () => {
   const options = await api("/passkey/generate-authenticate-options");
   const credential = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options) });
-  await api("/passkey/verify-authentication", { method: "POST", body: JSON.stringify({ response: credential.toJSON() }) });
+  return api("/passkey/verify-authentication", { method: "POST", body: JSON.stringify({ response: credential.toJSON(), oauth_query: oauthQuery }) });
 };
 ${script}
 </script></body></html>`,
@@ -82,10 +86,7 @@ const captcha = () => {
   return { "x-captcha-response": token };
 };
 let email;
-document.getElementById("passkey").onclick = run(async () => {
-  await passkeySignIn();
-  location.href = "/account";
-});
+document.getElementById("passkey").onclick = run(async () => next(await passkeySignIn(), "/account"));
 document.getElementById("email").onsubmit = run(async (event) => {
   email = new FormData(event.target).get("email");
   await api("/email-otp/send-verification-otp", { method: "POST", headers: captcha(), body: JSON.stringify({ email, type: "sign-in" }) });
@@ -94,12 +95,11 @@ document.getElementById("email").onsubmit = run(async (event) => {
 });
 document.getElementById("code").onsubmit = run(async (event) => {
   const otp = new FormData(event.target).get("otp");
-  await api("/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp }) });
-  location.href = "/account";
+  next(await api("/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp, oauth_query: oauthQuery }) }), "/account");
 });
 for (const button of document.querySelectorAll("[data-provider]")) {
   button.onclick = run(async () => {
-    const { url } = await api("/sign-in/social", { method: "POST", headers: captcha(), body: JSON.stringify({ provider: button.dataset.provider, callbackURL: "/account" }) });
+    const { url } = await api("/sign-in/social", { method: "POST", headers: captcha(), body: JSON.stringify({ provider: button.dataset.provider, callbackURL: "/account", oauth_query: oauthQuery }) });
     location.href = url;
   });
 }`,
@@ -178,3 +178,35 @@ document.getElementById("sign-out").onclick = run(async () => {
 });`,
   );
 }
+
+export interface ConsentPageOptions {
+  email: string;
+  /** The client's own name for itself, from its metadata document. */
+  clientName: string | undefined;
+  /** The metadata URL the client identifies by. Its host is the part nobody else can claim. */
+  clientId: string;
+  redirectUri: string;
+}
+
+/** Shown once per client: whether an MCP client (claude.ai, Claude Code, ...) may use this account's record. */
+export function consentPage({ email, clientName, clientId, redirectUri }: ConsentPageOptions): Response {
+  const from = URL.canParse(clientId) ? new URL(clientId).host : clientId;
+  const returnsTo = URL.canParse(redirectUri) ? new URL(redirectUri).host : redirectUri;
+  return page(
+    "Connect an app",
+    `<p><strong>${escape(clientName ?? from)}</strong> wants to use your Brainiac record through Brainiac's tools.</p>
+<p class="note">It identifies as ${escape(from)} and returns to ${escape(returnsTo)}. You're signed in as ${escape(email)}.</p>
+<section><button type="button" id="allow">Allow</button> <button type="button" class="quiet" id="deny">Deny</button></section>`,
+    `const answer = (accept) => run(async () => next(await api("/oauth2/consent", { method: "POST", body: JSON.stringify({ accept, oauth_query: oauthQuery }) }), "/account"));
+document.getElementById("allow").onclick = answer(true);
+document.getElementById("deny").onclick = answer(false);`,
+  );
+}
+
+/** The consent page when its link wasn't one the server signed, or has expired. */
+export const consentExpired = () =>
+  page(
+    "Connect an app",
+    `<p>This link has expired. Go back to the app you were connecting and start again.</p>`,
+    "",
+  );

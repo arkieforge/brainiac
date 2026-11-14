@@ -1,12 +1,15 @@
 // Better Auth, self-hosted in the Worker with its tables in Neon (docs/internals/security.md, "Auth").
 // Sign-in and approvals share the passkeys enrolled here. Kept free of Worker bindings so the tests and the
 // schema check (schema.test.ts) build the same options.
+import { cimd } from "@better-auth/cimd";
+import { mcp } from "@better-auth/mcp";
 import { passkey } from "@better-auth/passkey";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { captcha } from "better-auth/plugins/captcha";
 import { emailOTP } from "better-auth/plugins/email-otp";
 import { jwt } from "better-auth/plugins/jwt";
 
+import { fetchClientMetadataResource } from "./cimd-fetch.ts";
 import { otpEmail, type Mailer } from "./email.ts";
 import { recovery } from "./recovery.ts";
 
@@ -26,6 +29,9 @@ export interface AuthConfig {
 
 /** Entry points that can create an account. Passkey sign-in can't, so it skips the challenge. */
 const SIGN_UP_PATHS = ["/email-otp/send-verification-otp", "/sign-in/social"];
+
+/** Where MCP clients connect, and the audience every access token is bound to. */
+export const mcpResource = (baseURL: string) => `${baseURL}/mcp`;
 
 export const authOptions = (config: AuthConfig) =>
   ({
@@ -65,6 +71,16 @@ export const authOptions = (config: AuthConfig) =>
       // JWTs come from /token only. Adding one to every session check needs Neon for the signing key, which
       // would undo the cookie cache during an outage.
       jwt({ disableSettingJwtHeader: true }),
+      // The OAuth 2.1 server MCP clients sign in through. Clients identify by a metadata URL (CIMD, below) instead
+      // of registering, so there's no open registration endpoint. Only the browser flow and refresh: a public
+      // client has no secret for client_credentials.
+      mcp({
+        resource: mcpResource(config.baseURL),
+        loginPage: "/sign-in",
+        consentPage: "/consent",
+        grantTypes: ["authorization_code", "refresh_token"],
+      }),
+      cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
     ],
   }) satisfies BetterAuthOptions;
 
