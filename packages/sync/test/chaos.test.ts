@@ -78,13 +78,15 @@ describe("sync chaos", () => {
     const restored = world.device("laptop", backup);
     world.settle();
     expect(restored.client.state.clientId).not.toBe(oldId);
-    // The draft it held is not replayed over the newer value; the clash is kept for the person.
+    // The draft it held is not replayed over the newer value.
     expect([field(world, "status"), field(world, "title")]).toEqual(["final", "renamed"]);
     const setsDraft = world.sql
       .all<{ patch: string }>("SELECT patch FROM revisions WHERE noteId = ?", A)
       .filter((r) => JSON.parse(r.patch).fields.status?.after === "draft");
     expect(setsDraft).toHaveLength(1);
-    expect(restored.client.state.blocked.get(A)?.at(-1)?.reason).toBe("conflict");
+    // The draft already landed, so its replay is answered as applied: no conflict to pick.
+    expect(restored.client.state.blocked.size).toBe(0);
+    expect(world.sql.all("SELECT * FROM proposals")).toEqual([]);
     expectConverged(world, restored, phone);
   });
 
@@ -322,5 +324,42 @@ describe("sync chaos", () => {
     world.settle();
     expect(field(world, "status")).toBe("after");
     expect(laptop.client.state.blocked.get(B)?.at(-1)?.reason).toMatch(/can't be read|alias/i);
+  });
+
+  // The backup holds changes that later landed and were acknowledged; the record has moved on since.
+  it("a restored backup never replays changes that already landed", () => {
+    const { world, laptop, phone } = start();
+    const C = "01M6CCCCCCCCCCCCCCCCCCCCC1";
+    world.disconnect(laptop);
+    laptop.client.create(C, "notes/c.md", `---\nid: ${C}\ntype: Note\ntitle: orig\n---\n`, "normal");
+    setField(laptop, C, "title", "later");
+    setField(laptop, A, "status", "B");
+    const backup = copy(laptop);
+    world.settle();
+    // The laptop reconnects, acknowledging every result, so the record forgets them.
+    world.disconnect(laptop);
+    world.settle();
+    // Someone else deletes C and sets A's status back to what it was.
+    phone.client.delete(C);
+    setField(phone, A, "status", "A-again");
+    world.settle();
+
+    world.retire(laptop);
+    const restored = world.device("laptop", backup);
+    world.settle();
+    expect(world.note(C)?.deletedAt).not.toBeNull();
+    expect(field(world, "status")).toBe("A-again");
+    expect(world.sql.all("SELECT * FROM proposals")).toEqual([]);
+    expectConverged(world, restored, phone);
+  });
+
+  it("refuses front-matter that refers to itself, and keeps going", () => {
+    const { world, laptop } = start();
+    const B = "01M6BBBBBBBBBBBBBBBBBBBBB1";
+    laptop.client.create(B, "notes/b.md", `---\nid: ${B}\na: &a [*a]\n---\n`, "normal");
+    setField(laptop, A, "status", "after");
+    world.settle();
+    expect(field(world, "status")).toBe("after");
+    expect(laptop.client.state.blocked.get(B)?.at(-1)?.reason).toMatch(/can't be read/);
   });
 });

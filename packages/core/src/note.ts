@@ -56,8 +56,10 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
+    // Front-matter is stored as JSON: an alias that contains itself (`a: &a [*a]`) can't be.
+    JSON.stringify(data);
   } catch (error) {
-    // Valid YAML that can't become data (too many aliases, an unknown one) is unreadable all the same.
+    // Valid YAML that can't become data (too many aliases, an unknown one, a cycle) is unreadable all the same.
     throw new NoteParseError(
       `Front-matter can't be read: ${error instanceof Error ? error.message : String(error)}`,
     );

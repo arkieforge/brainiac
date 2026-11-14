@@ -115,10 +115,10 @@ export class SyncClient {
     this.#queue(noteId, { kind: "delete", base });
   }
 
-  #queue(noteId: string, change: Change): void {
+  #queue(noteId: string, change: Change, changeId: string = crypto.randomUUID()): void {
     const pending = {
       clientSeq: ++this.state.lastAssigned,
-      changeId: crypto.randomUUID(),
+      changeId,
       noteId,
       baseRev: this.state.remote.get(noteId)?.rev ?? 0,
       change,
@@ -227,7 +227,8 @@ export class SyncClient {
     state.answered.clear();
     state.pending = [];
     this.#welcomed = false;
-    for (const p of pending) this.#queue(p.noteId, p.change);
+    // Same changeIds: the record knows which of these already landed under the old id.
+    for (const p of pending) this.#queue(p.noteId, p.change, p.changeId);
     this.connect();
   }
 }

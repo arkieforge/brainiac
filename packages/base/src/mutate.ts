@@ -31,6 +31,8 @@ export interface Context {
   /** Groups the changes an agent or `organize` made together; a mutation without one is its own run. */
   readonly runId?: string;
   readonly now: number;
+  /** The sync client's id for this change, recorded on the feed entry it makes. */
+  readonly changeId?: string;
 }
 
 export type Mutation =
@@ -167,13 +169,14 @@ function write(
     ctx.now,
   );
   sql.all(
-    "INSERT INTO changes (seq, noteId, rev, op, actor, at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO changes (seq, noteId, rev, op, actor, at, changeId) VALUES (?, ?, ?, ?, ?, ?, ?)",
     seq,
     next.id,
     rev,
     op,
     ctx.actor,
     ctx.now,
+    ctx.changeId ?? null,
   );
   // A deleted note leaves the search index and the outbox in the same transaction; a live one is re-indexed
   // by a job.

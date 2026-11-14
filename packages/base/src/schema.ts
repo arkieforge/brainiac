@@ -240,6 +240,12 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   ],
   // The highest ackedUpTo a client has sent: a hello below it comes from a restored or copied client.
   ["ALTER TABLE clients ADD COLUMN ackedUpTo INTEGER NOT NULL DEFAULT 0"],
+  // The sync change that made each feed entry, so a change replayed under another client id (after a
+  // repair) is known to have landed, whatever has happened to the note since.
+  [
+    "ALTER TABLE changes ADD COLUMN changeId TEXT",
+    "CREATE INDEX changes_change ON changes (changeId) WHERE changeId IS NOT NULL",
+  ],
 ];
 
 /** The SQL schema version this code writes. */
