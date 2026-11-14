@@ -3,7 +3,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { serveMcp } from "../mcp/handler.ts";
-import { createAuth } from "./config.ts";
+import { ACCESS_TOKEN_SECONDS, createAuth } from "./config.ts";
 import { consent } from "./consent.ts";
 import { nextPasskeyStep } from "./pages.ts";
 import { type ApprovingPasskey, canApprove, RECOVERY_WAIT_MS, SIGN_UP_MS, VOUCH_MS } from "./recovery.ts";
@@ -48,9 +48,18 @@ function setup({ noticesFail = false } = {}) {
   const auth = createAuth({
     database: (options: Parameters<typeof memory>[0]) => {
       const adapter = memory(options);
+      // Like Postgres, a second row with the same id is refused; single-use reservations rely on it.
+      const create: typeof adapter.create = async (data) => {
+        const id: unknown = data.data.id;
+        const taken =
+          typeof id === "string" &&
+          (await adapter.findOne({ model: data.model, where: [{ field: "id", value: id }] }));
+        if (taken) throw new Error(`duplicate key value violates unique constraint "${data.model}_pkey"`);
+        return adapter.create(data);
+      };
       return new Proxy(adapter, {
         get: (target, key) => {
-          const value: unknown = Reflect.get(target, key);
+          const value: unknown = key === "create" ? create : Reflect.get(target, key);
           return neon.down && typeof value === "function"
             ? () => Promise.reject(new Error("Neon is down"))
             : value;
@@ -164,9 +173,12 @@ const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
 const approving = (passkeys: { approvesAt: Date | null }[], now = new Date()) =>
   passkeys.filter((p) => canApprove(p, now)).length;
 
+// Each test starts a month after the last. /mcp caches signing keys per isolate (mcp/handler.ts) and refetches
+// for a key it doesn't know at most every 30 seconds, so a clock that went back would hide each test's new keys.
+let clock = Date.parse("2026-11-14T09:00:00Z");
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-14T09:00:00Z"));
+  vi.setSystemTime((clock += 30 * 24 * 60 * 60_000));
   // Turnstile's siteverify: every token passes, so tests exercise only whether one is required.
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ success: true }));
 });
@@ -417,6 +429,26 @@ const pkce = async () => {
   return { verifier, codeChallenge: base64url(new Uint8Array(digest)) };
 };
 
+/** A client's DPoP key: each proof names the method, URL and (for /mcp) the token it's sent with. */
+const dpopKey = async () => {
+  const key = await generateKeyPair("ES256");
+  const jwk = await exportJWK(key.publicKey);
+  return async (htu: string, accessToken?: string) =>
+    new SignJWT({
+      htm: "POST",
+      htu,
+      jti: crypto.randomUUID(),
+      ...(accessToken && {
+        ath: base64url(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(accessToken))),
+        ),
+      }),
+    })
+      .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk })
+      .setIssuedAt()
+      .sign(key.privateKey);
+};
+
 /** Where a JSON reply from the auth API sends the browser next. */
 const redirectTo = (body: unknown) => {
   if (typeof body === "object" && body && "url" in body && typeof body.url === "string") return body.url;
@@ -443,9 +475,6 @@ const opaqueRedirect = () =>
   Object.defineProperties(new Response(null), { type: { value: "opaqueredirect" }, status: { value: 0 } });
 const plainRedirect = () =>
   new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } });
-
-// /mcp caches signing keys per isolate (mcp/handler.ts); a test with fresh keys moves past that cache.
-const pastKeyCache = () => later(6 * 60_000);
 
 describe("MCP clients", () => {
   // A client the way claude.ai and Claude Code identify: client_id is the URL of its metadata document (CIMD).
@@ -485,8 +514,15 @@ describe("MCP clients", () => {
     });
   };
 
-  /** What the client's browser tab sees first: the authorize endpoint, answered with a redirect. */
-  const authorize = async (auth: ReturnType<typeof setup>["auth"], codeChallenge: string) => {
+  /**
+   * What the client's browser tab sees first: the authorize endpoint, answered with a redirect. `resource: ""`
+   * leaves the parameter out, as a client that doesn't follow RFC 8707 would.
+   */
+  const authorize = async (
+    auth: ReturnType<typeof setup>["auth"],
+    codeChallenge: string,
+    resource = RESOURCE,
+  ) => {
     const query = new URLSearchParams({
       response_type: "code",
       client_id: CLIENT_ID,
@@ -495,7 +531,7 @@ describe("MCP clients", () => {
       code_challenge_method: "S256",
       state: "client-state",
       scope: "openid offline_access",
-      resource: RESOURCE,
+      ...(resource && { resource }),
     });
     const res = await auth.handler(
       new Request(`${ORIGIN}/api/auth/oauth2/authorize?${query}`, { headers: { accept: "text/html" } }),
@@ -512,13 +548,15 @@ describe("MCP clients", () => {
       new Request(`${ORIGIN}/api/auth/oauth2/token`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
-        body: new URLSearchParams({ client_id: CLIENT_ID, resource: RESOURCE, ...params }),
+        body: new URLSearchParams(
+          Object.entries({ client_id: CLIENT_ID, resource: RESOURCE, ...params }).filter(([, v]) => v !== ""),
+        ),
       }),
     );
     return { status: res.status, body: await res.json() };
   };
 
-  const initialize = (auth: ReturnType<typeof setup>["auth"], accessToken?: string) =>
+  const callMcp = (auth: ReturnType<typeof setup>["auth"], headers: Record<string, string>) =>
     serveMcp(
       auth,
       new Request(RESOURCE, {
@@ -526,7 +564,7 @@ describe("MCP clients", () => {
         headers: {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
-          ...(accessToken && { authorization: `Bearer ${accessToken}` }),
+          ...headers,
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -541,6 +579,9 @@ describe("MCP clients", () => {
       }),
     );
 
+  const initialize = (auth: ReturnType<typeof setup>["auth"], accessToken?: string) =>
+    callMcp(auth, accessToken ? { authorization: `Bearer ${accessToken}` } : {});
+
   /**
    * A person signs in to a client: the server fetches the client's document, sends them to sign in, carries on
    * to consent, and back to the client with a code.
@@ -548,9 +589,10 @@ describe("MCP clients", () => {
   const grant = async (
     auth: ReturnType<typeof setup>["auth"],
     browser: ReturnType<typeof setup>["browser"],
+    resource = RESOURCE,
   ) => {
     const { verifier, codeChallenge } = await pkce();
-    const start = await authorize(auth, codeChallenge);
+    const start = await authorize(auth, codeChallenge, resource);
     expect(start.status).toBe(302);
     const signIn = new URL(start.location, ORIGIN);
     expect(signIn.pathname).toBe("/sign-in");
@@ -636,7 +678,6 @@ describe("MCP clients", () => {
       redirect_uri: REDIRECT_URI,
       code_verifier: verifier,
     });
-    pastKeyCache();
     neon.down = true;
     // A 401 would send the client to refresh, which needs Neon too, and then maybe to sign the person in again.
     const res = await initialize(auth, tokens(issued.body).access);
@@ -644,29 +685,174 @@ describe("MCP clients", () => {
     expect(res.headers.get("www-authenticate")).toBeNull();
   });
 
-  it("refuses a DPoP-bound token sent as a bearer token", async () => {
-    const { auth, browser } = setup();
-    network(() => Response.json(metadata));
-    const { code, verifier } = await grant(auth, browser);
-    const key = await generateKeyPair("ES256");
-    const proof = await new SignJWT({
-      htm: "POST",
-      htu: `${ORIGIN}/api/auth/oauth2/token`,
-      jti: crypto.randomUUID(),
-    })
-      .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: await exportJWK(key.publicKey) })
-      .setIssuedAt()
-      .sign(key.privateKey);
+  /** Exchanges a fresh grant's code for tokens, optionally bound to a DPoP key. */
+  const connect = async (setupResult: ReturnType<typeof setup>, dpop?: (htu: string) => Promise<string>) => {
+    const { auth, browser } = setupResult;
+    const { tab, code, verifier } = await grant(auth, browser);
     const issued = await token(
       auth,
       { grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI, code_verifier: verifier },
-      { dpop: proof },
+      dpop ? { dpop: await dpop(`${ORIGIN}/api/auth/oauth2/token`) } : {},
     );
-    expect(issued.body).toMatchObject({ token_type: "DPoP" });
-    pastKeyCache();
-    const res = await initialize(auth, tokens(issued.body).access);
-    expect(res.status).toBe(401);
-    expect(res.headers.get("www-authenticate")).toContain('error="invalid_token"');
+    expect(issued.status).toBe(200);
+    return { tab, issued: issued.body, ...tokens(issued.body) };
+  };
+
+  it("accepts a DPoP-bound token only with a fresh proof from its own key", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const proof = await dpopKey();
+    const { issued, access } = await connect(ctx, proof);
+    expect(issued).toMatchObject({ token_type: "DPoP" });
+
+    const once = await proof(RESOURCE, access);
+    expect((await callMcp(ctx.auth, { authorization: `DPoP ${access}`, dpop: once })).status).toBe(200);
+    const refused = [
+      // The same proof again, as someone who copied it off the wire would send it.
+      { authorization: `DPoP ${access}`, dpop: once },
+      // No proof, or the token sent as a plain bearer token: the binding would mean nothing.
+      { authorization: `DPoP ${access}` },
+      { authorization: `Bearer ${access}` },
+      // A proof from some other key.
+      { authorization: `DPoP ${access}`, dpop: await (await dpopKey())(RESOURCE, access) },
+      // A proof made for another URL.
+      { authorization: `DPoP ${access}`, dpop: await proof(`${ORIGIN}/elsewhere`, access) },
+    ];
+    for (const headers of refused) {
+      const res = await callMcp(ctx.auth, headers);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate")).toMatch(/error="invalid_(token|dpop_proof)"/);
+    }
+  });
+
+  it("rotates refresh tokens, and a stolen old one ends the whole grant", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const first = await connect(ctx);
+    const refresh = (refresh_token: string) =>
+      token(ctx.auth, { grant_type: "refresh_token", refresh_token });
+
+    const second = await refresh(first.refresh);
+    expect(second.status).toBe(200);
+    const next = tokens(second.body);
+    expect(next.refresh).not.toBe(first.refresh);
+    // A client retrying a refresh whose reply it lost gets the same reply, not a dead grant.
+    expect(tokens((await refresh(first.refresh)).body)).toEqual(next);
+
+    // Past that window the old token can only be a copy, so the server ends the grant for everyone holding it.
+    later(31_000);
+    expect((await refresh(first.refresh)).body).toMatchObject({ error: "invalid_grant" });
+    expect((await refresh(next.refresh)).body).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("stops refreshing after the client revokes its refresh token", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const { refresh } = await connect(ctx);
+    const revoked = await ctx.auth.handler(
+      new Request(`${ORIGIN}/api/auth/oauth2/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: CLIENT_ID, token: refresh, token_type_hint: "refresh_token" }),
+      }),
+    );
+    expect(revoked.status).toBe(200);
+    expect(
+      (await token(ctx.auth, { grant_type: "refresh_token", refresh_token: refresh })).body,
+    ).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("lists a connected app and disconnects it: no refresh, and its access token runs out within the hour", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const { tab, access, refresh } = await connect(ctx);
+    expect(await tab.ok("/connected-apps")).toMatchObject([
+      { clientId: CLIENT_ID, name: "Example MCP client" },
+    ]);
+
+    // Better Auth's own consent delete would leave the refresh token working, so it isn't served.
+    expect((await tab.call("/oauth2/delete-consent", { body: { id: "any" } })).status).toBe(404);
+    expect(
+      (await tab.call("/oauth2/update-consent", { body: { id: "any", update: { scopes: [] } } })).status,
+    ).toBe(404);
+    // Someone else's session can't disconnect this person's app.
+    const other = ctx.browser();
+    await other.signInWithCode("someone.else@example.edu");
+    await other.ok("/connected-apps/disconnect", { body: { clientId: CLIENT_ID } });
+    expect(await tab.ok("/connected-apps")).toHaveLength(1);
+
+    await tab.ok("/connected-apps/disconnect", { body: { clientId: CLIENT_ID } });
+    expect(await tab.ok("/connected-apps")).toEqual([]);
+    expect(
+      (await token(ctx.auth, { grant_type: "refresh_token", refresh_token: refresh })).body,
+    ).toMatchObject({ error: "invalid_grant" });
+    // The access token is a JWT nobody can recall; it runs out on its own.
+    expect((await initialize(ctx.auth, access)).status).toBe(200);
+    later(ACCESS_TOKEN_SECONDS * 1000);
+    expect((await initialize(ctx.auth, access)).status).toBe(401);
+
+    // Connecting again asks again, and works.
+    const again = await connect(ctx);
+    expect((await initialize(ctx.auth, again.access)).status).toBe(200);
+  });
+
+  it("issues no grant without the MCP resource, since an opaque token can't be checked against Disconnect", async () => {
+    const { auth, browser } = setup();
+    network(() => Response.json(metadata));
+    const { code, verifier } = await grant(auth, browser, "");
+    const issued = await token(auth, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: verifier,
+      resource: "",
+    });
+    expect(issued).toMatchObject({ status: 400, body: { error: "invalid_target" } });
+  });
+
+  it("lists every connected app, newest first, past the adapter's 100-row default", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const { tab } = await connect(ctx);
+    const { adapter } = await ctx.auth.$context;
+    const userId = await ctx.studentId();
+    for (let i = 0; i < 100; i++) {
+      await adapter.create({
+        model: "oauthConsent",
+        data: {
+          clientId: `https://app-${i}.example/client.json`,
+          userId,
+          scopes: ["openid"],
+          // Connected before the real client, a minute apart.
+          createdAt: new Date(Date.now() - (i + 1) * 60_000),
+          updatedAt: new Date(),
+        },
+      });
+    }
+    const listed = await tab.ok("/connected-apps");
+    expect(
+      Array.isArray(listed) && new Set(listed.map((app: { clientId: string }) => app.clientId)).size,
+    ).toBe(101);
+    expect(Array.isArray(listed) && listed[0]).toMatchObject({
+      clientId: CLIENT_ID,
+      name: "Example MCP client",
+    });
+    expect(Array.isArray(listed) && listed.at(-1)).toMatchObject({
+      clientId: "https://app-99.example/client.json",
+    });
+  });
+
+  it("refuses tokens for a grant whose consent is gone, as when a refresh races a disconnect", async () => {
+    const ctx = setup();
+    network(() => Response.json(metadata));
+    const { refresh } = await connect(ctx);
+    const { adapter } = await ctx.auth.$context;
+    // The refresh read its token before the disconnect deleted it, so only the consent is missing.
+    await adapter.deleteMany({ model: "oauthConsent", where: [{ field: "clientId", value: CLIENT_ID }] });
+    expect(
+      (await token(ctx.auth, { grant_type: "refresh_token", refresh_token: refresh })).body,
+    ).toMatchObject({ error: "invalid_grant" });
+    expect(await adapter.count({ model: "oauthRefreshToken" })).toBe(0);
   });
 
   it.each([plainRedirect, opaqueRedirect])(
