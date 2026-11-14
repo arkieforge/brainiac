@@ -52,7 +52,16 @@ export interface Note {
 
 export function parseNote(raw: string): Note {
   const parts = splitNote(raw);
-  const data: unknown = parseFrontMatter(parts.yaml).toJS() ?? {};
+  const doc = parseFrontMatter(parts.yaml);
+  let data: unknown;
+  try {
+    data = doc.toJS() ?? {};
+  } catch (error) {
+    // Valid YAML that can't become data (too many aliases, an unknown one) is unreadable all the same.
+    throw new NoteParseError(
+      `Front-matter can't be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (typeof data !== "object" || Array.isArray(data) || data === null) {
     throw new NoteParseError("Front-matter must be a mapping of fields.");
   }

@@ -22,13 +22,15 @@ export const ClientMessage = type({
   ackedUpTo: seq,
   schemaVersion: seq,
   appVersion: "string",
+  /** Counts this client's hellos; the snapshot names the one it answers, so an overtaken answer is ignored. */
+  attempt: seq,
 }).or({
   type: "'mutate'",
   clientId: "string > 0",
   /** This client's own counter, from 1, with no gaps: the DO applies only `highWater + 1`. */
   clientSeq: "number.integer >= 1",
   /** Random per change: a result names it, so a copy sharing this id never takes another's result as its own. */
-  changeId: "string > 0",
+  changeId: "0 < string <= 64",
   ackedUpTo: seq,
   noteId: "string > 0",
   baseRev: seq,
@@ -95,8 +97,9 @@ export type ServerMessage =
       readonly type: "snapshot";
       readonly seq: number;
       readonly notes: readonly NoteState[];
-      /** The cursor was ahead of the record (it was restored): replace everything, even with an older seq. */
-      readonly restored: boolean;
+      /** The hello it answers; null when not an answer to one. Taken as is, even if older than the cursor
+       * (the record may have been restored from a backup). */
+      readonly attempt: number | null;
     }
   /** Each note changed after `from`, as it is at `to`. */
   | {

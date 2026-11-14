@@ -48,14 +48,14 @@ const stateOf = (note: NoteRow): NoteState =>
  * (or the cursor is ahead of the record, as after a restore). Notes purged since come as deleted.
  * shortcut: every class is sent; #14 projects sensitive notes away from devices not marked as the person's.
  */
-export function changesSince(sql: Sql, cursor: number | null): ServerMessage {
+export function changesSince(sql: Sql, cursor: number | null, attempt: number | null = null): ServerMessage {
   const seq = currentSeq(sql);
   const [oldest] = sql.all<{ seq: number | null }>("SELECT min(seq) AS seq FROM changes");
   const reaches =
     cursor !== null && cursor <= seq && (cursor === seq || (oldest?.seq ?? Infinity) <= cursor + 1);
   if (!reaches) {
     const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE deletedAt IS NULL ORDER BY seq");
-    return { type: "snapshot", seq, notes: notes.map(stateOf), restored: cursor !== null && cursor > seq };
+    return { type: "snapshot", seq, notes: notes.map(stateOf), attempt };
   }
   const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE seq > ? ORDER BY seq", cursor);
   const purged = sql.all<{ noteId: string; seq: number }>(
@@ -108,7 +108,7 @@ export function hello(sql: Sql, message: Hello, now: number): ServerMessage[] {
         highWater: client?.highWater ?? 0,
         ackedUpTo: client?.ackedUpTo ?? 0,
       },
-      changesSince(sql, message.cursor),
+      changesSince(sql, message.cursor, message.attempt),
       ...results.map((row): ServerMessage => JSON.parse(row.result)),
     ];
   });
@@ -172,12 +172,13 @@ function conflictDiff(theirs: string, mine: string, fields: readonly string[], b
   };
 }
 
-function parses(raw: string): boolean {
+/** Why `raw` can't be read as a note, or undefined if it can. */
+function parseError(raw: string): string | undefined {
   try {
     parseNote(raw);
-    return true;
+    return undefined;
   } catch (error) {
-    if (error instanceof NoteParseError) return false;
+    if (error instanceof NoteParseError) return error.message;
     throw error;
   }
 }
@@ -198,9 +199,8 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
 
   // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
   // would roll back and leave the client resending it forever, stuck behind it.
-  if (change.kind !== "delete" && !parses(change.raw)) {
-    return { ...done, ok: false, error: "The front-matter is not valid YAML." };
-  }
+  const unreadable = change.kind === "delete" ? undefined : parseError(change.raw);
+  if (unreadable !== undefined) return { ...done, ok: false, error: unreadable };
   if (change.kind === "create" && !current) {
     const id = parseNote(change.raw).data["id"];
     if (id !== noteId) return { ...done, ok: false, error: "The note's id must match noteId." };
@@ -231,8 +231,13 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
   const mine = change.raw;
   // A base that doesn't parse (the edit after a refused one starts from the broken text) counts as no base:
   // then every field the two sides set differently is a conflict, never an overwrite.
-  const base = change.kind === "put" && parses(change.base) ? change.base : "";
+  const base = change.kind === "put" && parseError(change.base) === undefined ? change.base : "";
   const merged = merge(base, mine, current.raw);
+  // Nothing in it the record doesn't already have (a change resent after a repair, a create that already
+  // landed): it is applied, and a note deleted since stays deleted.
+  if (merged.raw === current.raw && merged.fields.length === 0 && !merged.body) {
+    return { ...done, ok: true, rev: current.rev };
+  }
   const deleted = current.deletedAt !== null;
   // Edited here, deleted on the other side: the note comes back with the edit, and the delete becomes the
   // proposal.

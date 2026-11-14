@@ -30,6 +30,17 @@ function expectConverged(world: World, ...devices: Device[]) {
   }
 }
 
+/** Another machine with this id makes the record reset the laptop over its first pending change. */
+function reset(laptop: Device) {
+  const [first] = laptop.client.state.pending;
+  laptop.client.receive({
+    type: "reset",
+    clientId: laptop.client.state.clientId,
+    clientSeq: first?.clientSeq ?? 0,
+    reason: "test",
+  });
+}
+
 /** A device's state as a backup tool would copy it. */
 const copy = (device: Device) => structuredClone(device.client.state);
 
@@ -216,5 +227,100 @@ describe("sync chaos", () => {
     while (world.down(tab));
     world.settle();
     expectConverged(world, tab, phone);
+  });
+
+  describe("repair after results were lost", () => {
+    const C = "01M6CCCCCCCCCCCCCCCCCCCCC1";
+    /** The laptop creates C; it lands, but the result never comes back. Everyone else sees it. */
+    function landedUnanswered() {
+      const { world, laptop, phone } = start();
+      laptop.client.create(C, "notes/c.md", `---\nid: ${C}\ntype: Note\ntitle: orig\n---\n`, "normal");
+      world.up(laptop);
+      laptop.link.down = laptop.link.down.filter((m) => m.type !== "result");
+      while (world.down(laptop) || world.down(phone));
+      return { world, laptop, phone };
+    }
+    const title = (world: World) => parseNote(world.note(C)?.raw ?? "").data["title"];
+
+    it("a local delete made before another device's edit still waits for the person", () => {
+      const { world, laptop, phone } = landedUnanswered();
+      setField(phone, C, "title", "newer");
+      world.up(phone);
+      while (world.down(laptop) || world.down(phone));
+      laptop.client.delete(C);
+      reset(laptop);
+      world.settle();
+      expect([world.note(C)?.deletedAt, title(world)]).toEqual([null, "newer"]);
+      expect(laptop.client.state.blocked.get(C)?.at(-1)?.reason).toBe("conflict");
+      expectConverged(world, laptop, phone);
+    });
+
+    it("an edit and a local undo of it both replay, in order", () => {
+      const { world, laptop, phone } = start();
+      setField(laptop, A, "title", "temporary");
+      world.up(laptop);
+      // Offline before the result arrives; the undo waits in the queue.
+      world.disconnect(laptop);
+      setField(laptop, A, "title", "notes/a.md");
+      reset(laptop);
+      world.settle();
+      expect(field(world, "title")).toBe("notes/a.md");
+      expectConverged(world, laptop, phone);
+    });
+
+    it("a create that landed stays deleted when another device deleted it since", () => {
+      const { world, laptop, phone } = landedUnanswered();
+      phone.client.delete(C);
+      world.up(phone);
+      while (world.down(laptop) || world.down(phone));
+      reset(laptop);
+      world.settle();
+      expect(world.note(C)?.deletedAt).not.toBeNull();
+      expect(world.sql.all("SELECT * FROM proposals")).toEqual([]);
+      expectConverged(world, laptop, phone);
+    });
+  });
+
+  // After the record itself is restored, every hello's cursor is ahead of it, so each gets a snapshot.
+  it("ignores an overtaken snapshot even after the record was restored", () => {
+    const world = new World();
+    world.seed(A, "notes/a.md");
+    const phone = world.device("phone");
+    world.settle();
+    const tab = world.device("tab");
+    tab.client.state.cursor = 99;
+    world.connect(tab);
+    world.up(tab);
+    phone.client.create(
+      "01M6BBBBBBBBBBBBBBBBBBBBB1",
+      "notes/b.md",
+      "---\nid: 01M6BBBBBBBBBBBBBBBBBBBBB1\n---\n",
+      "normal",
+    );
+    world.up(phone);
+    tab.client.connect();
+    world.up(tab);
+    world.down(tab, 4);
+    world.down(tab, 2);
+    while (world.down(tab));
+    world.settle();
+    expectConverged(world, tab, phone);
+  });
+
+  it("refuses YAML that expands past the alias limit, and keeps going", () => {
+    const { world, laptop } = start();
+    const B = "01M6BBBBBBBBBBBBBBBBBBBBB1";
+    const bomb = `---\nid: ${B}\na: &a [x, x, x, x, x, x, x, x, x, x]\n${Array.from(
+      { length: 12 },
+      (_, i) =>
+        `l${i}: &l${i} [${Array(10)
+          .fill(i === 0 ? "*a" : `*l${i - 1}`)
+          .join(", ")}]`,
+    ).join("\n")}\n---\n`;
+    laptop.client.create(B, "notes/b.md", bomb, "normal");
+    setField(laptop, A, "status", "after");
+    world.settle();
+    expect(field(world, "status")).toBe("after");
+    expect(laptop.client.state.blocked.get(B)?.at(-1)?.reason).toMatch(/can't be read|alias/i);
   });
 });
