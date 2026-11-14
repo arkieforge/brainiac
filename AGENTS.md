@@ -132,7 +132,8 @@ calling work done, walk this list and say which entries applied:
 - Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the
   [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from
   `vp run doctor --stage <stage>` and `vp run logs --stage <stage>`. CI runs the same doctor after every
-  deploy and puts it in the job summary; a `FAIL` there is yours to fix.
+  deploy and puts it in the job summary. A `FAIL` there also starts an agent (a T3 Code webhook task) that
+  follows the skill and reports the cause on the PR, or on an issue for prod.
 
 ## Evals
 

@@ -7,6 +7,9 @@ inputs:
   doppler-token:
     description: Doppler service token for the stage's config (dev for previews, prd for prod)
     required: true
+  doctor-webhook:
+    description: T3 Code webhook that starts an agent to diagnose a failed doctor run (the doctor skill)
+    required: false
 runs:
   using: composite
   steps:
@@ -36,14 +39,29 @@ runs:
         grep -oE '\[[^]]+\] (replace|delete)$' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
         exit $status
     # The stage as a signed-out visitor sees it (scripts/doctor.ts). A FAIL fails the job, so a deploy that
-    # breaks sign-in shows red instead of waiting for someone to report it.
+    # breaks sign-in shows red instead of waiting for someone to report it, and starts an agent that follows
+    # the doctor skill and reports the cause on the PR or an issue. The webhook only starts it; a failed call
+    # leaves the job's own result as it was.
     - shell: bash
       env:
         DOPPLER_TOKEN: ${{ inputs.doppler-token }}
         STAGE: ${{ inputs.stage }}
+        DOCTOR_WEBHOOK: ${{ inputs.doctor-webhook }}
+        PR: ${{ github.event.pull_request.number }}
+        # On a PR, github.sha is GitHub's merge commit; the head is the commit the person pushed.
+        SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set -o pipefail
         status=0
         doppler run -- node scripts/doctor.ts --stage "$STAGE" 2>&1 | tee doctor.log || status=$?
         { echo "### Doctor"; echo '```'; cat doctor.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        if [ "$status" -ne 0 ] && [ -n "$DOCTOR_WEBHOOK" ]; then
+          jq -n --arg stage "$STAGE" --arg sha "$SHA" --arg pr "$PR" --arg run_url "$RUN_URL" \
+            --arg repo "$GITHUB_REPOSITORY" --rawfile doctor doctor.log \
+            '{event: "doctor-failed", repo: $repo, stage: $stage, sha: $sha, pr: $pr, run_url: $run_url, doctor: $doctor}' |
+            curl -fsS --max-time 15 -X POST -H 'content-type: application/json' --data-binary @- "$DOCTOR_WEBHOOK" >/dev/null &&
+            echo "Started an agent to diagnose it (doctor skill); it reports on the PR or an issue." ||
+            echo "::warning title=Doctor::Couldn't start the diagnosis agent; follow the doctor skill by hand."
+        fi
         exit $status
