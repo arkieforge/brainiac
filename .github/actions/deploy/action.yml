@@ -11,8 +11,10 @@ runs:
   using: composite
   steps:
     - uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
-    # Alchemy 0.94 has no plan command, so the summary is the deploy's own change log. Replaced or deleted
-    # resources also become warnings, since that is how a rename shows up.
+    # The summary is the plan Alchemy prints before applying. Replaced or deleted resources also become
+    # warnings, since that is how a rename shows up; in prod, RemovalPolicy.protect fails those plans.
+    # --adopt takes over resources under our own pinned names (brainiac-<id>-<stage>) that state doesn't
+    # know yet, such as those Alchemy 0.94 made; nothing else on the account uses those names.
     - shell: bash
       env:
         DOPPLER_TOKEN: ${{ inputs.doppler-token }}
@@ -21,13 +23,15 @@ runs:
       run: |
         set -o pipefail
         status=0
-        doppler run -- alchemy deploy --stage "$STAGE" 2>&1 | tee deploy.log || status=$?
+        doppler run -- alchemy deploy --stage "$STAGE" --yes --adopt --no-input 2>&1 | tee deploy.log || status=$?
+        plan='\] (create|update|replace|delete|adopted)$'
         {
           echo "### Stage \`$STAGE\`"
           echo '```'
-          grep -E '^\[(created|updated|replaced|deleted)\]' deploy.log || echo "no changes"
+          grep -m1 -oE 'Plan: .*' deploy.log || echo "no plan (see the job log)"
+          grep -oE "\[[^]]+$plan" deploy.log || true
           echo '```'
-          grep -E '^brainiac \(' deploy.log || true
+          grep -oE "url: '[^']+'" deploy.log || true
         } >> "$GITHUB_STEP_SUMMARY"
-        grep -E '^\[(replaced|deleted)\]' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
+        grep -oE '\[[^]]+\] (replace|delete)$' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
         exit $status

@@ -52,22 +52,20 @@ brainiac/
 ```
 
 ```
-// alchemy.run.ts (sketch, Alchemy 1.x API; 2.0 beta renames some resources, so pin the version)
-const app    = await alchemy("brainiac");                                  // --stage dev | pr-123 | prod
+// alchemy.run.ts (sketch of where it is heading; Alchemy 2.0, inside the Stack's Effect.gen)
+const { stage } = yield* Alchemy.Stack;                                  // dev_<you> | pr-123 | prod
 // brainiac-dev (dev and PR stages) and brainiac-prod are made once by hand; a branch per stage
-const db     = await NeonBranch("db", { project: alchemy.env("NEON_PROJECT_ID"), name: app.stage });
-const pg     = await Hyperdrive("hyperdrive", { origin: db.connectionUris[0].connection_uri });
-const blobs  = await R2Bucket("blobs");
-const jobs   = await Queue("jobs");                                     // + dead-letter queue
-const Base   = DurableObjectNamespace("Base", { className: "Base", sqlite: true });
-export const worker = await Worker("brainiac", {
-  entrypoint: "apps/worker/src/index.ts",
-  bindings: { BASE: Base, HYPERDRIVE: pg, BLOBS: blobs, JOBS: jobs /* + AI, Images, Browser Rendering, Secrets Store */ },
-  routes: ["<domain>/*", "mcp.<domain>/*", "usercontent.<domain>/*"],
-  eventSources: [jobs],
+const db     = yield* Neon.Branch("db", { project: { projectId }, name: stage });
+const pg     = yield* Cloudflare.Hyperdrive.Connection("hyperdrive", { origin: db.origin });
+const blobs  = yield* Cloudflare.R2.Bucket("blobs");
+const jobs   = yield* Cloudflare.Queues.Queue("jobs");                  // + dead-letter queue
+const worker = yield* Cloudflare.Worker("worker", {
+  main: "apps/worker/src/index.ts",
+  env: { BASE: Cloudflare.DurableObject("Base"), HYPERDRIVE: pg, BLOBS: blobs, JOBS: jobs /* + AI, Images, Browser Rendering, Secrets Store */ },
+  // + routes for <domain>, mcp.<domain>, usercontent.<domain>, and a Queues.Consumer for jobs
 });
-await app.finalize();
+// all of it under RemovalPolicy.protect() in prod
 ```
 
-Stateful resources (R2, the DO namespace, Neon) are protected from deletion, and every CI deploy lists what it
-created, replaced or deleted. [infra/README.md](../../infra/README.md) has the stages, secrets and guards.
+In prod a plan that would replace or delete any resource fails before it applies, and every CI deploy shows
+its plan. [infra/README.md](../../infra/README.md) has the stages, secrets and guards.

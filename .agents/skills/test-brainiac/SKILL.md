@@ -18,7 +18,7 @@ Proof is output you saw yourself in this session. Match the proof to the change:
 | A UI, static                                  | Run it and look: screenshots before and after, same viewport        | Both images inline in the PR          |
 | Motion, a flow, or any visible behaviour      | Run it and record before and after                                  | Both videos inline in the PR          |
 | Lint rules                                    | `vp test run oxlint-plugin-brainiac`                                | Output                                |
-| `alchemy.run.ts`                              | `effect-tsgo tsc -p .` locally; a PR stage deploy in CI once wired  | Output, plan diff                     |
+| `alchemy.run.ts`                              | `vp run plan --stage <stage>`, then the PR stage deploy in CI       | The plan, the CI job summary          |
 
 ## Rules
 
