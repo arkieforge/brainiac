@@ -23,7 +23,9 @@ async function main() {
   if (!values.stage) throw new Error("Pass --stage, e.g. --stage pr-12 or --stage local.");
   // A new account each run: a first passkey on a new, verified account can approve at once, with no wait.
   const tag = `e2e-${Date.now().toString(36)}`;
-  const { url } = await signInLink(values.stage, { as: tag });
+  const { url, token } = await signInLink(values.stage, { as: tag });
+  // Playwright quotes the URL it was loading in errors, and CI logs are public; the link carries the token.
+  const redact = (text: string) => text.replaceAll(token, "***");
   const email = `ada.okafor+${tag}@example.edu`;
 
   const browser = await chromium.launch({ headless: !values.headed });
@@ -80,7 +82,7 @@ async function main() {
       .textContent()
       .catch(() => "");
     throw new Error(
-      `FAIL  ${current}: ${error instanceof Error ? error.message.split("\n")[0] : error}` +
+      redact(`FAIL  ${current}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`) +
         `${alert ? `\n      page says: ${alert}` : ""}\n      screenshot: ${shot}`,
       { cause: error },
     );

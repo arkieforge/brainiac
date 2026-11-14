@@ -60,6 +60,8 @@ runs:
       run: |
         set -o pipefail
         node_modules/.bin/playwright install --with-deps --only-shell chromium >/dev/null
+        # The dev sign-in link carries the token; mask it in case anything prints the link.
+        doppler run -- sh -c 'echo "::add-mask::$DEV_SIGN_IN_TOKEN"'
         status=0
         doppler run -- node scripts/e2e.ts --stage "$STAGE" 2>&1 | tee e2e.log || status=$?
         { echo "### e2e"; echo '```'; cat e2e.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

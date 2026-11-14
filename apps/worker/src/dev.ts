@@ -41,9 +41,14 @@ const fixtureEmail = (tag: string | null) => {
   return `${local}+${tag}@${domain}`;
 };
 
-/** A relative path on this origin, so the link can't send anyone elsewhere. */
-const samePath = (next: string | null) =>
-  next?.startsWith("/") && !next.startsWith("//") ? next : "/account";
+/**
+ * Where to land after signing in: only somewhere on this origin. Parsed as a URL, because browsers read `/\host`
+ * as `//host`, which a prefix check lets through.
+ */
+const samePath = (next: string | null, origin: string) => {
+  const target = next ? URL.parse(next, origin) : null;
+  return target?.origin === origin ? `${target.pathname}${target.search}${target.hash}` : "/account";
+};
 
 /** Serves /dev/*. The caller has already checked this stage has a token and isn't prod. */
 export async function serveDev(request: Request, config: AuthConfig, token: string): Promise<Response> {
@@ -99,7 +104,7 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
   return new Response(null, {
     status: 303,
     headers: {
-      location: samePath(url.searchParams.get("next")),
+      location: samePath(url.searchParams.get("next"), url.origin),
       "set-cookie": [`${cookie.name}=${cookie.value}`, ...attributes].join("; "),
       "cache-control": "no-store",
       // The link carries the token; don't hand it to whatever the next page loads.

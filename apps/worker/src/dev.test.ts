@@ -67,7 +67,7 @@ describe("dev sign-in", () => {
   it("only redirects within the site", async () => {
     const { signIn } = setup();
     expect((await signIn(`token=${TOKEN}&next=/consent`)).headers.get("location")).toBe("/consent");
-    for (const next of ["//evil.example/", "https://evil.example/"]) {
+    for (const next of ["//evil.example/", "https://evil.example/", "/\\evil.example/", ""]) {
       const res = await signIn(`token=${TOKEN}&next=${encodeURIComponent(next)}`);
       expect(res.headers.get("location")).toBe("/account");
     }
