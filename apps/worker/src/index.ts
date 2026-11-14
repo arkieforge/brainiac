@@ -84,8 +84,9 @@ const withAuth = (
     const auth = createAuth(config);
     // Better Auth starts its setup (seeding the /mcp resource) as soon as it's made; a quick answer, like /mcp's
     // 401, mustn't end the pool under it.
-    // shortcut: the seed's one read runs on every request, because its "done" mark is per Better Auth instance and a
-    // Worker can't keep a pool across requests; upgrade if Better Auth lets the seed be skipped (#83).
+    // shortcut: the seed's read is one Neon round trip that every auth request waits for (Better Auth awaits plugin
+    // setup before any handler), because its "done" mark is per Better Auth instance and a Worker can't keep a pool
+    // across requests; upgrade when Better Auth can skip the seed or remember it per isolate (#83).
     keepOpen(auth.$context);
     return use(auth);
   });

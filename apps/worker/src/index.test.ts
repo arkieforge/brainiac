@@ -5,20 +5,25 @@ import type { Env } from "./index.ts";
 // Durable Object behaviour is tested in workerd (base.test.ts).
 vi.mock("cloudflare:workers", () => ({ DurableObject: Object }));
 
-// A stand-in for pg's pool. No database is here, so every connect fails, but it remembers whether the pool had
-// already ended, which the real one refuses ("Cannot use a pool after calling end on the pool").
+// A stand-in for pg's pool. Connects wait until the test opens it, then fail (no database here); it remembers any
+// connect made after the pool ended, which the real one refuses ("Cannot use a pool after calling end on the pool").
 const pools: FakePool[] = [];
 class FakePool {
   ended = false;
   connects = 0;
   connectsAfterEnd = 0;
+  private gate = Promise.withResolvers<void>();
   constructor() {
     pools.push(this);
   }
   async connect(): Promise<never> {
     this.connects++;
     if (this.ended) this.connectsAfterEnd++;
+    await this.gate.promise;
     throw new Error("no database in tests");
+  }
+  open() {
+    this.gate.resolve();
   }
   async end() {
     this.ended = true;
@@ -88,10 +93,15 @@ describe("worker", () => {
       HYPERDRIVE: { connectionString: "postgres://test" },
       BETTER_AUTH_SECRET: "a-test-secret-that-is-long-enough-to-pass",
     } as Env;
+    // The failed seed logs through Better Auth's logger; that's expected here.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Setup can't reach the database yet, so this returning at all shows the 401 doesn't wait for it.
     const res = await worker.fetch(new Request("https://brainiac.test/mcp", { method: "POST" }), env, ctx);
     expect(res.status).toBe(401);
-    await Promise.all(work);
     const pool = pools.at(-1);
+    pool?.open();
+    await Promise.all(work);
+    logged.mockRestore();
     expect(pool?.connects).toBeGreaterThan(0);
     expect(pool?.connectsAfterEnd).toBe(0);
     expect(pool?.ended).toBe(true);
