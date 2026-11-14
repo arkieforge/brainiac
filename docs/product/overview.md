@@ -2,7 +2,8 @@
 
 People sign up, and everything an application asks for lives in one place: **achievements, projects,
 papers, grades, test scores, CVs, recommendation letters, IDs, profiles and links**, as **typed markdown
-notes with sources**. It syncs **live** to the site, the phone and any laptop that keeps a local copy.
+notes with sources**, along with **every other personal file**, each filed with the context that makes it
+findable later. It syncs **live** to the site, the phone and any laptop that keeps a local copy.
 People work on it with **the Claude they already pay for** (Claude Code, claude.ai, T3 Code) through MCP or
 a thin CLI. No API key is needed, and the record works fully **with or without anything on disk**.
 Secrets sit in a vault that agents can use only in approved ways and never see. Risky changes need your
@@ -10,14 +11,15 @@ approval, and values nobody has checked are labeled as unverified.
 
 ## Who it's for
 
-Anyone who keeps retyping the same life into forms. Each job below is one "application" in Brainiac: a target with a checklist of requirements. Brainiac matches each requirement to existing facts and files before asking for anything new.
+Anyone who keeps retyping the same life into forms, or can't find the file that proves it. The first four jobs below are "applications" in Brainiac: a target with a checklist of requirements. Brainiac matches each requirement to existing facts and files before asking for anything new. The last is the record itself, kept organized whether or not an application needs it.
 
-| Job                               | What Brainiac pulls together                                                             | What it watches                                            |
-| --------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **University / school admission** | Transcripts, grades, test scores, SOP drafts from facts, activity lists, awards, letters | Deadlines, missing letters, score validity                 |
-| **Study abroad / visa**           | Passport, offer letter, proof of funds, IELTS/TOEFL, travel history                      | Passport and score expiry, documents each country requires |
-| **Scholarships / PhD**            | Papers with author position, research projects, referees, an academic CV                 | Funding deadlines, referee follow-ups                      |
-| **Job search**                    | Roles, projects with metrics and repos, skills, a resume per job, cover letters          | Pipeline status, an out-of-date LinkedIn, follow-ups       |
+| Job                               | What Brainiac pulls together                                                               | What it watches                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| **University / school admission** | Transcripts, grades, test scores, SOP drafts from facts, activity lists, awards, letters   | Deadlines, missing letters, score validity                 |
+| **Study abroad / visa**           | Passport, offer letter, proof of funds, IELTS/TOEFL, travel history                        | Passport and score expiry, documents each country requires |
+| **Scholarships / PhD**            | Papers with author position, research projects, referees, an academic CV                   | Funding deadlines, referee follow-ups                      |
+| **Job search**                    | Roles, projects with metrics and repos, skills, a resume per job, cover letters            | Pipeline status, an out-of-date LinkedIn, follow-ups       |
+| **Personal files**                | Bills, receipts, leases, warranties, contracts, tax and medical papers, each with its note | Renewals, warranty and contract end dates, expiring IDs    |
 
 ## Name
 
@@ -28,6 +30,10 @@ Anyone who keeps retyping the same life into forms. Each job below is one "appli
 ### Typed facts with proof
 
 Memory products store loose snippets. Brainiac stores typed notes whose front-matter is validated data, with sources tied to the exact fields they prove. "Is my CGPA 3.71 or 3.74?" has one answer and a page to show for it.
+
+### Every file filed with context
+
+Drop any file (a scan, a bill, a lease, a screenshot) and your Claude files it: a note says what it is, who issued it, when it matters and which notes it relates to, and the file gets a readable name in the right folder. "When does my laptop warranty end?" has one answer, with the file attached.
 
 ### Your Claude does the work
 

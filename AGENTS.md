@@ -2,7 +2,8 @@
 
 Brainiac keeps a person's whole record (achievements, projects, papers, grades, test scores, CVs, letters,
 IDs, profiles, links) as typed markdown notes with sources, for admissions, study abroad, scholarships and
-jobs. It syncs live between the site, phones and laptops, and people run it with the Claude they already
+jobs. It also organizes their personal files: every file (a bill, a lease, a warranty, a scan) is filed
+with a note saying what it is, where it came from and what it relates to. It syncs live between the site, phones and laptops, and people run it with the Claude they already
 pay for, through MCP. Brainiac itself runs no model.
 
 ## What we never compromise on

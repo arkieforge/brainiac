@@ -31,7 +31,8 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 
 ### How files are organized
 
-- **No file stands alone**: every PDF, scan or photo has a sidecar note (Document or Photo) saying what it is, who issued it, when it expires and which fields it proves.
+- **No file stands alone**: every PDF, scan or photo has a sidecar note (Document or Photo) saying what it is, who issued it, when it expires and which fields it proves. Files no application needs (a lease, a warranty, a bill) get
+  the same sidecar and go in an area folder grown on demand (`finance/`, `health/`, ...).
 - **Relations are relative paths** in front-matter (readable, Obsidian-friendly, valid OKF). Every note also has a ULID `id` for sync. When a note moves (by you, an agent or `organize`), the DO rewrites every reference to it, in front-matter and in body links, in the same transaction, and every copy receives the rewritten notes.
 - **Names**: kebab-case `<what>-<when>`. Portal file names (`Karim_Nadia_Transcript.pdf`) are applied only when building a packet.
 - **Distinct events are distinct notes**: two IELTS attempts are two TestScore notes, the newer one `supersedes` the older. "Current score" is a query, and history stays queryable.

@@ -1,9 +1,11 @@
 # Brainiac
 
-Your whole record, ready for every application.
+Your whole record and your personal files, organized with context and ready for every application.
 
 Brainiac keeps everything an application asks for (achievements, projects, papers, grades, test scores,
-CVs, recommendation letters, IDs, profiles and links) as typed markdown notes with sources. It syncs live
+CVs, recommendation letters, IDs, profiles and links) as typed markdown notes with sources, and files
+every other personal file (bills, leases, warranties, scans) with a note saying what it is and what it
+relates to. It syncs live
 to the site, phones and any laptop that keeps a local copy, and people manage it with the Claude they
 already use (Claude Code, claude.ai, T3 Code) through MCP. Brainiac runs no model of its own and needs no
 API key.
