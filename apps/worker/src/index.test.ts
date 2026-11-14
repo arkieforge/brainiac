@@ -29,7 +29,7 @@ class FakePool {
     this.ended = true;
   }
 }
-vi.mock("pg", () => ({ Pool: FakePool, Client: class {} }));
+vi.mock("pg", () => ({ Pool: FakePool, Client: Object }));
 
 const { default: worker } = await import("./index.ts");
 // Routing never touches bindings; /health/db is proved against a real stage instead.
@@ -95,15 +95,18 @@ describe("worker", () => {
     } as Env;
     // The failed seed logs through Better Auth's logger; that's expected here.
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    // Setup can't reach the database yet, so this returning at all shows the 401 doesn't wait for it.
-    const res = await worker.fetch(new Request("https://brainiac.test/mcp", { method: "POST" }), env, ctx);
-    expect(res.status).toBe(401);
-    const pool = pools.at(-1);
-    pool?.open();
-    await Promise.all(work);
-    logged.mockRestore();
-    expect(pool?.connects).toBeGreaterThan(0);
-    expect(pool?.connectsAfterEnd).toBe(0);
-    expect(pool?.ended).toBe(true);
+    try {
+      // Setup can't reach the database yet, so this returning at all shows the 401 doesn't wait for it.
+      const res = await worker.fetch(new Request("https://brainiac.test/mcp", { method: "POST" }), env, ctx);
+      expect(res.status).toBe(401);
+      const pool = pools.at(-1);
+      pool?.open();
+      await Promise.all(work);
+      expect(pool?.connects).toBeGreaterThan(0);
+      expect(pool?.connectsAfterEnd).toBe(0);
+      expect(pool?.ended).toBe(true);
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
