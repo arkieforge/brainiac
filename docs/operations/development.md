@@ -13,18 +13,18 @@ links the main checkout's `.env`.
 
 ## Commands
 
-| Command                         | Does                                                                            |
-| ------------------------------- | ------------------------------------------------------------------------------- |
-| `vp check`                      | Format check, lint and type-aware checks                                        |
-| `vp test run [files]`           | Tests (Vitest through Vite+)                                                    |
-| `vp run typecheck`              | `effect-tsgo` type check in every workspace                                     |
-| `vp run knip`                   | Unused files, exports and dependencies                                          |
-| `vp run dev`                    | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`) |
-| `vp run plan --stage <name>`    | What a deploy would change, without applying it                                 |
-| `vp run deploy --stage <name>`  | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)           |
-| `vp run destroy --stage <name>` | Tear down a stage, Neon branch included                                         |
-| `vp run doctor`                 | Environment check                                                               |
-| `vp run logs --stage <name>`    | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)      |
+| Command                         | Does                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| `vp check`                      | Format check, lint and type-aware checks                                                   |
+| `vp test run [files]`           | Tests (Vitest through Vite+)                                                               |
+| `vp run typecheck`              | `effect-tsgo` type check in every workspace                                                |
+| `vp run knip`                   | Unused files, exports and dependencies                                                     |
+| `vp run dev`                    | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)            |
+| `vp run plan --stage <name>`    | What a deploy would change, without applying it                                            |
+| `vp run deploy --stage <name>`  | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                      |
+| `vp run destroy --stage <name>` | Tear down a stage, Neon branch included                                                    |
+| `vp run doctor`                 | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy) |
+| `vp run logs --stage <name>`    | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                 |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 

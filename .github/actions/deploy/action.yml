@@ -35,3 +35,15 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
         grep -oE '\[[^]]+\] (replace|delete)$' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
         exit $status
+    # The stage as a signed-out visitor sees it (scripts/doctor.ts). A FAIL fails the job, so a deploy that
+    # breaks sign-in shows red instead of waiting for someone to report it.
+    - shell: bash
+      env:
+        DOPPLER_TOKEN: ${{ inputs.doppler-token }}
+        STAGE: ${{ inputs.stage }}
+      run: |
+        set -o pipefail
+        status=0
+        doppler run -- node scripts/doctor.ts --stage "$STAGE" 2>&1 | tee doctor.log || status=$?
+        { echo "### Doctor"; echo '```'; cat doctor.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        exit $status

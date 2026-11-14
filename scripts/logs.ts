@@ -120,19 +120,24 @@ export function sinceMs(value: string): number {
   return Number(match[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "m" | "h" | "d"];
 }
 
-function secret(name: string, config: string): string | undefined {
+/** A secret from the environment (CI runs under `doppler run`), else from the given Doppler config. */
+export function secret(name: string, config: string): string | undefined {
+  if (process.env[name]) return process.env[name];
   const out = spawnSync(
     "doppler",
     ["secrets", "get", name, "--plain", "--project", "braniac", "--config", config],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-    },
+    { cwd: ROOT, encoding: "utf8" },
   );
   return out.status === 0 ? out.stdout.trim() || undefined : undefined;
 }
 
-async function cloudflare(path: string, token: string, init: RequestInit = {}) {
+/** Prod's secrets live in Doppler's prd config, so only people with prd access read them; every other stage uses dev. */
+export const dopplerConfig = (stage: string) => (stage === "prod" ? "prd" : "dev");
+
+/** Worker names follow alchemy.run.ts: brainiac-<id>-<stage>, underscores as dashes. */
+export const workerName = (stage: string) => `brainiac-worker-${stage.replaceAll("_", "-")}`;
+
+export async function cloudflare(path: string, token: string, init: RequestInit = {}) {
   const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
     ...init,
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -142,9 +147,9 @@ async function cloudflare(path: string, token: string, init: RequestInit = {}) {
     const message = body.errors?.map((e) => e.message).join("; ") ?? res.statusText;
     throw new Error(
       res.status === 403
-        ? `Cloudflare refused (${message}). The token needs Workers Observability Read for stored logs and ` +
-            "Workers Tail Read for --tail; see infra/README.md (CLOUDFLARE_LOGS_TOKEN)."
-        : `Cloudflare API ${path}: ${message}`,
+        ? `Cloudflare refused (${message}). Stored logs need Workers Observability Read and --tail ` +
+            "needs Workers Tail Read; see CLOUDFLARE_LOGS_TOKEN in infra/README.md."
+        : `Cloudflare API: ${message}`,
     );
   }
   return body.result;
@@ -207,14 +212,13 @@ async function main() {
     },
   });
   if (!values.stage) throw new Error("Pass --stage, e.g. --stage prod or --stage pr-74.");
-  const config = values.stage === "prod" ? "prd" : "dev";
+  const config = dopplerConfig(values.stage);
   const token = secret("CLOUDFLARE_LOGS_TOKEN", config) ?? secret("CLOUDFLARE_API_TOKEN", config);
   const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
   if (!token || !accountId) {
     throw new Error(`Couldn't read Cloudflare secrets from Doppler config ${config}. Run \`vp run doctor\`.`);
   }
-  // Worker names follow alchemy.run.ts: brainiac-<id>-<stage>, underscores as dashes.
-  const script = `brainiac-worker-${values.stage.replaceAll("_", "-")}`;
+  const script = workerName(values.stage);
   const wanted = (r: RequestLog) => values.all || Boolean(values.ray) || failed(r);
   const show = (r: RequestLog) => {
     if (wanted(r) && (!values.ray || r.ray === values.ray)) console.log(format(r));

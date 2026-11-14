@@ -129,6 +129,10 @@ calling work done, walk this list and say which entries applied:
 - A bug fix starts with a test that fails on `main`. A purely visual bug gets before/after screenshots
   instead.
 - `vp run doctor` when something about the environment looks wrong.
+- Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the
+  [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from
+  `vp run doctor --stage <stage>` and `vp run logs --stage <stage>`. CI runs the same doctor after every
+  deploy and puts it in the job summary; a `FAIL` there is yours to fix.
 
 ## Evals
 

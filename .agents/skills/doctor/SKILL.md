@@ -27,10 +27,11 @@ Work from the logs, not from guesses. Read-only throughout: never deploy prod, n
 1. **Get the facts.** Which stage (`prod`, `pr-<n>`, `live_<you>`), which hostname, roughly when, what the
    person did, and the error text. "Something went wrong" from a site page ends with `ref <id>`: that is the
    request's Cloudflare ray id. Ask for a screenshot if there isn't one.
-2. **Check what's deployed.** `gh run list --branch main --limit 5` (prod) or the PR's checks: did the last
-   deploy succeed, and was it before or after the failure? Probe the stage without signing in:
-   `/health`, `/health/db`, `/sign-in` (real Turnstile key on prod, the email form, the social buttons),
-   `/.well-known/oauth-authorization-server`.
+2. **Check what's deployed.** `vp run doctor --stage <stage>` probes it signed out: the Worker, the database,
+   the sign-in page's Turnstile key and email form, Turnstile on sign-up, the OAuth metadata, and whether
+   stored logs are readable. Then `gh run list --branch main --limit 5` (prod) or the PR's checks: did the
+   last deploy succeed, and was it before or after the failure? Its job summary has the doctor run from
+   right after it deployed.
 3. **Read the logs.** `vp run logs --stage <stage> --ray <ref>` shows every line of that request;
    `vp run logs --stage <stage> --since 2h` lists every failed request in the window, with its log lines and
    exceptions. Without a ref, find the request by time and path. When stored logs aren't readable (see
