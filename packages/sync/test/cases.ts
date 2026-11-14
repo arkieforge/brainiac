@@ -201,6 +201,17 @@ export const cases: Record<string, Case> = {
     const kept = await open("own").load();
     equal(kept?.remote.get(B)?.raw, "kept");
     equal(kept?.cursor, 2);
+
+    // Turned off again: the next start takes them off the device.
+    const off = await SyncClient.open({
+      send: () => {},
+      newClientId: () => "own",
+      schemaVersion: 1,
+      appVersion: "test",
+      store: open("own"),
+    });
+    await off.saved();
+    same([...((await open("own").load())?.remote.keys() ?? [])], []);
   },
 };
 

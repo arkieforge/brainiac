@@ -95,6 +95,11 @@ export class SyncClient {
   constructor(state: State, options: Options) {
     this.state = state;
     this.#options = options;
+    // Kept by an earlier run that had "keep sensitive notes" on: turning it off takes them off the device.
+    if (!options.keepSensitive && [...state.remote.values()].some((note) => note.class === "sensitive")) {
+      this.#clear = this.#dirty = true;
+      this.#commit();
+    }
   }
 
   /** The client kept in `store`, or a new one if it holds nothing yet. */
