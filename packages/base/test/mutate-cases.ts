@@ -4,6 +4,7 @@ import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 import { parseNote } from "@brainiac/core";
 
 import {
+  CHANGES_MS,
   chunkNote,
   dueJobs,
   finishJob,
@@ -373,7 +374,8 @@ export const mutateCases: Record<string, Case> = {
     equal(getNote(sql, noteId), undefined);
     same(rows(sql, "revisions", noteId), []);
     same(sql.all("SELECT * FROM chunks"), []);
-    equal(nextWake(sql, T0 + 10 + TOMBSTONE_MS), null);
+    // What is left to expire is the feed, a day after its window so busy records wake at most daily for it.
+    equal(nextWake(sql, T0 + 10 + TOMBSTONE_MS), T0 + CHANGES_MS + 24 * 60 * 60_000);
     // The feed still says it was deleted, for clients catching up.
     equal(rows(sql, "changes", noteId).length, 2);
   },
@@ -486,5 +488,85 @@ export const mutateCases: Record<string, Case> = {
     const result = undoRun(sql, run, by(T0 + 1, run));
     ok(result.runId !== run);
     equal(field(sql, noteId, "overall"), 8);
+  },
+
+  // The run's last write was undone by hand since: undo must not reach past it to the run's first value.
+  "undo never reaches past a field edited since, even back to a value the run wrote": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000007";
+    const set = (baseRev: number, value: number, ctx: Context) =>
+      applied(
+        mutate(sql, { op: "patch", noteId, baseRev, ops: [{ op: "set", path: ["overall"], value }] }, ctx),
+      );
+    set(1, 9, by(T0 + 1, run));
+    set(2, 7, by(T0 + 2, run));
+    set(3, 9, by(T0 + 3));
+    const result = undoRun(sql, run, by(T0 + 4));
+    equal(field(sql, noteId, "overall"), 9);
+    same(
+      result.conflicts.map((c) => c.diff),
+      [{ fields: { overall: { before: 9, after: 8 } } }],
+    );
+  },
+
+  "a field the run edited twice and someone edited since is one conflict, back to the first value": (
+    sql,
+    fixtures,
+  ) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000008";
+    const set = (baseRev: number, value: number, ctx: Context) =>
+      applied(
+        mutate(sql, { op: "patch", noteId, baseRev, ops: [{ op: "set", path: ["overall"], value }] }, ctx),
+      );
+    set(1, 8.5, by(T0 + 1, run));
+    set(2, 7, by(T0 + 2, run));
+    set(3, 9, by(T0 + 3));
+    same(
+      undoRun(sql, run, by(T0 + 4)).conflicts.map((c) => c.diff),
+      [{ fields: { overall: { before: 9, after: 8 } } }],
+    );
+  },
+
+  "undoing a run twice changes nothing the second time": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000009";
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId,
+          baseRev: 1,
+          ops: [{ op: "section", heading: "Notes", content: "Agent notes.\n" }],
+        },
+        by(T0, run),
+      ),
+    );
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 2, ops: [{ op: "set", path: ["overall"], value: 9 }] },
+        by(T0 + 1, run),
+      ),
+    );
+    undoRun(sql, run, by(T0 + 2));
+    const rev = stored(sql, noteId).rev;
+    const again = undoRun(sql, run, by(T0 + 3));
+    same([again.undone, again.conflicts], [[], []]);
+    equal(stored(sql, noteId).rev, rev);
+  },
+
+  "a note the run created and deleted stays gone when its path was taken since": (sql, fixtures) => {
+    migrate(sql);
+    const { raw } = fixture(fixtures, TUM);
+    const run = "01M6RUN000000000000000000A";
+    const created = applied(mutate(sql, { op: "create", path: TUM, raw, class: "normal" }, by(T0, run)));
+    applied(mutate(sql, { op: "delete", noteId: created.noteId, baseRev: 1 }, by(T0 + 1, run)));
+    const other = raw.replace(created.noteId, "01M6ZZZZZZZZZZZZZZZZZZZZZZ");
+    applied(mutate(sql, { op: "create", path: TUM, raw: other, class: "normal" }, by(T0 + 2)));
+    const result = undoRun(sql, run, by(T0 + 3));
+    same([result.undone, result.conflicts], [[], []]);
+    ok(getNote(sql, created.noteId)?.deletedAt !== null);
   },
 };

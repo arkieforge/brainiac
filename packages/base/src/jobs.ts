@@ -113,16 +113,26 @@ export function finishJob(sql: Sql, jobId: string, install: (job: Job) => void):
   });
 }
 
-/** When the record next has background work: a job to dispatch or retry, or a tombstone to purge. */
+/** History older than its window waits up to this long, so an active record wakes for it at most daily. */
+const HISTORY_GRACE_MS = 24 * 60 * 60_000;
+
+/**
+ * When the record next has background work: a job to dispatch or retry, a tombstone to purge, or history
+ * (revisions, the change feed) past its window.
+ */
 export function nextWake(sql: Sql, now: number): number | null {
   const [row] = sql.all<{ at: number | null }>(
     `SELECT min(at) AS at FROM (
        SELECT CASE status WHEN 'pending' THEN ? ELSE dispatchedAt + ? END AS at
          FROM jobs WHERE status IN ('pending', 'dispatched')
-       UNION ALL SELECT min(deletedAt) + ? FROM notes WHERE deletedAt IS NOT NULL)`,
+       UNION ALL SELECT min(deletedAt) + ? FROM notes WHERE deletedAt IS NOT NULL
+       UNION ALL SELECT min(at) + ? FROM revisions
+       UNION ALL SELECT min(at) + ? FROM changes)`,
     now,
     LEASE_MS,
     TOMBSTONE_MS,
+    TOMBSTONE_MS + HISTORY_GRACE_MS,
+    CHANGES_MS + HISTORY_GRACE_MS,
   );
   return row?.at ?? null;
 }
