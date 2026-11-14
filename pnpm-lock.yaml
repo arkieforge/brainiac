@@ -215,6 +215,19 @@ importers:
 
   oxlint-plugin-brainiac: {}
 
+  packages/core:
+    dependencies:
+      arktype:
+        specifier: 2.2.9
+        version: 2.2.9
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+    devDependencies:
+      fast-check:
+        specifier: 4.10.2
+        version: 4.10.2
+
 packages:
 
   '@alchemy.run/acme@2.0.0-beta.87':
@@ -323,6 +336,12 @@ packages:
         optional: true
       pg:
         optional: true
+
+  '@ark/schema@0.56.8':
+    resolution: {integrity: sha512-R05TOe85oQBGFFw2zKMuZpqkXibLKuC/aJt6VwFn5Cjc4x3NkWfhvGRpRDycNkj3ddcHnOPtIsmjVowJO9Yxdw==}
+
+  '@ark/util@0.56.8':
+    resolution: {integrity: sha512-XLiQyGfpJcws1zCtp2Cva8s1oheCdFn1Rt6JSyC4NnkDrpwCJnlaiawuuOc1Z97vMH+jEzW5vyyf0xOju5wUQA==}
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -1805,6 +1824,12 @@ packages:
   aria-query@5.3.0:
     resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
 
+  arkregex@0.0.14:
+    resolution: {integrity: sha512-G3I/uCtWE0IKQiPh0qqmmAFDdtjZKZQ5mNPR6gJBeAMZ7VqYCpoaDeXnLju2Zo6ywExtmxZJELeVFb0MPDjPyA==}
+
+  arktype@2.2.9:
+    resolution: {integrity: sha512-Cja0IMEn19rB35on9da1i1z6QMasuS7ULffXbetCry09jvCGYT8Bi1KgYiqri5FymF4nQAXkM90yksYkgSK2EA==}
+
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -1871,6 +1896,10 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
+    engines: {node: '>=12.17.0'}
 
   fd-package-json@2.0.0:
     resolution: {integrity: sha512-jKmm9YtsNXN789RS/0mSzOC1NUq9mkVd65vbSSVsKdjGvYXBuE4oWe2QOEoFeRmJg+lPuZxpmrfFclNhoRMneQ==}
@@ -2146,6 +2175,9 @@ packages:
   pretty-format@27.5.1:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
     engines: {node: ^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0}
+
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
 
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
@@ -2477,6 +2509,12 @@ snapshots:
       effect: 4.1.4
     optionalDependencies:
       pg: 8.23.1
+
+  '@ark/schema@0.56.8':
+    dependencies:
+      '@ark/util': 0.56.8
+
+  '@ark/util@0.56.8': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -3396,6 +3434,16 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
+  arkregex@0.0.14:
+    dependencies:
+      '@ark/util': 0.56.8
+
+  arktype@2.2.9:
+    dependencies:
+      '@ark/schema': 0.56.8
+      '@ark/util': 0.56.8
+      arkregex: 0.0.14
+
   assertion-error@2.0.1: {}
 
   capnp-es@0.0.16: {}
@@ -3465,6 +3513,10 @@ snapshots:
       '@types/estree': 1.0.10
 
   expect-type@1.4.0: {}
+
+  fast-check@4.10.2:
+    dependencies:
+      pure-rand: 8.4.2
 
   fd-package-json@2.0.0:
     dependencies:
@@ -3753,6 +3805,8 @@ snapshots:
       ansi-regex: 5.0.1
       ansi-styles: 5.2.0
       react-is: 17.0.2
+
+  pure-rand@8.4.2: {}
 
   react-is@17.0.2: {}
 
