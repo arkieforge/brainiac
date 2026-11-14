@@ -33,5 +33,6 @@ runs:
           packages/*/node_modules
           oxlint-plugin-brainiac/node_modules
         key: ${{ steps.modules.outputs.cache-primary-key }}
-    - run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
+    # A fixed path inside the checkout; no outside input reaches GITHUB_PATH.
+    - run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH" # zizmor: ignore[github-env]
       shell: bash

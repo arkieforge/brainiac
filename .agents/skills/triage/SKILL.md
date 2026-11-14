@@ -18,7 +18,7 @@ For each open issue without a milestone, or the ones named:
    ([docs/product/roadmap.md](../../../docs/product/roadmap.md)) decides the milestone.
 2. Look for duplicates (`gh issue list --search "<key words>" --state all`). Close a duplicate with a link to
    the original and a one-line reason.
-3. Set labels and milestone: `gh issue edit <n> --add-label area:sync,type:feature --milestone "M0 Record + sync"`.
+3. Set labels and milestone (a bug form's Area answer names its `area:*` label): `gh issue edit <n> --add-label area:sync,type:feature --milestone "M0 Record + sync"`.
    Add `council` when it touches security, auth, sync or retrieval (`area:security`, `area:auth`,
    `area:sync`, `area:rag`), and give its brief a `## Review` section saying to run the `council` skill
    until every member scores 9.5/10 before filing the PR.
@@ -27,7 +27,8 @@ For each open issue without a milestone, or the ones named:
 5. Make it a brief: every feature issue needs Goal, What ships, Out of scope, Where, Depends on, Done when
    and How it breaks (see any M0 issue for the shape). Fill gaps you can answer from the docs; ask for the rest.
 6. If it can't be acted on (no repro for a bug, no "Done when" for a feature), comment with the exact
-   questions and label it `question`. Don't guess the answers.
+   questions and label it `needs-info`. Don't guess the answers. The `stale` workflow closes it after 14 days
+   without a reply; any reply removes the label.
 7. If it asks for something the contract forbids (agents seeing secrets, reading a base id from a URL,
    paid SaaS for something Cloudflare covers), say which rule and suggest the version that fits.
 
@@ -37,6 +38,8 @@ For each open issue without a milestone, or the ones named:
 2. Check the body says how it was proved, and CI is green.
 3. Check the PR template boxes, especially "no real personal data".
 4. Comment with what's missing. Don't merge, close or approve unless the maintainer asked you to.
+
+Labels live in [.github/labels.json](../../../.github/labels.json); add one there, not in the GitHub UI.
 
 ## Never
 

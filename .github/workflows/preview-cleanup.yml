@@ -20,6 +20,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
       - run: doppler run -- alchemy destroy --stage pr-${{ github.event.pull_request.number }} --yes --no-input

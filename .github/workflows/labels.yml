@@ -1,0 +1,31 @@
+name: labels
+
+# Makes the repo's labels match .github/labels.json: creates missing ones and fixes colors and descriptions.
+# It never deletes a label, since that would strip it from every issue; remove one by hand.
+on:
+  push:
+    branches: [main]
+    paths: [.github/labels.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    name: Sync labels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          jq -r '.[] | [.name, .color, .description] | @tsv' .github/labels.json |
+            while IFS=$'\t' read -r name color description; do
+              gh label create "$name" --color "$color" --description "$description" --force
+            done
