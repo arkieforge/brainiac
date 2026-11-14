@@ -562,11 +562,42 @@ export const mutateCases: Record<string, Case> = {
     const { raw } = fixture(fixtures, TUM);
     const run = "01M6RUN000000000000000000A";
     const created = applied(mutate(sql, { op: "create", path: TUM, raw, class: "normal" }, by(T0, run)));
-    applied(mutate(sql, { op: "delete", noteId: created.noteId, baseRev: 1 }, by(T0 + 1, run)));
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId: created.noteId,
+          baseRev: 1,
+          ops: [{ op: "set", path: ["status"], value: "submitted" }],
+        },
+        by(T0 + 1, run),
+      ),
+    );
+    applied(mutate(sql, { op: "delete", noteId: created.noteId, baseRev: 2 }, by(T0 + 1, run)));
     const other = raw.replace(created.noteId, "01M6ZZZZZZZZZZZZZZZZZZZZZZ");
     applied(mutate(sql, { op: "create", path: TUM, raw: other, class: "normal" }, by(T0 + 2)));
     const result = undoRun(sql, run, by(T0 + 3));
     same([result.undone, result.conflicts], [[], []]);
     ok(getNote(sql, created.noteId)?.deletedAt !== null);
+  },
+
+  "a note the run created and edited, deleted since, needs nothing from the person": (sql, fixtures) => {
+    migrate(sql);
+    const run = "01M6RUN000000000000000000B";
+    const { raw } = fixture(fixtures, IELTS);
+    const { noteId } = applied(
+      mutate(sql, { op: "create", path: IELTS, raw, class: "sensitive" }, by(T0, run)),
+    );
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["overall"], value: 9 }] },
+        by(T0 + 1, run),
+      ),
+    );
+    applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by(T0 + 2)));
+    const result = undoRun(sql, run, by(T0 + 3));
+    same([result.undone, result.conflicts], [[], []]);
   },
 };

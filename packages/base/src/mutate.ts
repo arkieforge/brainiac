@@ -328,8 +328,9 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
 
       // Created by the run: undoing deletes it, unless it was edited since.
       if (d.live?.before === false) {
-        if (held?.live || !now.live) {
-          if (held?.live) propose(note.id, { fields: {}, live: { after: false } });
+        // Already gone: whatever undoing the run's later steps asked of this note is moot.
+        if (!now.live) {
+          pending.delete(note.id);
           continue;
         }
         const then = parseNote(revision.raw);
