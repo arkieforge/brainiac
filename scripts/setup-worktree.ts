@@ -26,6 +26,10 @@ if (import.meta.main) {
     symlinkSync(env, join(ROOT, ".env"));
     console.log("linked .env from the main checkout");
   }
+  // Project and config come from doppler.yaml; the login is scoped to the folder above all worktrees.
+  if (!run("doppler", ["setup", "--no-interactive"])) {
+    console.warn("WARN: Doppler isn't set up here. See docs/operations/development.md#secrets.");
+  }
   // This worktree's own sync script, aimed at the main checkout, so it works even when main is older.
   // The shared folder exists before cloning, so the link is made even if every clone fails offline.
   mkdirSync(join(main, ".repos"), { recursive: true });

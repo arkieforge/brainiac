@@ -41,12 +41,12 @@ export const checks: Check[] = [
     run: () => sh("gh", ["auth", "token"]).status === 0 || "Run `gh auth login` to work with issues and PRs.",
   },
   {
-    name: "Cloudflare credentials (for deploys)",
+    // Secrets (Cloudflare, Neon, treg) come from Doppler, scoped to this folder (see docs/operations/development.md).
+    name: "Doppler set up for this folder",
     optional: true,
     run: () =>
-      Boolean(process.env.CLOUDFLARE_API_TOKEN) ||
-      existsSync(join(ROOT, ".env")) ||
-      "Set CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID) in .env to deploy a stage.",
+      sh("doppler", ["configure", "get", "project", "--plain"]).stdout.trim() === "braniac" ||
+      "Run `doppler login --scope <this folder>` with the LaunchPad account, then `doppler setup --no-interactive`.",
   },
   {
     name: "Reference repos synced",

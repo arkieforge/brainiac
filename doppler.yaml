@@ -1,0 +1,4 @@
+# `doppler setup` reads this, so every checkout and worktree picks the same project and config.
+setup:
+  - project: braniac
+    config: dev

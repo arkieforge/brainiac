@@ -2,6 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   // Exported types are part of our contracts before they have consumers.
   "rules": { "types": "off", "nsTypes": "off" },
+  // Installed with Homebrew, not npm.
+  "ignoreBinaries": ["doppler"],
   "workspaces": {
     ".": {
       // alchemy.run.ts is loaded by the alchemy CLI; scripts run from package.json and t3.json.

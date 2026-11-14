@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "prepare": "vp config --no-agent",
-    "dev": "alchemy dev",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
+    "dev": "doppler run -- alchemy dev",
+    "deploy": "doppler run -- alchemy deploy",
+    "destroy": "doppler run -- alchemy destroy",
     "typecheck": "effect-tsgo tsc -p . && vp run -r typecheck",
     "knip": "knip",
     "doctor": "node scripts/doctor.ts",
