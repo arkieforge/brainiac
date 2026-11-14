@@ -13,16 +13,17 @@ links the main checkout's `.env`.
 
 ## Commands
 
-| Command                        | Does                                                                        |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| `vp check`                     | Format check, lint and type-aware checks                                    |
-| `vp test run [files]`          | Tests (Vitest through Vite+)                                                |
-| `vp run typecheck`             | `effect-tsgo` type check in every workspace                                 |
-| `vp run knip`                  | Unused files, exports and dependencies                                      |
-| `vp run dev`                   | Local Worker on `localhost:1337`, with your own Neon branch (stage `$USER`) |
-| `vp run deploy --stage <name>` | Deploy a stage (defaults to `$USER`; never `prod` from a laptop)            |
-| `vp run destroy`               | Tear down your stage, Neon branch included                                  |
-| `vp run doctor`                | Environment check                                                           |
+| Command                         | Does                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `vp check`                      | Format check, lint and type-aware checks                                        |
+| `vp test run [files]`           | Tests (Vitest through Vite+)                                                    |
+| `vp run typecheck`              | `effect-tsgo` type check in every workspace                                     |
+| `vp run knip`                   | Unused files, exports and dependencies                                          |
+| `vp run dev`                    | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`) |
+| `vp run plan --stage <name>`    | What a deploy would change, without applying it                                 |
+| `vp run deploy --stage <name>`  | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)           |
+| `vp run destroy --stage <name>` | Tear down a stage, Neon branch included                                         |
+| `vp run doctor`                 | Environment check                                                               |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
@@ -30,7 +31,7 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 
 | Path                     | Holds                                                                            |
 | ------------------------ | -------------------------------------------------------------------------------- |
-| `alchemy.run.ts`         | Every cloud resource, per stage. Alchemy is pinned to 0.94                       |
+| `alchemy.run.ts`         | Every cloud resource, per stage. Alchemy 2.0, pinned to one beta                 |
 | `apps/worker`            | The one Worker and the `Base` Durable Object                                     |
 | `packages/*`             | Shared code (`core`, `base`, `sync`, `render`), added by the issues that need it |
 | `oxlint-plugin-brainiac` | Repo-specific lint rules, each with tests                                        |
@@ -65,10 +66,9 @@ signed-in session.
 ## Reference repos
 
 `.repos/` holds shallow checkouts of the libraries we lean on, so agents can read real source instead of
-guessing: `effect` (`main` until a package depends on it, then the tag of that version), `alchemy` (the 2.0 line, for the migration spike),
-`better-auth`, and `t3code` (for the renderer glue we copy). For the Alchemy 0.94 we actually run, read
-`node_modules/alchemy/src`. `.repos/` is gitignored, excluded from lint, format, tests and editor search,
-and never imported.
+guessing: `effect` and `alchemy` (each at the tag of the version we install), `better-auth`, and `t3code`
+(for the renderer glue we copy). `.repos/` is gitignored, excluded from lint, format, tests and editor
+search, and never imported.
 
 ## Dev container
 

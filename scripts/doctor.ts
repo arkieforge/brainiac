@@ -55,11 +55,14 @@ export const checks: Check[] = [
       existsSync(join(ROOT, ".repos/effect")) || "Run `vp run repos:sync` so agents can read library source.",
   },
   {
+    // A floating range could pull a beta that renames resources and plans deletes of stateful ones.
     name: "Pinned Alchemy version",
     run: () => {
       const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+      const version: unknown = pkg.devDependencies?.alchemy;
       return (
-        pkg.devDependencies?.alchemy === "0.94.0" || "alchemy must stay pinned to 0.94.0 (see issue #2)."
+        (typeof version === "string" && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) ||
+        `alchemy must be pinned to an exact version, not "${String(version)}".`
       );
     },
   },

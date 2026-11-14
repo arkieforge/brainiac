@@ -9,11 +9,20 @@ export interface ReferenceRepo {
 }
 
 export const referenceRepos: ReferenceRepo[] = [
-  // Pinned to the installed version via `versionOf`/`tag` once a package depends on effect.
-  { id: "effect", url: "https://github.com/Effect-TS/effect.git", ref: "main" },
-  // The repo now carries only the 2.0 line (for the migration spike, issue #2). The 0.94 we run ships its
-  // TypeScript source in node_modules/alchemy/src, so read that for current behaviour.
-  { id: "alchemy", url: "https://github.com/alchemy-run/alchemy.git", ref: "main" },
+  {
+    id: "effect",
+    url: "https://github.com/Effect-TS/effect.git",
+    ref: "main",
+    versionOf: "effect",
+    tag: (v) => `effect@${v}`,
+  },
+  {
+    id: "alchemy",
+    url: "https://github.com/alchemy-run/alchemy.git",
+    ref: "main",
+    versionOf: "alchemy",
+    tag: (v) => `v${v}`,
+  },
   { id: "better-auth", url: "https://github.com/better-auth/better-auth.git", ref: "main" },
   { id: "t3code", url: "https://github.com/pingdotgg/t3code.git", ref: "main" },
 ];

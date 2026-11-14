@@ -201,8 +201,9 @@ files. Details: [Architecture](docs/internals/architecture.md), [Sync engine](do
 
 ## Where code lives
 
-- `alchemy.run.ts`: every cloud resource, per stage (Alchemy pinned to 0.94; its source is in
-  `node_modules/alchemy/src`).
+- `alchemy.run.ts`: every cloud resource, per stage (Alchemy 2.0, pinned to one beta; its source is in
+  `node_modules/alchemy/src` and `node_modules/@alchemy.run/*/src`). [infra/README.md](infra/README.md) has
+  the stages, secrets and prod guards.
 - `apps/worker`: the one Worker and the `Base` Durable Object.
 - `packages/*`: shared code, added by the issues that need it.
 - `oxlint-plugin-brainiac/`: repo lint rules, each with tests. `scripts/`: doctor, setup, repo sync.
