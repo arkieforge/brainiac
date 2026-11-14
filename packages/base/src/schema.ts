@@ -250,6 +250,8 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     ) WITHOUT ROWID`,
     "CREATE INDEX landed_at ON landed (at)",
   ],
+  // Who opened a review session: only they may use it.
+  ["ALTER TABLE review_runs ADD COLUMN actor TEXT NOT NULL DEFAULT ''"],
 ];
 
 /** The SQL schema version this code writes. */

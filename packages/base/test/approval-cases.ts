@@ -4,7 +4,14 @@
 // one the DO has already checked.
 import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 
-import { parseNote, ulid, type ClientMessage, type PatchOp, type YamlValue } from "@brainiac/core";
+import {
+  parseNote,
+  resolveRelation,
+  ulid,
+  type ClientMessage,
+  type PatchOp,
+  type YamlValue,
+} from "@brainiac/core";
 import fc from "fast-check";
 
 import {
@@ -42,7 +49,6 @@ let signatures = 0;
 /** A signature the DO has checked; each one a new use of the passkey. */
 const signed = (): Signature => ({
   credentialId: "passkey-1",
-  publicKey: "cose-key",
   counter: ++signatures,
   assertion: `{"n":${signatures}}`,
 });
@@ -109,13 +115,28 @@ function untouched(sql: Sql, run: () => MutationResult | ReturnType<typeof undoR
   return verdict;
 }
 
-/** Every live note's verification and the values it covers, plus its path and type. */
+/**
+ * Every live note's verification and the values it covers, plus its path and type, and which live notes
+ * supersede a verified one.
+ */
 function verifiedSet(sql: Sql) {
-  return sql
-    .all<{ id: string; path: string; fm: string }>(
-      "SELECT id, path, fm FROM notes WHERE deletedAt IS NULL AND fm ->> '$.verified' IS NOT NULL ORDER BY id",
-    )
-    .map(({ id, path, fm }) => {
+  const notes = sql.all<{ id: string; path: string; fm: string }>(
+    "SELECT id, path, fm FROM notes WHERE deletedAt IS NULL ORDER BY id",
+  );
+  const checked = notes.filter(({ fm }) => Object.hasOwn(JSON.parse(fm), "verified"));
+  const paths = new Set(checked.map((note) => note.path));
+  const supersede = notes.flatMap(({ id, path, fm }) => {
+    const target: unknown = JSON.parse(fm)["supersedes"];
+    if (typeof target !== "string") return [];
+    try {
+      return paths.has(resolveRelation(path, target)) ? [[id, target]] : [];
+    } catch {
+      return [];
+    }
+  });
+  return {
+    supersede,
+    notes: checked.map(({ id, path, fm }) => {
       const data: Record<string, unknown> = JSON.parse(fm);
       const verified = data["verified"] as { fields?: string[] };
       return {
@@ -125,7 +146,8 @@ function verifiedSet(sql: Sql) {
         verified,
         values: Array.isArray(verified.fields) ? verified.fields.map((field) => data[field]) : [],
       };
-    });
+    }),
+  };
 }
 
 /** A new IELTS note that supersedes the one at `supersedes`, relative to facts/tests/. */
@@ -137,6 +159,18 @@ const superseding = (supersedes: string) =>
     "test: ielts-academic",
     "overall: 9",
     `supersedes: ${supersedes}`,
+    "---",
+    "",
+  ].join("\n");
+
+/** A note with a field literally named `exam.score` and a mapping `exam` with a `score`. */
+const dotted = (fields: string) =>
+  [
+    "---",
+    `id: ${ulid(T0)}`,
+    "exam.score: 8",
+    "exam: {score: 8}",
+    `verified: {by: human, fields: [${fields}]}`,
     "---",
     "",
   ].join("\n");
@@ -173,10 +207,16 @@ export const approvalCases: Record<string, Case> = {
     applied(mutate(sql, first, { ...agent(), approvalId }));
     // The same change again (it is a no-op now) and a new one: the approval is spent.
     untouched(sql, () => mutate(sql, patchOf(sql, ielts, [set("overall", 8)]), { ...agent(), approvalId }));
-    // A plan is approved once, and a passkey counter that doesn't move is a replayed signature.
+    // Approving a plan again before it is used (the first answer was lost) gives back the same approval;
+    // once used, it is refused. A passkey counter that doesn't move is a replayed signature.
     const again = held(mutate(sql, patchOf(sql, ielts, [set("overall", 8)]), agent())).items;
-    ok("approvalId" in recordApproval(sql, again, signed(), T0));
-    same(recordApproval(sql, again, signed(), T0), { error: "This plan was already approved." });
+    const lost = recordApproval(sql, again, signed(), T0);
+    same(recordApproval(sql, again, signed(), T0), lost);
+    ok("approvalId" in lost);
+    applied(
+      mutate(sql, patchOf(sql, ielts, [set("overall", 8)]), { ...agent(), approvalId: lost.approvalId }),
+    );
+    same(recordApproval(sql, again, signed(), T0), { error: "This plan was already applied." });
     const other = held(mutate(sql, patchOf(sql, ielts, [set("overall", 7)]), agent())).items;
     same(recordApproval(sql, other, { ...signed(), counter: 1 }, T0), {
       error: "This passkey signature was already used.",
@@ -268,7 +308,7 @@ export const approvalCases: Record<string, Case> = {
 
   "a review session covers verify, fix and undo on the notes it showed, for ten minutes": (sql, fixtures) => {
     const { ielts, tum } = record(sql, fixtures);
-    const nonce = startReview(sql, [ielts], T0);
+    const nonce = startReview(sql, [ielts], "human", T0);
     const fix = (overall: number, now: number) =>
       mutate(sql, patchOf(sql, ielts, [set("overall", overall)]), { ...human(now), review: nonce });
     // Not signed yet.
@@ -349,6 +389,77 @@ export const approvalCases: Record<string, Case> = {
     );
   },
 
+  "a verified field named with a dot is covered, whether it is a path or a literal name": (sql) => {
+    migrate(sql);
+    const { noteId } = withApproval(
+      sql,
+      { op: "create", path: "a.md", raw: dotted("exam.score"), class: "normal" },
+      human(),
+    );
+    untouched(sql, () => mutate(sql, patchOf(sql, noteId, [set("exam.score", 999)]), agent()));
+    untouched(sql, () =>
+      mutate(sql, patchOf(sql, noteId, [{ op: "set", path: ["exam", "score"], value: 999 }]), agent()),
+    );
+  },
+
+  "front-matter can't name a field __proto__, so no comparison or plan can lose it": (sql, fixtures) => {
+    const { ielts } = record(sql, fixtures);
+    const note = getNote(sql, ielts);
+    ok(note);
+    for (const line of ["__proto__: {score: 9}", "sections: {__proto__: {}}"]) {
+      const result = mutate(
+        sql,
+        {
+          op: "put",
+          noteId: ielts,
+          baseRev: note.rev,
+          raw: note.raw.replace("---\n## Notes", `${line}\n---\n## Notes`),
+        },
+        agent(),
+      );
+      equal(result.status, "invalid", JSON.stringify(result));
+    }
+  },
+
+  "an approval covers the privacy class it was signed for": (sql, fixtures) => {
+    migrate(sql);
+    const sensitive: Mutation = { op: "create", path: IELTS, raw: raw(fixtures, IELTS), class: "sensitive" };
+    const approvalId = approve(sql, held(mutate(sql, sensitive, human())));
+    untouched(sql, () => mutate(sql, { ...sensitive, class: "normal" }, { ...human(), approvalId }));
+    applied(mutate(sql, sensitive, { ...human(), approvalId }));
+  },
+
+  "a review session is its opener's alone, and never covers deleting more than five notes": (
+    sql,
+    fixtures,
+  ) => {
+    migrate(sql);
+    const ids = Array.from({ length: 6 }, (_, i) => {
+      const created = withApproval(
+        sql,
+        {
+          op: "create",
+          path: `facts/tests/ielts-${i}.md`,
+          raw: raw(fixtures, IELTS).replace(/^id: .*$/m, `id: ${ulid(T0 + i)}`),
+          class: "sensitive",
+        },
+        { ...human(), runId: "import" },
+      );
+      return created.noteId;
+    });
+    const nonce = startReview(sql, ids, "human", T0);
+    ok("review" in openReview(sql, nonce, signed(), T0));
+    const [first] = ids;
+    ok(first);
+    // The nonce in an agent's hands does nothing.
+    untouched(sql, () =>
+      mutate(sql, patchOf(sql, first, [set("overall", 9)]), { ...agent(), review: nonce }),
+    );
+    // Undoing the run would delete six verified notes: a bulk delete needs its own signature.
+    untouched(sql, () => undoRun(sql, "import", { ...human(), review: nonce }));
+    applied(mutate(sql, patchOf(sql, first, [set("overall", 9)]), { ...human(), review: nonce }));
+  },
+
   "no sequence of changes without an approval moves a verified value or lets a held change land": (
     sql,
     fixtures,
@@ -368,6 +479,7 @@ export const approvalCases: Record<string, Case> = {
           "unsigned-review",
           "other-review",
           "expired-review",
+          "someone-elses-review",
         ),
         action: fc.oneof(
           fc.record({
@@ -460,12 +572,15 @@ export const approvalCases: Record<string, Case> = {
           sql,
           held(mutate(sql, patchOf(sql, ids.ielts, [set("overall", 2)]), agent(LATER))),
         );
-        const unsignedReview = startReview(sql, [ids.ielts, ids.tum], LATER);
+        const unsignedReview = startReview(sql, [ids.ielts, ids.tum], "human", LATER);
         // Signed, over a note the steps never touch.
-        const otherReview = startReview(sql, [ulid(LATER)], LATER);
+        const otherReview = startReview(sql, [ulid(LATER)], "human", LATER);
         ok("review" in openReview(sql, otherReview, signed(), LATER));
-        const expiredReview = startReview(sql, [ids.ielts], LATER - REVIEW_MS - 2);
+        const expiredReview = startReview(sql, [ids.ielts], "human", LATER - REVIEW_MS - 2);
         ok("review" in openReview(sql, expiredReview, signed(), LATER - REVIEW_MS - 1));
+        // Signed and current over both notes, but opened by the site, which never acts in these steps.
+        const sitesReview = startReview(sql, [ids.ielts, ids.tum], "client:site", LATER);
+        ok("review" in openReview(sql, sitesReview, signed(), LATER));
         const grants = {
           none: {},
           bogus: { approvalId: "made-up" },
@@ -474,8 +589,10 @@ export const approvalCases: Record<string, Case> = {
           "unsigned-review": { review: unsignedReview },
           "other-review": { review: otherReview },
           "expired-review": { review: expiredReview },
+          "someone-elses-review": { review: sitesReview },
         };
 
+        let made = 0;
         const before = verifiedSet(sql);
         for (const step of steps) {
           const ctx: Context = { actor: step.actor, now: LATER, ...grants[step.grant] };
@@ -484,7 +601,7 @@ export const approvalCases: Record<string, Case> = {
           ok(note);
           const { action } = step;
           const fresh = (lines: string[]) => ["---", `id: ${ulid(LATER)}`, ...lines, "---", ""].join("\n");
-          const path = `${dir}facts/tests/new-${runs.length}-${Math.random().toString(36).slice(2)}.md`;
+          const path = `${dir}facts/tests/new-${++made}.md`;
           const mutation: Mutation | undefined =
             action.kind === "patch"
               ? { op: "patch", noteId, baseRev: note.rev, ops: action.ops as PatchOp[] }

@@ -32,6 +32,7 @@ export interface PlanItem {
   /** 0 for a note the change creates. */
   readonly baseRev: number;
   readonly path: string;
+  readonly class: "normal" | "sensitive";
   readonly patch: Diff;
 }
 

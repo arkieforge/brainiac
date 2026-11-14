@@ -212,7 +212,7 @@ function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { sta
       ...done,
       ok: false,
       needsApproval: { planHash, items },
-      error: "This changes a verified value: approve it with your passkey.",
+      error: "This needs your approval with a passkey.",
     };
   }
   const error =

@@ -38,7 +38,7 @@ The DO computes each mutation's digest itself. A result names the `changeId` it 
 shares a `clientId` never takes another machine's result as its own: a mismatch makes it repair. A client
 takes only the snapshot answering its latest hello; an older one has been overtaken. That one is taken even
 when its seq is below the cursor, since the record may have been restored. A `needsApproval` result carries
-the plan the person signs (each note's base revision, path and effect) and its hash. Once they approve on
+the plan the person signs (each note's base revision, path, class and effect) and its hash. Once they approve on
 the site, the client resends the edit with the `approvalId` under a new `clientSeq` and a new `changeId`: the
 record answers a `changeId` it has seen with the answer it gave.
 

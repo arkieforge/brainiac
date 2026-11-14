@@ -12,6 +12,8 @@ import type { Sql } from "./sql.ts";
 
 /** How long a review session lasts after its signature, and how long its nonce waits to be signed. */
 export const REVIEW_MS = 10 * 60 * 1000;
+/** Deleting more notes than this in one change always needs its own plan-hash signature (contract §4). */
+const BULK_DELETE = 5;
 
 /** What one transaction did to one note: the note as it started and as it ended. */
 export interface Effect {
@@ -43,12 +45,15 @@ export const planHash = (items: readonly PlanItem[]): string =>
 const live = (note: NoteRow | undefined): Readonly<Record<string, unknown>> | undefined =>
   note && note.deletedAt === null ? JSON.parse(note.fm) : undefined;
 
-/** The top-level fields a note's `verified` block covers. */
+/**
+ * The top-level fields a note's `verified` block covers. `sections.writing` covers `sections`, and also a
+ * top-level field literally named `sections.writing`, since front-matter allows both.
+ */
 function verifiedFields(verified: unknown): string[] {
   const fields =
     typeof verified === "object" && verified !== null && "fields" in verified ? verified.fields : [];
   return Array.isArray(fields)
-    ? fields.flatMap((f) => (typeof f === "string" ? [f.split(".")[0] ?? f] : []))
+    ? fields.flatMap((f) => (typeof f === "string" ? [f, f.split(".")[0] ?? f] : []))
     : [];
 }
 
@@ -70,7 +75,7 @@ function superseded(sql: Sql, from: string, relation: unknown): NoteRow | undefi
  * note. Judged on the note as the transaction found it and left it, so clearing `verified` first and editing
  * after, in one transaction or two, is caught at the first step.
  */
-export function needsApproval(sql: Sql, { before, after }: Effect): boolean {
+function needsApproval(sql: Sql, { before, after }: Effect): boolean {
   const was = live(before);
   const is = live(after);
   if (is && !deepEqual(was?.["supersedes"], is["supersedes"])) {
@@ -91,6 +96,7 @@ interface ApprovalRow {
 }
 
 interface ReviewRow {
+  readonly actor: string;
   readonly items: string;
   readonly assertion: string;
   readonly expiresAt: number;
@@ -110,9 +116,8 @@ export interface Grant {
 export function settle(
   sql: Sql,
   effects: readonly Effect[],
-  grant: Grant,
+  ctx: Grant & { readonly actor: string; readonly now: number },
   scope: "change" | "undo",
-  now: number,
 ): NeedsApproval | undefined {
   const needing = effects.filter((effect) => needsApproval(sql, effect));
   if (needing.length === 0) return undefined;
@@ -121,20 +126,29 @@ export function settle(
       noteId: after.id,
       baseRev: before?.rev ?? 0,
       path: after.path,
+      class: after.class,
       patch: diff(stateOf(before), stateOf(after)),
     }))
     .toSorted((a, b) => (a.noteId < b.noteId ? -1 : a.noteId > b.noteId ? 1 : 0));
   const hash = planHash(items);
-  if (grant.approvalId !== undefined) {
-    const [approval] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ?", grant.approvalId);
+  if (ctx.approvalId !== undefined) {
+    const [approval] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ?", ctx.approvalId);
     if (approval && approval.planHash === hash && approval.usedAt === null) {
-      sql.all("UPDATE approvals SET usedAt = ? WHERE id = ?", now, approval.id);
+      sql.all("UPDATE approvals SET usedAt = ? WHERE id = ?", ctx.now, approval.id);
       return undefined;
     }
   }
-  if (grant.review !== undefined) {
-    const [review] = sql.all<ReviewRow>("SELECT * FROM review_runs WHERE nonce = ?", grant.review);
-    if (review && review.assertion !== "" && review.expiresAt > now) {
+  if (ctx.review !== undefined) {
+    const [review] = sql.all<ReviewRow>("SELECT * FROM review_runs WHERE nonce = ?", ctx.review);
+    const deletes = effects.filter(({ before, after }) => live(before) && !live(after)).length;
+    // The session is the person's own, not a bearer token: its nonce in anyone else's hands does nothing.
+    if (
+      review &&
+      review.actor === ctx.actor &&
+      review.assertion !== "" &&
+      review.expiresAt > ctx.now &&
+      deletes <= BULK_DELETE
+    ) {
       const shown = new Set<string>(JSON.parse(review.items));
       const covered = needing.every(
         ({ before, after }) =>
@@ -151,7 +165,6 @@ export function settle(
 /** A passkey assertion the DO has checked: who signed, the counter it reported, and the raw response. */
 export interface Signature {
   readonly credentialId: string;
-  readonly publicKey: string;
   readonly counter: number;
   readonly assertion: string;
 }
@@ -173,10 +186,10 @@ function advance(sql: Sql, signature: Signature): boolean {
   const last = lastCounter(sql, signature.credentialId);
   if ((signature.counter > 0 || last > 0) && signature.counter <= last) return false;
   sql.all(
-    `INSERT INTO passkey_keys (credentialId, publicKey, counter) VALUES (?, ?, ?)
-     ON CONFLICT (credentialId) DO UPDATE SET publicKey = excluded.publicKey, counter = excluded.counter`,
+    // The key itself stays in Neon, where the Worker reads it for each check; the record keeps the counter.
+    `INSERT INTO passkey_keys (credentialId, publicKey, counter) VALUES (?, '', ?)
+     ON CONFLICT (credentialId) DO UPDATE SET counter = excluded.counter`,
     signature.credentialId,
-    signature.publicKey,
     signature.counter,
   );
   return true;
@@ -185,7 +198,10 @@ function advance(sql: Sql, signature: Signature): boolean {
 export type Approved = { readonly approvalId: string } | { readonly error: string };
 export type Opened = { readonly review: string } | { readonly error: string };
 
-/** Records a checked signature over `planHash(items)`, ready for the change to cite once. */
+/**
+ * Records a checked signature over `planHash(items)`, ready for the change to cite once. A plan approved but
+ * not yet used gets its approval back, so an answer lost on the way to the site doesn't strand the change.
+ */
 export function recordApproval(
   sql: Sql,
   items: readonly PlanItem[],
@@ -194,8 +210,9 @@ export function recordApproval(
 ): Approved {
   return sql.transaction((): Approved => {
     const hash = planHash(items);
-    if (sql.all("SELECT 1 FROM approvals WHERE planHash = ?", hash).length > 0)
-      return { error: "This plan was already approved." };
+    const [given] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE planHash = ?", hash);
+    if (given)
+      return given.usedAt === null ? { approvalId: given.id } : { error: "This plan was already applied." };
     if (!advance(sql, signature)) return { error: "This passkey signature was already used." };
     const approvalId = randomBytes(16).toString("base64url");
     sql.all(
@@ -211,15 +228,16 @@ export function recordApproval(
   });
 }
 
-/** A nonce for the person to sign, opening a review session over `noteIds` (the items shown). */
-export function startReview(sql: Sql, noteIds: readonly string[], now: number): string {
+/** A nonce for the person (`actor`) to sign, opening a review session over `noteIds` (the items shown). */
+export function startReview(sql: Sql, noteIds: readonly string[], actor: string, now: number): string {
   const nonce = randomBytes(32).toString("base64url");
   // Unsigned yet: an empty assertion, and until when it may be signed.
   sql.all(
-    "INSERT INTO review_runs (nonce, items, assertion, credentialId, expiresAt) VALUES (?, ?, '', '', ?)",
+    "INSERT INTO review_runs (nonce, items, assertion, credentialId, expiresAt, actor) VALUES (?, ?, '', '', ?, ?)",
     nonce,
     JSON.stringify([...new Set(noteIds)]),
     now + REVIEW_MS,
+    actor,
   );
   return nonce;
 }

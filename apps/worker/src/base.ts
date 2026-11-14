@@ -120,9 +120,9 @@ export class Base extends DurableObject<Env> {
     return "error" in signed ? signed : recordApproval(this.sql, items, signed, Date.now());
   }
 
-  /** A nonce for the person to sign, opening a review session over the notes shown. */
-  startReview(noteIds: readonly string[]): string {
-    return startReview(this.sql, noteIds, Date.now());
+  /** A nonce for the person to sign, opening a review session over the notes shown, for them alone. */
+  startReview(noteIds: readonly string[], caller: Caller): string {
+    return startReview(this.sql, noteIds, caller.actor, Date.now());
   }
 
   /** Opens a review session once its nonce is signed: 10 minutes of verify, fix and undo on its notes. */

@@ -323,7 +323,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   const bKeys = Object.keys(b);
   return (
     aEntries.length === bKeys.length &&
-    aEntries.every(([key, value]) => key in b && deepEqual(value, Reflect.get(b, key)))
+    aEntries.every(([key, value]) => Object.hasOwn(b, key) && deepEqual(value, Reflect.get(b, key)))
   );
 }
 

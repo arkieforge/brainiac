@@ -157,7 +157,7 @@ describe("approvals", () => {
   it("opens a review session only with a fresh signature over its nonce", async () => {
     const base = await record("review");
     const { authenticator, approver } = passkey();
-    const nonce = await base.startReview(["01M6ADBH80DEGPEVAAVR2625V1"]);
+    const nonce = await base.startReview(["01M6ADBH80DEGPEVAAVR2625V1"], human);
     const intruder = createAuthenticator(ORIGIN);
     const forged = { ...intruder.authenticate({ challenge: nonce }), id: approver.credentialId };
     expect(await base.openReview(nonce, forged, approver)).toHaveProperty("error");

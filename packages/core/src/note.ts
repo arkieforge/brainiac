@@ -56,8 +56,12 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
-    // Front-matter is stored as JSON: an alias that contains itself (`a: &a [*a]`) can't be.
-    JSON.stringify(data);
+    // Front-matter is stored as JSON: an alias that contains itself (`a: &a [*a]`) can't be. A `__proto__` key
+    // reads as an object's prototype in most code that touches it, so no field may have that name.
+    JSON.stringify(data, (key, value: unknown) => {
+      if (key === "__proto__") throw new Error("__proto__ can't be a field name.");
+      return value;
+    });
   } catch (error) {
     // Valid YAML that can't become data (too many aliases, an unknown one, a cycle) is unreadable all the same.
     throw new NoteParseError(

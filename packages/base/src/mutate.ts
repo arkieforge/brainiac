@@ -103,7 +103,7 @@ function judged<T>(
         const after = getNote(sql, id);
         return after ? [{ before, after }] : [];
       });
-      const verdict = settle(sql, effects, ctx, scope, ctx.now);
+      const verdict = settle(sql, effects, ctx, scope);
       if (verdict) throw new Held(verdict);
       return result;
     });

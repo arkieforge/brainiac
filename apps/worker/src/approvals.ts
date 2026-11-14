@@ -52,7 +52,6 @@ export async function checkSignature(
     if (!verified) return { error: "The passkey signature doesn't check out." };
     return {
       credentialId: approver.credentialId,
-      publicKey: approver.publicKey,
       counter: authenticationInfo.newCounter,
       assertion: JSON.stringify(response),
     };
