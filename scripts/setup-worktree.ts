@@ -25,9 +25,15 @@ if (import.meta.main) {
     symlinkSync(env, join(ROOT, ".env"));
     console.log("linked .env from the main checkout");
   }
-  if (main && main !== ROOT && existsSync(join(main, ".repos"))) {
-    if (!existsSync(join(ROOT, ".repos"))) symlinkSync(join(main, ".repos"), join(ROOT, ".repos"));
-  } else {
+  if (main && main !== ROOT) {
+    // Clone the reference repos once, into the main checkout, and share them with every worktree.
+    if (!existsSync(join(main, ".repos"))) {
+      spawnSync("node", ["scripts/sync-reference-repos.ts"], { cwd: main, stdio: "inherit" });
+    }
+    if (existsSync(join(main, ".repos")) && !existsSync(join(ROOT, ".repos"))) {
+      symlinkSync(join(main, ".repos"), join(ROOT, ".repos"));
+    }
+  } else if (!existsSync(join(ROOT, ".repos"))) {
     run("node", ["scripts/sync-reference-repos.ts"]);
   }
 }

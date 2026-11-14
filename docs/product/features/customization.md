@@ -5,7 +5,7 @@ Types, folders, headlines, views, collections, vocabulary, review cadence, outpu
 ```
 settings/
 ├── agents.md        house rules for every agent: names, tone, what never to claim
-├── glossary.md      your words: "CGPA = GPA", "BUET = Bangladesh University of Engineering and Technology"
+├── glossary.md      your words: "CGPA = GPA", "NTU = Northvale Technical University"
 ├── views.md         overview grouping, saved filters, collections, pins
 ├── review.md        review cadence, which detectors run, question cap
 └── outputs.md       CV template, spelling, date style, page limits, photo by country

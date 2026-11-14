@@ -40,7 +40,7 @@ pay for, through MCP. Brainiac itself runs no model.
 
 ## Verifying
 
-- Before you push: `vp check` and `vp test run` for the files you touched; CI runs everything.
+- Before you push: `vp check`, `vp test run`, `vp run typecheck` and `vp run knip`, the same checks CI runs.
 - While you iterate: `vp test run <files>`, `vp run typecheck` (`effect-tsgo`, cached per package).
 - Test behaviour that can break: sync and merges, permissions and approvals, parsing, migrations, the logic a
   bug fix changed. Skip tests for what types guarantee, copy text, and mock-call mirrors.

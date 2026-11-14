@@ -7,9 +7,8 @@
       // alchemy.run.ts is loaded by the alchemy CLI; scripts run from package.json and t3.json.
       "entry": ["alchemy.run.ts", "scripts/*.ts"],
       "project": ["*.ts", "scripts/**/*.ts"],
-      // The Effect language service is loaded as a tsconfig plugin; effect is the house runtime for
-      // upcoming packages (see AGENTS.md).
-      "ignoreDependencies": ["@effect/language-service", "effect", "@effect/vitest"],
+      // Loaded as a tsconfig plugin, so no import references it.
+      "ignoreDependencies": ["@effect/language-service"],
     },
     // workers-types is loaded through tsconfig "types".
     "apps/worker": { "entry": ["src/index.ts"], "ignoreDependencies": ["@cloudflare/workers-types"] },

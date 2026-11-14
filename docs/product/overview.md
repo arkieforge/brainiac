@@ -1,5 +1,13 @@
 # Overview
 
+People sign up, and everything an application asks for lives in one place: **achievements, projects,
+papers, grades, test scores, CVs, recommendation letters, IDs, profiles and links**, as **typed markdown
+notes with sources**. It syncs **live** to the site, the phone and any laptop that keeps a local copy.
+People work on it with **the Claude they already pay for** (Claude Code, claude.ai, T3 Code) through MCP or
+a thin CLI. No API key is needed, and the record works fully **with or without anything on disk**.
+Secrets sit in a vault that agents can use only in approved ways and never see. Risky changes need your
+approval, and values nobody has checked are labeled as unverified.
+
 ## Who it's for
 
 Anyone who keeps retyping the same life into forms. Each job below is one "application" in Brainiac: a target with a checklist of requirements. Brainiac matches each requirement to existing facts and files before asking for anything new.
@@ -19,7 +27,7 @@ Anyone who keeps retyping the same life into forms. Each job below is one "appli
 
 ### Typed facts with proof
 
-Memory products store loose snippets. Brainiac stores typed notes whose front-matter is validated data, with sources tied to the exact fields they prove. "Is my CGPA 3.84 or 3.87?" has one answer and a page to show for it.
+Memory products store loose snippets. Brainiac stores typed notes whose front-matter is validated data, with sources tied to the exact fields they prove. "Is my CGPA 3.71 or 3.74?" has one answer and a page to show for it.
 
 ### Your Claude does the work
 

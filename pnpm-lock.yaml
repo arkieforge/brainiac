@@ -172,9 +172,6 @@ importers:
       '@effect/tsgo':
         specifier: 0.69.0
         version: 0.69.0
-      '@effect/vitest':
-        specifier: 4.1.4
-        version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
       '@oxlint/plugins':
         specifier: 1.93.0
         version: 1.93.0
@@ -184,9 +181,6 @@ importers:
       alchemy:
         specifier: 0.94.0
         version: 0.94.0(@types/node@24.19.2)(@voidzero-dev/vite-plus-core@1.6.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(workerd@1.20261110.1)
-      effect:
-        specifier: 4.1.4
-        version: 4.1.4
       knip:
         specifier: 6.45.1
         version: 6.45.1
@@ -421,12 +415,6 @@ packages:
   '@effect/tsgo@0.69.0':
     resolution: {integrity: sha512-ypgO19woAyrfAG0LzU2QwQnprMpV2G30nEo9ffd4Bc0ow0vXupcx0mcSLG1EfvmRGl0jhiQ3yAbsCuJhqwnRhg==}
     hasBin: true
-
-  '@effect/vitest@4.1.4':
-    resolution: {integrity: sha512-AKpZ6zKihCRhY7hDbiQ2yp/krw+afIkxDRjFMwwzMiyhd0iYk0WaHa9J6GGC7TUF/C7HP2dZyMVq5xC0Qm/2/g==}
-    peerDependencies:
-      effect: ^4.1.4
-      vitest: '>=5.0.0 <6.0.0'
 
   '@emnapi/core@1.11.2':
     resolution: {integrity: sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA==}
@@ -2370,9 +2358,6 @@ packages:
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
 
-  effect@4.1.4:
-    resolution: {integrity: sha512-Tgrv/9FN+TZYyOn8XSli+fVqAfwDrDAkiX5Uu9vztINb675VTQdhD0gWI5Kzvhlh9QqzjZvw72iugqw5pwoghQ==}
-
   emoji-regex@8.0.0:
     resolution: {integrity: sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==}
 
@@ -3398,11 +3383,6 @@ snapshots:
       '@effect/tsgo-linux-x64': 0.69.0
       '@effect/tsgo-win32-arm64': 0.69.0
       '@effect/tsgo-win32-x64': 0.69.0
-
-  '@effect/vitest@4.1.4(effect@4.1.4)(vitest@5.1.0)':
-    dependencies:
-      effect: 4.1.4
-      vitest: 5.1.0(@types/node@24.19.2)(@vitest/browser-preview@5.1.0)(@vitest/ui@5.1.0)(@voidzero-dev/vite-plus-core@1.6.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))
 
   '@emnapi/core@1.11.2':
     dependencies:
@@ -4611,8 +4591,6 @@ snapshots:
       '@cloudflare/workers-types': 5.20261113.1
 
   eastasianwidth@0.2.0: {}
-
-  effect@4.1.4: {}
 
   emoji-regex@8.0.0: {}
 

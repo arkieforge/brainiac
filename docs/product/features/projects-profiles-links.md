@@ -2,19 +2,19 @@
 
 Projects come in from GitHub, profiles are checked for drift, and useful links are saved with snapshots. Connectors propose new notes; they may refresh only their own `synced:` block directly.
 
-| Phase  | Source                                                                  | How                                                                                                                       | Brings in                                                  |
-| ------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `M2    | **GitHub**                                                              | Our GitHub App on the repos you pick; webhooks + a daily ETag sweep                                                       | Repos, stars, languages, releases, your commits and PRs    |
-| `M2    | **ORCID + DOIs**                                                        | ORCID OAuth; Crossref and OpenAlex (free)                                                                                 | Works, venues, author position, citations                  |
-| `M2    | **LinkedIn**                                                            | Your data export zip                                                                                                      | Positions, education, skills, certifications               |
-| `M3    | **Drift checks**                                                        | Through treg: `linkedin.user.profile`, `x.user.profile`, `google.serp.scholar` (your own public profiles, started by you) | "LinkedIn says 2025, record says 2026", with text to paste |
-| `later | Kaggle, LeetCode, Hugging Face, npm, app stores, Credly, Devpost, blogs | Public APIs or treg                                                                                                       | Ranks, packages, apps, certificates, talks                 |
+| Phase | Source                                                                  | How                                                                                                                       | Brings in                                                  |
+| ----- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| M2    | **GitHub**                                                              | Our GitHub App on the repos you pick; webhooks + a daily ETag sweep                                                       | Repos, stars, languages, releases, your commits and PRs    |
+| M2    | **ORCID + DOIs**                                                        | ORCID OAuth; Crossref and OpenAlex (free)                                                                                 | Works, venues, author position, citations                  |
+| M2    | **LinkedIn**                                                            | Your data export zip                                                                                                      | Positions, education, skills, certifications               |
+| M3    | **Drift checks**                                                        | Through treg: `linkedin.user.profile`, `x.user.profile`, `google.serp.scholar` (your own public profiles, started by you) | "LinkedIn says 2025, record says 2026", with text to paste |
+| later | Kaggle, LeetCode, Hugging Face, npm, app stores, Credly, Devpost, blogs | Public APIs or treg                                                                                                       | Ranks, packages, apps, certificates, talks                 |
 
 ```
-# facts/projects/campus-bus-tracker.md (excerpt)
+# facts/projects/library-seat-finder.md (excerpt)
 role: "Lead developer (team of 3)"            # yours; connectors never touch these
-summary: "Cut average wait at stops from 14 to 6 minutes."
-sources: [{id: analytics, resource: ../../documents/bus-analytics-2025.md, fields: [summary]}]
+summary: "Cut time spent looking for a seat from 14 to 6 minutes."
+sources: [{id: analytics, resource: ../../documents/seat-analytics-2025.md, fields: [summary]}]
 synced:                                       # owned by the GitHub connector
   repo_id: R_kgDOJx...                         # stable across renames
   stars: 214

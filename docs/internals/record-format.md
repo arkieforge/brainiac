@@ -10,14 +10,14 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 ├── me.md                              summary Claude reads first (generated part + your part)
 ├── profile.md
 ├── facts/
-│   ├── education/   bsc-aiub.md
+│   ├── education/   bsc-northvale.md
 │   ├── roles/       acme-intern-2025.md
-│   ├── papers/      bangla-ner-2026.md
-│   ├── projects/    campus-bus-tracker.md
+│   ├── papers/      swahili-ner-2026.md
+│   ├── projects/    library-seat-finder.md
 │   └── tests/       ielts-2025-03.md  ielts-2026-11.md     one note per attempt
 ├── applications/    tum-msc-informatics-2027/application.md  sop-v3.md  cv-v2.md
-├── people/          dr-rahman.md
-├── letters/         rahman-tum.md                          status only in the MVP
+├── people/          dr-okafor.md
+├── letters/         okafor-tum.md                          status only in the MVP
 ├── documents/       transcript-bsc.md   files/transcript-bsc.pdf
 ├── profiles/        github.md  linkedin.md
 ├── links/           daad-scholarship-database.md
@@ -88,7 +88,7 @@ A requirement is "met" only when its check passes on the current notes (or you t
 
 Notes are nodes. Edges come from relation fields declared in the manifest (`proves`, `for`, `supersedes`, `referee`) plus body links, and a `meets` edge exists only while a requirement check passes. Edges are stored with inverses and rebuilt in the same transaction as the note.
 
-![Knowledge graph example: the TUM application in the center links to the transcript document, the IELTS score, a letter (status) written by Dr Rahman, the SOP draft, and a missing APS certificate. The transcript proves the BSc education fact; the SOP cites a project and a paper.](../assets/knowledge-graph.svg)
+![Knowledge graph example: the TUM application in the center links to the transcript document, the IELTS score, a letter (status) written by Dr Okafor, the SOP draft, and a missing APS certificate. The transcript proves the BSc education fact; the SOP cites a project and a paper.](../assets/knowledge-graph.svg)
 
 - "What's still missing for TUM?" → requirements whose check fails: the APS certificate and a second letter.
 - "Which applications break if my IELTS expires?" → checks with `valid_on` after the expiry date.
