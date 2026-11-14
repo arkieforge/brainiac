@@ -14,10 +14,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Every job stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
   # One job per check, all in parallel, so the slowest check sets the wall time and a failure names itself.
   check:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +44,7 @@ jobs:
     name: Deploy preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -60,6 +63,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment: production
     concurrency:
       group: deploy-prod
