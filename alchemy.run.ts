@@ -114,6 +114,13 @@ export default Alchemy.Stack(
           ...email,
         },
       });
+      // The jobs outbox: each Base DO's alarm sends due jobs here, and the Worker's queue() handler runs
+      // them. A message that keeps failing is also re-sent by the DO once its lease runs out.
+      yield* Cloudflare.Queues.Consumer("jobs-consumer", {
+        queueId: jobs.queueId,
+        scriptName: worker.workerName,
+        settings: { batchSize: 10, maxWaitTimeMs: 100 },
+      });
       return { url: worker.url };
     });
 

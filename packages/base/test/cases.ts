@@ -18,6 +18,7 @@ import {
   type NoteInput,
   type Sql,
 } from "../src/index.ts";
+import { mutateCases } from "./mutate-cases.ts";
 
 export interface Fixture {
   readonly path: string;
@@ -26,7 +27,7 @@ export interface Fixture {
 
 export type CaseResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
-type Case = (sql: Sql, fixtures: readonly Fixture[]) => void;
+export type Case = (sql: Sql, fixtures: readonly Fixture[]) => void;
 
 const tables = (sql: Sql) =>
   sql
@@ -65,15 +66,17 @@ const ALL_TABLES = [
 
 /** Fixture notes as the mutation path would store them; test scores are sensitive, as in the manifest. */
 const asNotes = (fixtures: readonly Fixture[]): NoteInput[] =>
-  fixtures.map((fixture, i) => ({
-    id: String(parseNote(fixture.raw).data["id"]),
-    path: fixture.path,
-    raw: fixture.raw,
-    rev: 1,
-    hash: `hash-${i}`,
-    seq: i + 1,
-    class: fixture.path.startsWith("facts/tests/") ? "sensitive" : "normal",
-  }));
+  fixtures
+    .filter((fixture) => fixture.path.endsWith(".md"))
+    .map((fixture, i) => ({
+      id: String(parseNote(fixture.raw).data["id"]),
+      path: fixture.path,
+      raw: fixture.raw,
+      rev: 1,
+      hash: `hash-${i}`,
+      seq: i + 1,
+      class: fixture.path.startsWith("facts/tests/") ? "sensitive" : "normal",
+    }));
 
 const seed = (sql: Sql, fixtures: readonly Fixture[]) => {
   const notes = asNotes(fixtures);
@@ -88,6 +91,7 @@ const byPath = (sql: Sql, path: string) => {
 };
 
 export const cases: Record<string, Case> = {
+  ...mutateCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);
@@ -115,10 +119,10 @@ export const cases: Record<string, Case> = {
   // A rollback: the previous Worker wakes a record the new one already migrated.
   "a record newer than the code is left alone and still answers queries": (sql, fixtures) => {
     migrate(sql);
-    seed(sql, fixtures);
+    const notes = seed(sql, fixtures);
     sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION + 1));
     same(migrate(sql), { from: SCHEMA_VERSION + 1, to: SCHEMA_VERSION + 1 });
-    equal(listNotes(sql).length, fixtures.length);
+    equal(listNotes(sql).length, notes.length);
   },
 
   "a failed migration leaves the record as it was": (sql) => {
@@ -195,7 +199,7 @@ export const cases: Record<string, Case> = {
 
   "listNotes filters by type, newest first, and skips tombstones": (sql, fixtures) => {
     migrate(sql);
-    seed(sql, fixtures);
+    const notes = seed(sql, fixtures);
     same(
       listNotes(sql, { type: "TestScore" }).map((note) => note.path),
       ["facts/tests/ielts-2026-11.md", "facts/tests/ielts-2025-03.md"],
@@ -206,7 +210,7 @@ export const cases: Record<string, Case> = {
       listNotes(sql, { type: "TestScore" }).map((note) => note.path),
       ["facts/tests/ielts-2026-11.md"],
     );
-    equal(listNotes(sql).length, fixtures.length - 1);
+    equal(listNotes(sql).length, notes.length - 1);
     // The tombstone is still there by id, for undo and sync.
     equal(getNote(sql, old.id)?.deletedAt, 1_000);
     equal(getNoteByPath(sql, old.path), undefined);

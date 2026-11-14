@@ -1,0 +1,380 @@
+// Conformance cases for the mutation path, the jobs outbox and undo; cases.ts runs them on both engines.
+import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
+
+import { parseNote } from "@brainiac/core";
+
+import {
+  chunkNote,
+  dueJobs,
+  finishJob,
+  getNote,
+  jobInput,
+  LEASE_MS,
+  markDispatched,
+  MAX_ATTEMPTS,
+  migrate,
+  mutate,
+  nextWake,
+  purge,
+  putChunks,
+  search,
+  TOMBSTONE_MS,
+  undoRun,
+  type Context,
+  type Job,
+  type MutationResult,
+  type Sql,
+} from "../src/index.ts";
+import type { Case, Fixture } from "./cases.ts";
+
+const T0 = Date.UTC(2026, 10, 14);
+const by = (now = T0, runId?: string): Context => ({ actor: "human", now, ...(runId && { runId }) });
+
+const fixture = (fixtures: readonly Fixture[], path: string) => {
+  const found = fixtures.find((f) => f.path === path);
+  ok(found, path);
+  return found;
+};
+
+const applied = (result: MutationResult) => {
+  equal(result.status, "applied", JSON.stringify(result));
+  ok(result.status === "applied");
+  return result;
+};
+
+const IELTS = "facts/tests/ielts-2026-11.md";
+const TUM = "applications/tum-msc-informatics-2027/application.md";
+
+/** A migrated record holding the IELTS note at rev 1, created through the mutation path. */
+function withIelts(sql: Sql, fixtures: readonly Fixture[]) {
+  migrate(sql);
+  const { raw } = fixture(fixtures, IELTS);
+  return applied(mutate(sql, { op: "create", path: IELTS, raw, class: "sensitive" }, by()));
+}
+
+const rows = (sql: Sql, table: string, noteId: string) =>
+  sql.all<Record<string, unknown>>(`SELECT * FROM ${table} WHERE noteId = ? ORDER BY rev`, noteId);
+const stored = (sql: Sql, id: string) => {
+  const note = getNote(sql, id);
+  ok(note, id);
+  return note;
+};
+const jobs = (sql: Sql) => sql.all<Job>("SELECT * FROM jobs ORDER BY id");
+const field = (sql: Sql, id: string, key: string) => parseNote(getNote(sql, id)?.raw ?? "").data[key];
+
+export const mutateCases: Record<string, Case> = {
+  "each write is one revision with its inverse patch, one change and the next seq": (sql, fixtures) => {
+    const created = withIelts(sql, fixtures);
+    same([created.rev, created.seq], [1, 1]);
+    const patched = applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId: created.noteId,
+          baseRev: 1,
+          ops: [{ op: "set", path: ["overall"], value: 8.5 }],
+        },
+        by(T0 + 1),
+      ),
+    );
+    same([patched.rev, patched.seq], [2, 2]);
+    const deleted = applied(mutate(sql, { op: "delete", noteId: created.noteId, baseRev: 2 }, by(T0 + 2)));
+    same([deleted.rev, deleted.seq], [3, 3]);
+
+    same(
+      rows(sql, "changes", created.noteId).map(({ seq, rev, op, actor }) => ({ seq, rev, op, actor })),
+      [
+        { seq: 1, rev: 1, op: "create", actor: "human" },
+        { seq: 2, rev: 2, op: "update", actor: "human" },
+        { seq: 3, rev: 3, op: "delete", actor: "human" },
+      ],
+    );
+    const patches = rows(sql, "revisions", created.noteId).map((row) => JSON.parse(String(row["patch"])));
+    same(patches[1], { fields: { overall: { before: 8, after: 8.5 } } });
+    same(patches[2], { fields: {}, live: { before: true, after: false } });
+    equal(getNote(sql, created.noteId)?.deletedAt, T0 + 2);
+    // The edit changed only the bytes of that value.
+    const raw = rows(sql, "revisions", created.noteId)[1]?.["raw"];
+    equal(raw, fixture(fixtures, IELTS).raw.replace("overall: 8.0", "overall: 8.5"));
+  },
+
+  "a stale baseRev is a conflict and writes nothing": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const set = { op: "set", path: ["overall"], value: 9 } as const;
+    applied(mutate(sql, { op: "patch", noteId, baseRev: 1, ops: [set] }, by()));
+    same(mutate(sql, { op: "patch", noteId, baseRev: 1, ops: [set] }, by()), {
+      status: "conflict",
+      noteId,
+      rev: 2,
+    });
+    same(mutate(sql, { op: "delete", noteId, baseRev: 1 }, by()), { status: "conflict", noteId, rev: 2 });
+    equal(rows(sql, "changes", noteId).length, 2);
+  },
+
+  "invalid writes are refused and write nothing": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const { raw } = fixture(fixtures, TUM);
+    const statuses = [
+      mutate(sql, { op: "create", path: "../escape.md", raw, class: "normal" }, by()),
+      mutate(sql, { op: "create", path: "a.md", raw: "---\nid: [\n---\n", class: "normal" }, by()),
+      mutate(sql, { op: "create", path: "a.md", raw: "---\nid: not-a-ulid\n---\n", class: "normal" }, by()),
+      // Same id as the IELTS note, and a path that differs only by case.
+      mutate(sql, { op: "create", path: "x.md", raw: fixture(fixtures, IELTS).raw, class: "normal" }, by()),
+      mutate(sql, { op: "create", path: IELTS.toUpperCase(), raw, class: "normal" }, by()),
+      mutate(sql, { op: "patch", noteId, baseRev: 1, ops: [{ op: "unset", path: ["id"] }] }, by()),
+      mutate(sql, { op: "patch", noteId: "01M6ZZZZZZZZZZZZZZZZZZZZZZ", baseRev: 1, ops: [] }, by()),
+    ].map((result) => result.status);
+    same(statuses, Array(7).fill("invalid"));
+
+    // With a manifest, notes must fit their type.
+    sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", fixture(fixtures, "okf-base.yaml").raw);
+    const result = mutate(
+      sql,
+      { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["test"], value: "toeic" }] },
+      by(),
+    );
+    ok(result.status === "invalid" && result.issues[0]?.field === "test", JSON.stringify(result));
+    equal(sql.all("SELECT * FROM changes").length, 1);
+    equal(getNote(sql, noteId)?.rev, 1);
+  },
+
+  "every revision gets an index job, replacing an older pending one": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    same(
+      jobs(sql).map(({ kind, rev, status }) => ({ kind, rev, status })),
+      [{ kind: "index", rev: 1, status: "pending" }],
+    );
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["overall"], value: 9 }] },
+        by(),
+      ),
+    );
+    same(
+      jobs(sql).map(({ rev }) => rev),
+      [2],
+    );
+    // A delete drops the note from search at once, rather than through a job.
+    putChunks(sql, noteId, 2, chunkNote(stored(sql, noteId)));
+    equal(search(sql, "sensitive", "computer").length, 1);
+    applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by()));
+    same(search(sql, "sensitive", "computer"), []);
+    same(dueJobs(sql, T0), []);
+    same(jobs(sql), []);
+  },
+
+  // A crash anywhere between commit and the queue's acknowledgment leaves the job due again.
+  "a job not marked dispatched stays due, and a dispatched one is due again after its lease": (
+    sql,
+    fixtures,
+  ) => {
+    withIelts(sql, fixtures);
+    const [job] = dueJobs(sql, T0);
+    ok(job);
+    // Crash after sending, before markDispatched: the next alarm sends it again.
+    same(
+      dueJobs(sql, T0 + 1).map((j) => j.id),
+      [job.id],
+    );
+    markDispatched(sql, [job.id], T0 + 1);
+    same(dueJobs(sql, T0 + 1), []);
+    equal(nextWake(sql, T0 + 1), T0 + 1 + LEASE_MS);
+    // Never acknowledged: due again once the lease runs out.
+    same(
+      dueJobs(sql, T0 + 1 + LEASE_MS).map((j) => [j.id, j.attempts]),
+      [[job.id, 1]],
+    );
+  },
+
+  "a job that used up its attempts fails instead of running forever": (sql, fixtures) => {
+    withIelts(sql, fixtures);
+    let now = T0;
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      const due = dueJobs(sql, now);
+      equal(due.length, 1);
+      markDispatched(
+        sql,
+        due.map((j) => j.id),
+        now,
+      );
+      now += LEASE_MS;
+    }
+    same(dueJobs(sql, now), []);
+    same(
+      jobs(sql).map(({ status, attempts }) => [status, attempts]),
+      [["failed", MAX_ATTEMPTS]],
+    );
+  },
+
+  "a stale job result for an old rev is dropped": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const [old] = dueJobs(sql, T0);
+    ok(old);
+    markDispatched(sql, [old.id], T0);
+    const input = jobInput(sql, old.id);
+    equal(input?.note.rev, 1);
+    // The note moves on while the job runs.
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId,
+          baseRev: 1,
+          ops: [{ op: "section", heading: "Notes", content: "Retook it.\n" }],
+        },
+        by(),
+      ),
+    );
+    ok(input);
+    equal(
+      finishJob(sql, old.id, () => putChunks(sql, noteId, 1, chunkNote(input.note))),
+      "dropped",
+    );
+    same(search(sql, "sensitive", "computer"), []);
+    // A redelivery of the old job finds nothing to work on.
+    equal(jobInput(sql, old.id), undefined);
+
+    const [fresh] = dueJobs(sql, T0);
+    ok(fresh);
+    const next = jobInput(sql, fresh.id);
+    ok(next);
+    equal(
+      finishJob(sql, fresh.id, (job) => putChunks(sql, noteId, job.rev, chunkNote(next.note))),
+      "installed",
+    );
+    same(
+      search(sql, "sensitive", "retook").map((hit) => hit.noteId),
+      [noteId],
+    );
+    same(jobs(sql), []);
+  },
+
+  "undo of a run applies inverse patches and conflicts on fields edited since": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    // An agent's run changes two fields and the body, over two revisions.
+    const run = "01M6RUN0000000000000000000";
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId,
+          baseRev: 1,
+          ops: [
+            { op: "set", path: ["overall"], value: 9 },
+            { op: "set", path: ["expires"], value: "2029-01-01" },
+          ],
+        },
+        by(T0 + 1, run),
+      ),
+    );
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId,
+          baseRev: 2,
+          ops: [
+            { op: "set", path: ["test"], value: "toefl-ibt" },
+            { op: "section", heading: "Notes", content: "Agent notes.\n" },
+          ],
+        },
+        by(T0 + 2, run),
+      ),
+    );
+    // Then the person fixes `expires` themselves.
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 3, ops: [{ op: "set", path: ["expires"], value: "2028-12-01" }] },
+        by(T0 + 3),
+      ),
+    );
+
+    const result = undoRun(sql, run, by(T0 + 4));
+    same(result.undone, [noteId]);
+    // overall, test and the body go back; expires keeps the person's value and becomes a conflict.
+    equal(field(sql, noteId, "overall"), 8);
+    equal(field(sql, noteId, "test"), "ielts-academic");
+    equal(field(sql, noteId, "expires"), "2028-12-01");
+    // Every other byte is as the person wrote it; the restored number comes back canonical.
+    equal(
+      stored(sql, noteId).raw,
+      fixture(fixtures, IELTS)
+        .raw.replace("overall: 8.0", "overall: 8")
+        .replace("expires: 2028-11-02", "expires: 2028-12-01"),
+    );
+    same(
+      result.conflicts.map(({ noteId: id, diff }) => [id, diff]),
+      [[noteId, { fields: { expires: { before: "2028-12-01", after: "2028-11-02" } } }]],
+    );
+    same(sql.all("SELECT noteId, kind, status FROM proposals"), [
+      { noteId, kind: "conflict", status: "open" },
+    ]);
+    // The undo is a run of its own, so it can be undone.
+    undoRun(sql, result.runId, by(T0 + 5));
+    equal(field(sql, noteId, "overall"), 9);
+    equal(field(sql, noteId, "test"), "toefl-ibt");
+  },
+
+  "undo of a create deletes it, and undo of a delete restores it": (sql, fixtures) => {
+    migrate(sql);
+    const created = applied(
+      mutate(sql, { op: "create", path: TUM, raw: fixture(fixtures, TUM).raw, class: "normal" }, by(T0)),
+    );
+    same(undoRun(sql, created.runId, by(T0 + 1)).undone, [created.noteId]);
+    ok(getNote(sql, created.noteId)?.deletedAt !== null);
+
+    const [deletion] = sql.all<{ runId: string }>(
+      "SELECT runId FROM revisions WHERE noteId = ? ORDER BY rev DESC",
+      created.noteId,
+    );
+    ok(deletion);
+    same(undoRun(sql, deletion.runId, by(T0 + 2)).undone, [created.noteId]);
+    const restored = getNote(sql, created.noteId);
+    same([restored?.deletedAt, restored?.raw], [null, fixture(fixtures, TUM).raw]);
+    same(
+      rows(sql, "changes", created.noteId).map((row) => row["op"]),
+      ["create", "delete", "restore"],
+    );
+  },
+
+  "undo of a create that was edited since is a conflict": (sql, fixtures) => {
+    const created = withIelts(sql, fixtures);
+    applied(
+      mutate(
+        sql,
+        {
+          op: "patch",
+          noteId: created.noteId,
+          baseRev: 1,
+          ops: [{ op: "set", path: ["overall"], value: 9 }],
+        },
+        by(),
+      ),
+    );
+    const result = undoRun(sql, created.runId, by());
+    same([result.undone, result.conflicts.length], [[], 1]);
+    equal(getNote(sql, created.noteId)?.deletedAt, null);
+  },
+
+  "tombstones are purged after 30 days with everything derived from them": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    putChunks(sql, noteId, 1, chunkNote(stored(sql, noteId)));
+    applied(mutate(sql, { op: "delete", noteId, baseRev: 1 }, by(T0 + 10)));
+    equal(nextWake(sql, T0 + 10), T0 + 10 + TOMBSTONE_MS);
+    purge(sql, T0 + 10 + TOMBSTONE_MS - 1);
+    ok(getNote(sql, noteId));
+    purge(sql, T0 + 10 + TOMBSTONE_MS);
+    equal(getNote(sql, noteId), undefined);
+    same(rows(sql, "revisions", noteId), []);
+    same(sql.all("SELECT * FROM chunks"), []);
+    equal(nextWake(sql, T0 + 10 + TOMBSTONE_MS), null);
+    // The feed still says it was deleted, for clients catching up.
+    equal(rows(sql, "changes", noteId).length, 2);
+  },
+};

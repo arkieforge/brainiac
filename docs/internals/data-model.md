@@ -18,11 +18,11 @@ objects. Migrations are additive for one release, so the previous Worker still r
 each DO migrates itself the first time it wakes after a deploy.
 
 ```
-meta         { key PK, value }                                      // schemaVersion: the SQL schema's version
+meta         { key PK, value }                                      // schemaVersion (the SQL schema's), seq (the last one assigned)
 notes        { id ULID, path, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt?,
                type, title, kind, status, date, deadline, expires }  // the last row generated from fm
-revisions    { noteId, rev, raw, patch, actor, runId?, at }        // undo = inverse patches
-changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed, 90 days
+revisions    { noteId, rev, raw, patch, actor, runId, at }         // patch: each field's before and after; undo applies it in reverse
+changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed, 90 days; op: create | update | delete | restore
 clients      { clientId PK, highWater, lastHash, lastSeenAt, appVersion }   // strict in-order apply
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
 proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema }
@@ -33,7 +33,7 @@ connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sen
 inbox_leases { itemId, agent, expiresAt }                            // one filer per item
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }
-jobs         { id, kind, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox
+jobs         { id, kind, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed
 files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion }
 chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }
 chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)

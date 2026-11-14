@@ -1,3 +1,6 @@
+import { splitNote } from "@brainiac/core";
+
+import type { NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 /** Chunks never mix privacy classes: each family has its own FTS table. */
@@ -74,4 +77,18 @@ export function search(sql: Sql, family: Family, text: string, limit = 20): Hit[
     query,
     limit,
   );
+}
+
+/**
+ * The chunks an `index` job installs for a note, in the family of its class.
+ * shortcut: one chunk per note, header plus body; #20 replaces it with per-field families and one chunk per H2.
+ */
+export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title" | "path">): ChunkInput[] {
+  return [
+    {
+      family: note.class,
+      header: `[${note.type ?? "Note"} · ${note.title ?? note.path}]`,
+      text: splitNote(note.raw).body,
+    },
+  ];
 }

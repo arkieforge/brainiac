@@ -1,0 +1,48 @@
+// The real Base DO and jobs consumer, loaded into workerd by base.test.ts. TestBase adds what a test needs to
+// see and steer: reads, a crash, and running the dispatcher when the test says rather than when it fires.
+import { getNote, search, type ChunkInput, type Family, type Job } from "@brainiac/base";
+
+import { Base } from "../src/base.ts";
+import { consume } from "../src/jobs.ts";
+
+export class TestBase extends Base {
+  readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
+
+  /** Alarms the runtime fires do nothing, as if the process died before dispatching. */
+  override async alarm(): Promise<void> {}
+
+  /** The real alarm: dispatch due jobs, purge, re-arm. */
+  dispatch(): Promise<void> {
+    return super.alarm();
+  }
+
+  /** Ends this instance mid-flight; the next call gets a fresh one over the same storage. */
+  crash(): void {
+    this.ctx.abort("test crash");
+  }
+
+  jobs(): Job[] {
+    return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
+  }
+
+  find(family: Family, text: string): string[] {
+    return search(this.sql, family, text).map((hit) => hit.noteId);
+  }
+
+  rev(noteId: string): number | null {
+    return getNote(this.sql, noteId)?.rev ?? null;
+  }
+
+  override installIndex(jobId: string, chunks: readonly ChunkInput[]): "installed" | "dropped" {
+    const result = super.installIndex(jobId, chunks);
+    for (const resolve of this.#waiting.splice(0)) resolve(result);
+    return result;
+  }
+
+  /** Resolves when the queue consumer next hands a job's result back. Call it before dispatching. */
+  nextInstall(): Promise<"installed" | "dropped"> {
+    return new Promise((resolve) => this.#waiting.push(resolve));
+  }
+}
+
+export default { queue: consume };

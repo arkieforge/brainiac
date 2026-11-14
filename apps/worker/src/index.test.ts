@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { Env } from "./index.ts";
 
 // `cloudflare:workers` only exists inside workerd; a plain stand-in is enough for routing tests.
-// Durable Object behaviour is tested in the Workers test pool (tracked in its own issue).
+// Durable Object behaviour is tested in workerd (base.test.ts).
 vi.mock("cloudflare:workers", () => ({ DurableObject: Object }));
 
 const { default: worker } = await import("./index.ts");
