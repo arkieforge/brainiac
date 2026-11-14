@@ -92,9 +92,19 @@ const OPENID_METADATA = new Set([
   "/api/auth/.well-known/openid-configuration",
 ]);
 
+// Local dev (`vp run dev`) is the only place Brainiac is served over plain HTTP.
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    // Auth's base URL is the request's origin, and over http the MCP plugin refuses it, so every /api/auth
+    // request would 500. Passkeys and Secure cookies need HTTPS anyway.
+    if (url.protocol === "http:" && !LOOPBACK.has(url.hostname)) {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 308);
+    }
+    const { pathname } = url;
     if (pathname === "/health") return Response.json({ ok: true });
     if (pathname === "/health/db") return checkDb(env, ctx);
     if (AUTH_SERVER_METADATA.has(pathname))

@@ -91,6 +91,18 @@ export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promi
         (await get(`${origin}/health`)).ok || "The Worker isn't serving; check the deploy job.",
     },
     {
+      // Auth over plain http used to 500 on every request (the MCP plugin refuses an http base URL).
+      name: "Plain HTTP redirects to HTTPS",
+      run: async () => {
+        const res = await get(`${origin.replace("https:", "http:")}/sign-in`, { redirect: "manual" });
+        const to = res.headers.get("location") ?? "";
+        return (
+          (res.status >= 300 && res.status < 400 && to.startsWith("https:")) ||
+          `http:// answered ${res.status}${to ? ` to ${to}` : ""}; it must redirect to https.`
+        );
+      },
+    },
+    {
       name: "Database reachable through Hyperdrive",
       run: async () =>
         (await get(`${origin}/health/db`)).ok ||
