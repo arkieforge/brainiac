@@ -198,6 +198,38 @@ export const cases: Record<string, Case> = {
     synced(world, await world.restart(laptop, open("laptop")));
   },
 
+  async "when writes keep failing, one full rewrite is tried, then the next change tries again"(open) {
+    const world = new World();
+    world.seed(A, "notes/a.md");
+    world.seed(B, "notes/b.md");
+    const phone = world.device("phone");
+    world.settle();
+    const real = open("laptop");
+    let full = true;
+    let writes = 0;
+    const disk: Store = {
+      load: () => real.load(),
+      write: (write) => {
+        writes++;
+        return full ? Promise.reject(new Error("disk full")) : real.write(write);
+      },
+    };
+    const laptop = world.device("laptop", undefined, disk);
+    world.settle(); // the snapshot's write fails
+    ok(addLine(laptop, A, "edit")); // and so does the edit's, behind it
+    // Each write's outcome is handled before a later handler on the same write runs, so this sees every retry.
+    for (let last = laptop.client.saved(); ; last = laptop.client.saved()) {
+      await last.catch(() => {});
+      if (laptop.client.saved() === last) break;
+    }
+    equal(writes, 3, "the snapshot, the edit, and one full rewrite");
+    full = false;
+    ok(setField(phone, B, "status", "freed"));
+    world.settle();
+    await laptop.client.saved();
+    synced(world, await world.restart(laptop, open("laptop")));
+  },
+
   async "after a failed write, the next one rewrites the whole remote layer"(open) {
     const world = new World();
     world.seed(A, "notes/a.md");

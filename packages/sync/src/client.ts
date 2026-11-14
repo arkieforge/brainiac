@@ -90,6 +90,8 @@ export class SyncClient {
   /** The next write replaces every stored remote note. */
   #clear = false;
   #saved: Promise<void> = Promise.resolve();
+  /** A write failed and no full rewrite has landed since: the store may lack remote notes. */
+  #broken = false;
   readonly #listeners = new Set<(noteIds: ReadonlySet<string>) => void>();
 
   constructor(state: State, options: Options) {
@@ -203,12 +205,17 @@ export class SyncClient {
       const write = this.#write();
       const done = store.write(write);
       this.#saved = done;
-      // The store may now lack remote notes it was given: rewrite everything now, unless this was already a
-      // full rewrite with nothing after it (then the next change does it, so a full disk is not retried in a loop).
-      done.catch(() => {
-        this.#clear = this.#dirty = true;
-        if (!write.clear || this.#saved !== done) this.#commit();
-      });
+      const settle = (failed: boolean) => {
+        if (failed) this.#broken = this.#clear = this.#dirty = true;
+        else if (write.clear) this.#broken = false;
+        // Only the latest write repairs, with one full rewrite; if that fails too, the next change tries again,
+        // so a full disk is never retried in a loop. Writes finish in order, so earlier failures are known here.
+        if (this.#broken && this.#saved === done && !write.clear) this.#commit();
+      };
+      done.then(
+        () => settle(false),
+        () => settle(true),
+      );
     }
     if (this.#touched.size === 0) return;
     const touched = new Set(this.#touched);
