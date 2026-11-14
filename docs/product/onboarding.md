@@ -11,5 +11,5 @@ brainiac ask "what is my current role and since when?"
 ```
 
 - **Claude Code plugin**: `/plugin install brainiac@brainiac`; its skill installs the CLI, signs in and wires MCP on first use.
-- **Web only**: sign up (with a passkey), add `https://mcp.<domain>` as a connector in claude.ai, drop a CV or LinkedIn export, and say "file my inbox". Your Claude proposes the notes; you review them on the site.
+- **Web only**: sign up (with a passkey), add `https://<domain>/mcp` as a connector in claude.ai, drop a CV or LinkedIn export, and say "file my inbox". Your Claude proposes the notes; you review them on the site.
 - **Existing vault**: `brainiac import --vault ~/notes` maps OKF types and keeps your files untouched.

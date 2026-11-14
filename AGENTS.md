@@ -47,7 +47,7 @@ the other is unfinished. See [Two modes](docs/product/overview.md#two-modes-ever
 ### 7. Multi-surface
 
 Brainiac has four ways in: the **site** (desktop and phone browsers, live over one WebSocket), the
-**laptop** (`brainiac` CLI and daemon keeping a folder in sync), **agents** (remote MCP at `mcp.<domain>`,
+**laptop** (`brainiac` CLI and daemon keeping a folder in sync), **agents** (remote MCP at `<domain>/mcp`,
 or `brainiac mcp serve` over stdio), and the **browser extension** (form fill and save link). New features
 need a decision for each, even if the decision is "not here".
 
