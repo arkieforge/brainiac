@@ -140,7 +140,8 @@ class Editor {
       this.src.slice(this.lineStart(start), start).trim()
     ) {
       const dashEnd = this.src.slice(0, start).trimEnd().length;
-      return this.splice(dashEnd, this.src[end - 1] === "\n" ? end - 1 : end, "");
+      const lineBreak = /\r?\n$/.exec(this.src.slice(dashEnd, end))?.[0].length ?? 0;
+      return this.splice(dashEnd, end - lineBreak, "");
     }
     return this.splice(start, end, "");
   }

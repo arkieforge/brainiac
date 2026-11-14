@@ -133,6 +133,11 @@ describe("patch front-matter", () => {
     const anchored = "---\na:\n  - first: old\n    # keep me\n    &k second: kept\n    third: *k\n---\n";
     const kept = patch(anchored, [{ op: "unset", path: ["a", 0, "first"] }]);
     expect(kept).toBe("---\na:\n  -\n    # keep me\n    &k second: kept\n    third: *k\n---\n");
+    // Windows line endings stay whole.
+    const crlf = "---\r\na:\r\n  - first: old\r\n    second: kept\r\n---\r\n";
+    expect(patch(crlf, [{ op: "unset", path: ["a", 0, "first"] }])).toBe(
+      "---\r\na:\r\n  -\r\n    second: kept\r\n---\r\n",
+    );
     // `&k` anchors the key, so `*k` reads "second" before and after.
     expect(parseNote(kept).data["a"]).toEqual([{ second: "kept", third: "second" }]);
     expect(parseNote(anchored).data["a"]).toEqual([{ first: "old", second: "kept", third: "second" }]);
