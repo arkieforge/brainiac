@@ -6,27 +6,34 @@ import { DurableObjectNamespace, Hyperdrive, Queue, R2Bucket, Worker } from "alc
 import { NeonBranch } from "alchemy/neon";
 import { CloudflareStateStore } from "alchemy/state";
 
-// `alchemy()` runs a destroy itself, so the guard has to read the CLI flags before it starts.
+// The stage is resolved here and handed to Alchemy, so the guards below check the stage Alchemy will use.
+// They run before `alchemy()`, because it performs a destroy itself.
 const argv = process.argv;
-if (argv.includes("--destroy") && argv[argv.indexOf("--stage") + 1] === "prod") {
+const stageFlag = argv.indexOf("--stage");
+const stage =
+  (stageFlag === -1 ? undefined : argv[stageFlag + 1]) ??
+  process.env.STAGE ??
+  process.env.ALCHEMY_STAGE ??
+  process.env.USER ??
+  "dev";
+const prod = stage === "prod";
+if (prod && argv.includes("--destroy")) {
   throw new Error(
     "Refusing to destroy prod. Its resources are protected; remove them by hand if you mean it.",
   );
 }
+// Doppler's prd config holds prod's Neon project; it and the prod stage only ever run together, so a laptop
+// (dev config) can't deploy prod onto dev data and no other stage can reach prod's.
+if (prod !== (process.env.DOPPLER_CONFIG === "prd")) {
+  throw new Error(`Stage ${stage} can't run with Doppler config ${process.env.DOPPLER_CONFIG ?? "(none)"}.`);
+}
 
 const app = await alchemy("brainiac", {
+  stage,
   // Remote state, so laptops, worktrees and CI see the same stages. Its own script, because the Cloudflare
   // account hosts other apps whose state service uses a different token.
   stateStore: (scope) => new CloudflareStateStore(scope, { scriptName: "brainiac-alchemy-state" }),
 });
-const prod = app.stage === "prod";
-// Doppler's prd config holds prod's Neon project; it and the prod stage only ever run together, so a laptop
-// (dev config) can't deploy prod onto dev data and no other stage can reach prod's.
-if (prod !== (process.env.DOPPLER_CONFIG === "prd")) {
-  throw new Error(
-    `Stage ${app.stage} can't run with Doppler config ${process.env.DOPPLER_CONFIG ?? "(none)"}.`,
-  );
-}
 
 // Everything adopts, so a cancelled deploy picks up what it already made. Previews and dev stages clean up
 // fully on destroy. In prod, a plan that would delete or replace a stateful resource only drops it from
