@@ -497,6 +497,42 @@ export const approvalCases: Record<string, Case> = {
     applied(mutate(sql, { op: "put", noteId: tum, baseRev: note.rev, raw: quoted }, agent()));
   },
 
+  "front-matter is read as YAML 1.2 core, with no tags and no keys that read alike": (sql, fixtures) => {
+    const { tum } = record(sql, fixtures);
+    const note = getNote(sql, tum);
+    ok(note);
+    const put = (yaml: string) =>
+      mutate(
+        sql,
+        { op: "put", noteId: tum, baseRev: note.rev, raw: note.raw.replace("status: preparing", yaml) },
+        agent(),
+      ).status;
+    for (const yaml of [
+      "status: preparing\nscore: !!timestamp 2026-11-02T10:00:00.0001Z",
+      "status: preparing\nscore: !!binary SGVsbG8=",
+      "status: preparing\nscore: !custom x",
+      'status: preparing\n1: a\n"1": b',
+      "&k status: preparing\n*k : submitted",
+    ]) {
+      equal(put(yaml), "invalid", yaml);
+    }
+  },
+
+  "a verified block whose fields aren't a list of names covers every field": (sql) => {
+    migrate(sql);
+    const text = [
+      "---",
+      `id: ${ulid(T0)}`,
+      "overall: 8",
+      "verified: {by: human, fields: overall}",
+      "---",
+      "",
+    ].join("\n");
+    const { noteId } = withApproval(sql, { op: "create", path: "a.md", raw: text, class: "normal" }, human());
+    untouched(sql, () => mutate(sql, patchOf(sql, noteId, [set("overall", 9)]), agent()));
+    untouched(sql, () => mutate(sql, patchOf(sql, noteId, [set("title", "x")]), agent()));
+  },
+
   "adding, removing or redirecting an edge into a verified note is held, whatever the path's case": (
     sql,
     fixtures,

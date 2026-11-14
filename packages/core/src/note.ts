@@ -1,4 +1,4 @@
-import { parseDocument, type Document } from "yaml";
+import { isAlias, isScalar, parseDocument, visit, type Document } from "yaml";
 
 /** A note's raw text cut into its front-matter YAML and markdown body, with offsets into the raw text. */
 export interface NoteParts {
@@ -36,12 +36,54 @@ export class NoteParseError extends Error {
   override readonly name = "NoteParseError";
 }
 
-/** Parses the front-matter with the yaml Document API, which keeps comments and source ranges. */
+/**
+ * Parses the front-matter with the yaml Document API, which keeps comments and source ranges. Always as YAML
+ * 1.2's core schema, as Obsidian and every other reader see it: a `%YAML 1.1` line can't make `010` read as 8,
+ * and tags (`!!timestamp`, `!!binary`, `!!omap`) are refused rather than read into types the stored JSON would
+ * blur. Two keys that read alike (`1` and `"1"`, or one written through an alias) are refused too, since a
+ * reader would show one value and the record store the other.
+ */
 export function parseFrontMatter(yaml: string): Document.Parsed {
-  const doc = parseDocument(yaml, { keepSourceTokens: true });
-  const [error] = doc.errors;
+  const doc = parseDocument(yaml, {
+    keepSourceTokens: true,
+    version: "1.2",
+    schema: "core",
+    resolveKnownTags: false,
+    uniqueKeys: (a, b) => a === b || (isScalar(a) && isScalar(b) && String(a.value) === String(b.value)),
+  });
+  const [error] = [...doc.errors, ...doc.warnings.filter((warning) => warning.code === "TAG_RESOLVE_FAILED")];
   if (error) throw new NoteParseError(`Front-matter is not valid YAML: ${error.message}`);
+  visit(doc, {
+    Pair: (_, pair) => {
+      if (isAlias(pair.key)) throw new NoteParseError("Front-matter keys can't be aliases.");
+    },
+  });
   return doc;
+}
+
+/**
+ * Throws unless `value` survives JSON exactly: strings, booleans, null, safe finite numbers, and lists and plain
+ * mappings of them, with no `__proto__` key (it reads as an object's prototype in most code). Front-matter is
+ * stored and judged (approvals compare and sign it) as JSON, so anything JSON would lose or blur is refused.
+ */
+function assertJson(value: unknown, key: string, path: readonly unknown[] = []): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`${key} must be a finite number.`);
+    if (Number.isInteger(value) && !Number.isSafeInteger(value))
+      throw new Error(`${key} is too long for a number: quote it.`);
+    return;
+  }
+  if (typeof value !== "object") throw new Error(`${key} can't be stored.`);
+  // An alias that contains itself (`a: &a [*a]`) can't be stored.
+  if (path.includes(value)) throw new Error(`${key} contains itself.`);
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null)
+    throw new Error(`${key} must be a plain mapping, list or value.`);
+  for (const [k, v] of Object.entries(value)) {
+    if (k === "__proto__") throw new Error("__proto__ can't be a field name.");
+    assertJson(v, k, [...path, value]);
+  }
 }
 
 export interface Note {
@@ -56,25 +98,7 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
-    // Front-matter is stored as JSON and judged on that copy (approvals compare and sign it), so it must survive
-    // JSON unchanged: anything JSON would lose or blur is refused. An alias that contains itself (`a: &a [*a]`)
-    // can't be stored. A `__proto__` key reads as an object's prototype in most code that touches it.
-    JSON.stringify(data, (key, value: unknown) => {
-      if (key === "__proto__") throw new Error("__proto__ can't be a field name.");
-      // .inf and .nan would be stored as null.
-      if (typeof value === "number" && !Number.isFinite(value))
-        throw new Error(`${key} must be a finite number.`);
-      // Past 2^53 two different integers store as one number.
-      if (Number.isInteger(value) && !Number.isSafeInteger(value))
-        throw new Error(`${key} is too long for a number: quote it.`);
-      // !!omap and !!set read as a Map or a Set, which JSON stores as {}.
-      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        const proto: unknown = Object.getPrototypeOf(value);
-        if (proto !== Object.prototype && proto !== null)
-          throw new Error(`${key} must be a plain mapping, list or value.`);
-      }
-      return value;
-    });
+    assertJson(data, "front-matter");
   } catch (error) {
     // Valid YAML that can't become data (too many aliases, an unknown one, a cycle) is unreadable all the same.
     throw new NoteParseError(

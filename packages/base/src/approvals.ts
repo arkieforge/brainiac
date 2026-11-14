@@ -47,14 +47,14 @@ const liveData = (note: NoteRow | undefined): Readonly<Record<string, unknown>> 
 
 /**
  * The top-level fields a note's `verified` block covers. `sections.writing` covers `sections`, and also a
- * top-level field literally named `sections.writing`, since front-matter allows both.
+ * top-level field literally named `sections.writing`, since front-matter allows both. A block whose `fields`
+ * isn't a list of names covers every field: when it's unclear what was verified, everything is.
  */
-function verifiedFields(verified: unknown): string[] {
+function verifiedFields(verified: unknown): string[] | "all" {
   const fields =
-    typeof verified === "object" && verified !== null && "fields" in verified ? verified.fields : [];
-  return Array.isArray(fields)
-    ? fields.flatMap((f) => (typeof f === "string" ? [f, f.split(".")[0] ?? f] : []))
-    : [];
+    typeof verified === "object" && verified !== null && "fields" in verified ? verified.fields : undefined;
+  if (!Array.isArray(fields) || !fields.every((f) => typeof f === "string")) return "all";
+  return fields.flatMap((f: string) => [f, f.split(".")[0] ?? f]);
 }
 
 /**
@@ -100,7 +100,9 @@ function needsApproval(sql: Sql, { before, after }: Effect): boolean {
     return true;
   if (!was || !Object.hasOwn(was, "verified")) return is !== undefined && Object.hasOwn(is, "verified");
   if (!is || before?.path !== after.path) return true;
-  return ["verified", "type", "supersedes", ...verifiedFields(was["verified"])].some(
+  const fields = verifiedFields(was["verified"]);
+  const guarded = fields === "all" ? [...Object.keys(was), ...Object.keys(is)] : fields;
+  return ["verified", "type", "supersedes", ...guarded].some(
     (key) => Object.hasOwn(was, key) !== Object.hasOwn(is, key) || !deepEqual(was[key], is[key]),
   );
 }
