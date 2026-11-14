@@ -9,13 +9,8 @@ export interface ReferenceRepo {
 }
 
 export const referenceRepos: ReferenceRepo[] = [
-  {
-    id: "effect",
-    url: "https://github.com/Effect-TS/effect.git",
-    ref: "main",
-    versionOf: "effect",
-    tag: (v) => `effect@${v}`,
-  },
+  // Pinned to the installed version via `versionOf`/`tag` once a package depends on effect.
+  { id: "effect", url: "https://github.com/Effect-TS/effect.git", ref: "main" },
   // The repo now carries only the 2.0 line (for the migration spike, issue #2). The 0.94 we run ships its
   // TypeScript source in node_modules/alchemy/src, so read that for current behaviour.
   { id: "alchemy", url: "https://github.com/alchemy-run/alchemy.git", ref: "main" },

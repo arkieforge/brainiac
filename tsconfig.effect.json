@@ -4,7 +4,6 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["effect", "@effect/platform-node"],
         "diagnosticSeverity": {
           "runEffectInsideEffect": "error",
           "tryCatchInEffectGen": "error",

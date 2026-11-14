@@ -46,7 +46,7 @@ needs one).
 ## Reference repos
 
 `.repos/` holds shallow checkouts of the libraries we lean on, so agents can read real source instead of
-guessing: `effect` (at the tag of the version we pin), `alchemy` (the 2.0 line, for the migration spike),
+guessing: `effect` (`main` until a package depends on it, then the tag of that version), `alchemy` (the 2.0 line, for the migration spike),
 `better-auth`, and `t3code` (for the renderer glue we copy). For the Alchemy 0.94 we actually run, read
 `node_modules/alchemy/src`. `.repos/` is gitignored, excluded from lint, format, tests and editor search,
 and never imported.
