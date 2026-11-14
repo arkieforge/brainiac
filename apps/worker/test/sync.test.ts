@@ -107,6 +107,7 @@ describe("sync over the Base DO's sockets", () => {
         type: "mutate",
         clientId: "x",
         clientSeq: 1,
+        changeId: "c1",
         ackedUpTo: 0,
         noteId: ID,
         baseRev: 0,

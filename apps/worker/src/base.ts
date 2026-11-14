@@ -109,9 +109,17 @@ export class Base extends DurableObject<Env> {
       ws.serializeAttachment({ ...socket, clientId: message.clientId } satisfies Socket);
     else if (message.clientId !== socket.clientId)
       return send({ type: "error", message: "Say hello first." });
-    const { replies, push } = serve(this.sql, message, { actor: socket.actor, now: Date.now() });
-    for (const reply of replies) send(reply);
-    if (push) this.push(push);
+    let served;
+    try {
+      served = serve(this.sql, message, { actor: socket.actor, now: Date.now() });
+    } catch (error) {
+      // A bug, not a refusal (refusals come back as results): the transaction rolled back and the change
+      // keeps its number, so the client resends it once the bug is fixed. Say so rather than going quiet.
+      console.error("sync message failed", error);
+      return send({ type: "error", message: "The record could not apply that message." });
+    }
+    for (const reply of served.replies) send(reply);
+    if (served.push) this.push(served.push);
     this.wake();
   }
 

@@ -17,18 +17,21 @@ Every tab, phone, laptop daemon and agent talks to the person's Base DO over one
 ```
 // client → DO (one WebSocket per client; packages/core protocol.ts, checked on arrival)
 hello    { clientId, cursor: seq | null, lastAssigned: clientSeq, ackedUpTo, schemaVersion, appVersion }
-mutate   { clientId, clientSeq, ackedUpTo, noteId, baseRev, change }
+mutate   { clientId, clientSeq, changeId, ackedUpTo, noteId, baseRev, change }   // changeId: random per change
          change: create { path, raw, class } | put { raw, base } | delete { base }   // base: the text it was made on
 // DO → client
 welcome  { clientId, highWater, ackedUpTo }   // answer to hello
-snapshot { seq, notes }                 // cursor missing, ahead of the record, or older than the 90-day log
+snapshot { seq, notes, restored }      // cursor missing, ahead of the record (restored), or older than the 90-day log
 changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
-result   { clientId, clientSeq, ok, rev?, conflict?, needsApproval?, error? }
+result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?, error? }
 gap      { clientId, highWater }        // resend from highWater + 1
 reset    { clientId, clientSeq, reason } // two machines share this id
 ```
 
-The DO computes each mutation's digest itself. `needsApproval` and an `approvalId` on `mutate` arrive with
+The DO computes each mutation's digest itself. A result names the `changeId` it answers, so a copy that
+shares a `clientId` never takes another machine's result as its own: a mismatch makes it repair. A snapshot
+older than the client's cursor is an overtaken answer and is ignored, unless `restored` says the record went
+back. `needsApproval` and an `approvalId` on `mutate` arrive with
 approvals (#12).
 
 - **Exactly once, in order**: each client's mutations are applied strictly in sequence. The DO accepts only `highWater + 1`; a gap is refused, so the client resends in order. Results are kept until the client acknowledges them. A duplicate older than that gets "already processed, reconcile": the client re-reads that note's current revision, which is enough because the change log or a snapshot shows what happened.

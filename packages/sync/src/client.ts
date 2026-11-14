@@ -11,6 +11,7 @@ export interface Remote {
 /** A local change not yet answered, in order. Its base is the text it was made on, for the three-way merge. */
 export interface Pending {
   readonly clientSeq: number;
+  readonly changeId: string;
   readonly noteId: string;
   readonly baseRev: number;
   readonly change: Change;
@@ -31,7 +32,8 @@ export interface State {
   cursor: number | null;
   readonly remote: Map<string, Remote>;
   pending: Pending[];
-  readonly blocked: Map<string, Blocked>;
+  /** Per note, oldest first: a second refused edit never replaces the first. */
+  readonly blocked: Map<string, Blocked[]>;
   /** Results received beyond `ackedUpTo` (they can arrive after a gap is refilled). */
   readonly answered: Set<number>;
 }
@@ -114,6 +116,7 @@ export class SyncClient {
   #queue(noteId: string, change: Change): void {
     const pending = {
       clientSeq: ++this.state.lastAssigned,
+      changeId: crypto.randomUUID(),
       noteId,
       baseRev: this.state.remote.get(noteId)?.rev ?? 0,
       change,
@@ -164,6 +167,8 @@ export class SyncClient {
         this.#resend(message.highWater);
         return;
       case "snapshot":
+        // An answer to an older hello, overtaken: only a restored record may move the cursor back.
+        if (!message.restored && state.cursor !== null && message.seq < state.cursor) return;
         state.remote.clear();
         this.#take(message.notes);
         state.cursor = message.seq;
@@ -178,13 +183,21 @@ export class SyncClient {
       case "result": {
         if (message.clientSeq <= state.ackedUpTo || state.answered.has(message.clientSeq)) return;
         const pending = state.pending.find((p) => p.clientSeq === message.clientSeq);
+        // Another machine's change under this id and number (a copied vault): repair, don't take its result.
+        if (pending ? pending.changeId !== message.changeId : message.clientSeq > state.lastAssigned) {
+          return this.#repair();
+        }
         state.pending = state.pending.filter((p) => p.clientSeq !== message.clientSeq);
         if (pending && (!message.ok || message.conflict)) {
-          state.blocked.set(pending.noteId, {
-            change: pending.change,
-            reason: message.error ?? (message.conflict ? "conflict" : "refused"),
-            ...(message.conflict && { proposalId: message.conflict.proposalId }),
-          });
+          const blocked = state.blocked.get(pending.noteId) ?? [];
+          state.blocked.set(pending.noteId, [
+            ...blocked,
+            {
+              change: pending.change,
+              reason: message.error ?? (message.conflict ? "conflict" : "refused"),
+              ...(message.conflict && { proposalId: message.conflict.proposalId }),
+            },
+          ]);
         }
         state.answered.add(message.clientSeq);
         while (state.answered.delete(state.ackedUpTo + 1)) state.ackedUpTo++;
@@ -200,9 +213,9 @@ export class SyncClient {
   }
 
   /**
-   * Under a new id, turns every difference between what this copy shows and the last remote version into a
-   * fresh pending change against that remote version, so the record's three-way merge decides each one:
-   * nothing is replayed blindly, and nothing local is lost.
+   * Under a new id, turns every note this copy has pending changes on into one fresh change from the text
+   * those changes started on, so the record's three-way merge decides each one: nothing is replayed blindly,
+   * and nothing local is lost.
    */
   #repair(): void {
     const { state } = this;
@@ -210,13 +223,20 @@ export class SyncClient {
     const changes = [...notes].flatMap((noteId): [string, Change][] => {
       const working = this.working(noteId);
       const first = state.pending.find((p) => p.noteId === noteId)?.change;
-      // What this copy's changes to the note were made on: the text its first pending change started from
-      // (the remote layer may have moved on since, or lost the note), or the remote version.
-      const base = (first && "base" in first ? first.base : undefined) ?? state.remote.get(noteId)?.raw;
-      if (working === base) return [];
-      if (working === undefined) return base === undefined ? [] : [[noteId, { kind: "delete", base }]];
-      if (base !== undefined) return [[noteId, { kind: "put", raw: working, base }]];
-      return first?.kind === "create" ? [[noteId, { ...first, raw: working }]] : [];
+      const remote = state.remote.get(noteId)?.raw;
+      // Made here: still a create, with no base, so if the record already has it every difference is a
+      // conflict rather than an overwrite of edits made there since.
+      if (first?.kind === "create") {
+        if (working !== undefined) return [[noteId, { ...first, raw: working }]];
+        return remote === undefined ? [] : [[noteId, { kind: "delete", base: remote }]];
+      }
+      // What this copy's changes were made on: the text its first pending change started from (the remote
+      // layer may have moved on since, or lost the note).
+      const base = first && "base" in first ? first.base : remote;
+      if (working === base || base === undefined) return [];
+      return [
+        [noteId, working === undefined ? { kind: "delete", base } : { kind: "put", raw: working, base }],
+      ];
     });
     state.clientId = this.#options.newClientId();
     state.lastAssigned = 0;

@@ -133,6 +133,25 @@ export class World {
     return getNote(this.sql, id);
   }
 
+  /** Each time a revision set a field back to a value an earlier revision of the note had replaced. */
+  reverts(): [string, string, unknown][] {
+    const rows = this.sql.all<{ noteId: string; patch: string }>(
+      "SELECT noteId, patch FROM revisions ORDER BY noteId, rev",
+    );
+    const replaced = new Map<string, Set<unknown>>();
+    const found: [string, string, unknown][] = [];
+    for (const row of rows) {
+      const fields: Record<string, { before?: unknown; after?: unknown }> = JSON.parse(row.patch).fields;
+      for (const [field, change] of Object.entries(fields)) {
+        const seen = replaced.get(`${row.noteId}/${field}`) ?? new Set();
+        if ("after" in change && seen.has(change.after)) found.push([row.noteId, field, change.after]);
+        if ("before" in change) seen.add(change.before);
+        replaced.set(`${row.noteId}/${field}`, seen);
+      }
+    }
+    return found;
+  }
+
   /** Whether `token` reached the record: in a revision of the note, or kept in a conflict proposal. */
   kept(noteId: string, token: string): boolean {
     const [hit] = this.sql.all<{ n: number }>(
@@ -145,11 +164,17 @@ export class World {
   }
 }
 
-/** A device's local edit: sets one front-matter field on the text it shows. */
+/** A device's local edit: sets one front-matter field on the text it shows (unless that text is broken). */
 export function setField(device: Device, noteId: string, field: string, value: string): boolean {
   const text = device.client.working(noteId);
   if (text === undefined) return false;
-  device.client.edit(noteId, patch(text, [{ op: "set", path: [field], value }]));
+  let edited: string;
+  try {
+    edited = patch(text, [{ op: "set", path: [field], value }]);
+  } catch {
+    return false;
+  }
+  device.client.edit(noteId, edited);
   return true;
 }
 

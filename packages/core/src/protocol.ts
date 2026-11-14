@@ -27,6 +27,8 @@ export const ClientMessage = type({
   clientId: "string > 0",
   /** This client's own counter, from 1, with no gaps: the DO applies only `highWater + 1`. */
   clientSeq: "number.integer >= 1",
+  /** Random per change: a result names it, so a copy sharing this id never takes another's result as its own. */
+  changeId: "string > 0",
   ackedUpTo: seq,
   noteId: "string > 0",
   baseRev: seq,
@@ -53,6 +55,8 @@ export interface Result {
   readonly type: "result";
   readonly clientId: string;
   readonly clientSeq: number;
+  /** The `changeId` of the mutation this answers. */
+  readonly changeId: string;
   /** The edit, or the part of it that merged, is in the record. */
   readonly ok: boolean;
   readonly rev?: number;
@@ -87,7 +91,13 @@ export type ServerMessage =
    */
   | { readonly type: "reset"; readonly clientId: string; readonly clientSeq: number; readonly reason: string }
   /** Every live note, for a client with no cursor or one older than the change feed. */
-  | { readonly type: "snapshot"; readonly seq: number; readonly notes: readonly NoteState[] }
+  | {
+      readonly type: "snapshot";
+      readonly seq: number;
+      readonly notes: readonly NoteState[];
+      /** The cursor was ahead of the record (it was restored): replace everything, even with an older seq. */
+      readonly restored: boolean;
+    }
   /** Each note changed after `from`, as it is at `to`. */
   | {
       readonly type: "changes";

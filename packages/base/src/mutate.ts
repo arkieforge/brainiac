@@ -245,6 +245,9 @@ export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): Mutat
   }
   const data = check(sql, raw, note.id);
   if (Array.isArray(data)) return { status: "invalid", issues: data };
+  const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
+  if (taken !== undefined)
+    return invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
   return write(sql, ctx, runId, note, { ...note, raw, deletedAt: null }, deleted ? "restore" : "update");
 }
 

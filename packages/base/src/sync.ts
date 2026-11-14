@@ -55,7 +55,7 @@ export function changesSince(sql: Sql, cursor: number | null): ServerMessage {
     cursor !== null && cursor <= seq && (cursor === seq || (oldest?.seq ?? Infinity) <= cursor + 1);
   if (!reaches) {
     const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE deletedAt IS NULL ORDER BY seq");
-    return { type: "snapshot", seq, notes: notes.map(stateOf) };
+    return { type: "snapshot", seq, notes: notes.map(stateOf), restored: cursor !== null && cursor > seq };
   }
   const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE seq > ? ORDER BY seq", cursor);
   const purged = sql.all<{ noteId: string; seq: number }>(
@@ -122,7 +122,7 @@ export function hello(sql: Sql, message: Hello, now: number): ServerMessage[] {
  */
 export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage {
   const digest = createHash("sha256")
-    .update(JSON.stringify([message.noteId, message.baseRev, message.change]))
+    .update(JSON.stringify([message.changeId, message.noteId, message.baseRev, message.change]))
     .digest("hex");
   return sql.transaction(() => {
     sql.all("INSERT OR IGNORE INTO clients (clientId) VALUES (?)", message.clientId);
@@ -188,9 +188,19 @@ const refusal = (result: MutationResult) =>
 /** Applies one client change under the merge rules: nothing is dropped silently. */
 function apply(sql: Sql, message: Mutate, ctx: Context): Result {
   const { change, noteId } = message;
-  const done = { type: "result", clientId: message.clientId, clientSeq: message.clientSeq } as const;
+  const done = {
+    type: "result",
+    clientId: message.clientId,
+    clientSeq: message.clientSeq,
+    changeId: message.changeId,
+  } as const;
   const current = getNote(sql, noteId);
 
+  // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
+  // would roll back and leave the client resending it forever, stuck behind it.
+  if (change.kind !== "delete" && !parses(change.raw)) {
+    return { ...done, ok: false, error: "The front-matter is not valid YAML." };
+  }
   if (change.kind === "create" && !current) {
     const id = parseNote(change.raw).data["id"];
     if (id !== noteId) return { ...done, ok: false, error: "The note's id must match noteId." };
@@ -219,12 +229,6 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
   // An edit, or a create for a note that exists (a client repairing): merge it into the current text. A
   // create has no base, so every field both sides set differently is a conflict.
   const mine = change.raw;
-  try {
-    parseNote(mine);
-  } catch (error) {
-    if (error instanceof NoteParseError) return { ...done, ok: false, error: error.message };
-    throw error;
-  }
   // A base that doesn't parse (the edit after a refused one starts from the broken text) counts as no base:
   // then every field the two sides set differently is a conflict, never an overwrite.
   const base = change.kind === "put" && parses(change.base) ? change.base : "";
