@@ -1,4 +1,4 @@
-import { isAlias, isScalar, parseDocument, visit, type Document } from "yaml";
+import { isScalar, parseDocument, visit, type Document } from "yaml";
 
 /** A note's raw text cut into its front-matter YAML and markdown body, with offsets into the raw text. */
 export interface NoteParts {
@@ -38,10 +38,10 @@ export class NoteParseError extends Error {
 
 /**
  * Parses the front-matter with the yaml Document API, which keeps comments and source ranges. Always as YAML
- * 1.2's core schema, as Obsidian and every other reader see it: a `%YAML 1.1` line can't make `010` read as 8,
- * and tags (`!!timestamp`, `!!binary`, `!!omap`) are refused rather than read into types the stored JSON would
- * blur. Two keys that read alike (`1` and `"1"`, or one written through an alias) are refused too, since a
- * reader would show one value and the record store the other.
+ * 1.2's core schema: a `%YAML 1.1` line can't make `010` read as 8, and tags (`!!timestamp`, `!!binary`,
+ * `!!omap`) are refused rather than read into types the stored JSON would blur. A key must be a plain name
+ * (text, a number or true/false), and two keys that read alike (`1` and `"1"`) are refused, since a reader
+ * would show one value and the record store the other.
  */
 export function parseFrontMatter(yaml: string): Document.Parsed {
   const doc = parseDocument(yaml, {
@@ -55,7 +55,15 @@ export function parseFrontMatter(yaml: string): Document.Parsed {
   if (error) throw new NoteParseError(`Front-matter is not valid YAML: ${error.message}`);
   visit(doc, {
     Pair: (_, pair) => {
-      if (isAlias(pair.key)) throw new NoteParseError("Front-matter keys can't be aliases.");
+      // Aliases, mappings, lists and null as keys all become text JSON can confuse with another key.
+      const key: unknown = isScalar(pair.key) ? pair.key.value : undefined;
+      const plain =
+        typeof key === "string" ||
+        typeof key === "boolean" ||
+        (typeof key === "number" &&
+          Number.isFinite(key) &&
+          (!Number.isInteger(key) || Number.isSafeInteger(key)));
+      if (!plain) throw new NoteParseError("Front-matter keys must be plain names.");
     },
   });
   return doc;

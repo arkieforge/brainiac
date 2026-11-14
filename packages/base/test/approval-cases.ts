@@ -513,6 +513,9 @@ export const approvalCases: Record<string, Case> = {
       "status: preparing\nscore: !custom x",
       'status: preparing\n1: a\n"1": b',
       "&k status: preparing\n*k : submitted",
+      'status: preparing\n~: a\n"": b',
+      "status: preparing\n? [a]\n: 1",
+      "status: preparing\n9007199254740993: x",
     ]) {
       equal(put(yaml), "invalid", yaml);
     }
@@ -588,6 +591,44 @@ export const approvalCases: Record<string, Case> = {
     ok("review" in openReview(sql, nonce, "human", signed(), T0));
     untouched(sql, () => undoRun(sql, "import", agent()));
     untouched(sql, () => undoRun(sql, "import", { ...human(), review: nonce }));
+  },
+
+  "a review session can't move an edge into a verified note it didn't show": (sql, fixtures) => {
+    record(sql, fixtures);
+    withApproval(
+      sql,
+      {
+        op: "create",
+        path: "facts/tests/ielts-2025-03.md",
+        raw: superseding("x.md").replace("supersedes: x.md\n", "verified: {by: human, fields: [overall]}\n"),
+        class: "sensitive",
+      },
+      human(),
+    );
+    const old = getNote(
+      sql,
+      sql.all<{ id: string }>("SELECT id FROM notes WHERE path = 'facts/tests/ielts-2025-03.md'")[0]?.id ??
+        "",
+    );
+    ok(old);
+    const draft = applied(
+      mutate(
+        sql,
+        { op: "create", path: "facts/tests/draft.md", raw: superseding("x.md"), class: "sensitive" },
+        human(),
+      ),
+    );
+    const point = (review: string) =>
+      mutate(sql, patchOf(sql, draft.noteId, [set("supersedes", "ielts-2025-03.md")]), {
+        ...human(),
+        review,
+      });
+    const only = startReview(sql, [draft.noteId], "human", T0);
+    ok("review" in openReview(sql, only, "human", signed(), T0));
+    untouched(sql, () => point(only));
+    const both = startReview(sql, [draft.noteId, old.id], "human", T0);
+    ok("review" in openReview(sql, both, "human", signed(), T0));
+    applied(point(both));
   },
 
   "only whoever started a review session can open it": (sql, fixtures) => {

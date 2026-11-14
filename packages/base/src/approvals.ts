@@ -58,11 +58,11 @@ function verifiedFields(verified: unknown): string[] | "all" {
 }
 
 /**
- * Whether a `supersedes` relation (a path relative to the note, or an id) names a live verified note. Paths
+ * The live verified note a `supersedes` relation (a path relative to the note, or an id) names, if any. Paths
  * match as the record matches them, whatever their case or Unicode form, as a Mac or Obsidian would open them.
  */
-function supersedesVerified(sql: Sql, from: NoteRow, relation: unknown): boolean {
-  if (typeof relation !== "string") return false;
+function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): string | undefined {
+  if (!from || typeof relation !== "string") return undefined;
   let target: NoteRow | undefined;
   if (isUlid(relation)) target = getNote(sql, relation);
   else {
@@ -70,7 +70,7 @@ function supersedesVerified(sql: Sql, from: NoteRow, relation: unknown): boolean
     try {
       path = resolveRelation(from.path, relation);
     } catch (error) {
-      if (error instanceof PathError) return false;
+      if (error instanceof PathError) return undefined;
       throw error;
     }
     const live = sql
@@ -79,7 +79,17 @@ function supersedesVerified(sql: Sql, from: NoteRow, relation: unknown): boolean
     const match = findClash(live, path);
     target = match === undefined ? undefined : getNoteByPath(sql, match);
   }
-  return target !== undefined && target.id !== from.id && Object.hasOwn(liveData(target) ?? {}, "verified");
+  return target !== undefined && target.id !== from.id && Object.hasOwn(liveData(target) ?? {}, "verified")
+    ? target.id
+    : undefined;
+}
+
+/** The verified notes an effect adds, moves or removes a `supersedes` edge into. */
+function edgesMoved(sql: Sql, { before, after }: Effect): string[] {
+  const was = liveData(before)?.["supersedes"];
+  const is = liveData(after)?.["supersedes"];
+  if (deepEqual(was, is)) return [];
+  return [verifiedTarget(sql, before, was), verifiedTarget(sql, after, is)].filter((id) => id !== undefined);
 }
 
 /**
@@ -92,12 +102,7 @@ function needsApproval(sql: Sql, { before, after }: Effect): boolean {
   const was = liveData(before);
   const is = liveData(after);
   // Adding, moving or removing an edge into a verified note changes which verified value is current.
-  if (
-    !deepEqual(was?.["supersedes"], is?.["supersedes"]) &&
-    ((before && supersedesVerified(sql, before, was?.["supersedes"])) ||
-      supersedesVerified(sql, after, is?.["supersedes"]))
-  )
-    return true;
+  if (edgesMoved(sql, { before, after }).length > 0) return true;
   if (!was || !Object.hasOwn(was, "verified")) return is !== undefined && Object.hasOwn(is, "verified");
   if (!is || before?.path !== after.path) return true;
   const fields = verifiedFields(was["verified"]);
@@ -170,9 +175,11 @@ export function settle(
       !bulk
     ) {
       const shown = new Set<string>(JSON.parse(review.items));
+      // The edges an edit moves count as items too: a session can't redirect one into a note it didn't show.
       const covered = needing.every(
         ({ before, after }) =>
           shown.has(after.id) &&
+          edgesMoved(sql, { before, after }).every((id) => shown.has(id)) &&
           (scope === "undo" ||
             (liveData(before) !== undefined && liveData(after) !== undefined && before?.path === after.path)),
       );
@@ -230,6 +237,8 @@ export function recordApproval(
 ): Approved {
   return sql.transaction((): Approved => {
     const hash = planHash(items);
+    // A used approval must outlive any chance of its plan recurring (a create at revision 0 after a purge), or
+    // a replayed signature from a passkey whose counter stays at 0 would open a fresh one: never prune them.
     const [given] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE planHash = ?", hash);
     if (given)
       return given.usedAt === null ? { approvalId: given.id } : { error: "This plan was already applied." };
