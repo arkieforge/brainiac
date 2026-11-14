@@ -212,6 +212,9 @@ importers:
       '@brainiac/base':
         specifier: workspace:*
         version: link:../../packages/base
+      '@brainiac/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       better-auth:
         specifier: 1.7.22
         version: 1.7.22(pg@8.23.1)(vitest@5.1.0)
@@ -219,6 +222,9 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
     devDependencies:
+      '@brainiac/sync':
+        specifier: workspace:*
+        version: link:../../packages/sync
       '@cloudflare/workers-types':
         specifier: 5.20261114.1
         version: 5.20261114.1
@@ -256,6 +262,19 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
     devDependencies:
+      fast-check:
+        specifier: 4.10.2
+        version: 4.10.2
+
+  packages/sync:
+    dependencies:
+      '@brainiac/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@brainiac/base':
+        specifier: workspace:*
+        version: link:../base
       fast-check:
         specifier: 4.10.2
         version: 4.10.2

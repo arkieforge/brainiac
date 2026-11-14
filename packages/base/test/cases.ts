@@ -50,6 +50,7 @@ const ALL_TABLES = [
   "files",
   "inbox_leases",
   "jobs",
+  "landed",
   "meta",
   "notes",
   "passkey_keys",

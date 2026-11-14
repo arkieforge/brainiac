@@ -238,6 +238,18 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "CREATE INDEX revisions_at ON revisions (at)",
     "CREATE INDEX notes_deleted ON notes (deletedAt) WHERE deletedAt IS NOT NULL",
   ],
+  // The highest ackedUpTo a client has sent: a hello below it comes from a restored or copied client.
+  ["ALTER TABLE clients ADD COLUMN ackedUpTo INTEGER NOT NULL DEFAULT 0"],
+  // Every sync change the record has answered, by its changeId, with the answer: a change replayed under
+  // another client id (after a repair) gets the same answer, whatever has happened to the note since.
+  [
+    `CREATE TABLE landed (
+      changeId TEXT PRIMARY KEY,
+      result TEXT NOT NULL,
+      at INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+    "CREATE INDEX landed_at ON landed (at)",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

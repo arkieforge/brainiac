@@ -42,6 +42,8 @@ export type Mutation =
       readonly baseRev: number;
       readonly ops: readonly PatchOp[];
     }
+  /** Sets a note's whole text, as a sync client sends it. On a deleted note it restores the note with that text. */
+  | { readonly op: "put"; readonly noteId: string; readonly baseRev: number; readonly raw: string }
   /** Leaves a tombstone for 30 days; undoing the run restores it. */
   | { readonly op: "delete"; readonly noteId: string; readonly baseRev: number };
 
@@ -188,55 +190,78 @@ function write(
  * one transaction with no I/O, so the DO never interleaves another request inside it.
  */
 export function mutate(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
+  return sql.transaction(() => applyMutation(sql, mutation, ctx));
+}
+
+/** `mutate` inside the caller's transaction, for the sync handler, which records the client's result in it too. */
+export function applyMutation(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
   const runId = ctx.runId ?? ulid(ctx.now);
-  return sql.transaction(() => {
-    if (mutation.op === "create") {
-      let path: string;
-      try {
-        path = normalizePath(mutation.path);
-      } catch (error) {
-        if (error instanceof PathError) return invalid("path", error.message);
-        throw error;
-      }
-      const data = check(sql, mutation.raw);
-      if (Array.isArray(data)) return { status: "invalid", issues: data };
-      const id = String(data["id"]);
-      if (getNote(sql, id)) return invalid("id", `A note with id ${id} already exists.`);
-      const live = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL");
-      const clash = findClash(
-        live.map((row) => row.path),
-        path,
-      );
-      if (clash !== undefined) return invalid("path", `${path} clashes with ${clash}.`);
-      return write(
-        sql,
-        ctx,
-        runId,
-        undefined,
-        { id, path, raw: mutation.raw, class: mutation.class, deletedAt: null },
-        "create",
-      );
-    }
-
-    const note = getNote(sql, mutation.noteId);
-    if (!note || note.deletedAt !== null) return invalid("noteId", `No note with id ${mutation.noteId}.`);
-    if (note.rev !== mutation.baseRev) return { status: "conflict", noteId: note.id, rev: note.rev };
-    if (mutation.op === "delete")
-      return write(sql, ctx, runId, note, { ...note, deletedAt: ctx.now }, "delete");
-
-    let raw: string;
+  if (mutation.op === "create") {
+    let path: string;
     try {
-      raw = patch(note.raw, mutation.ops);
+      path = normalizePath(mutation.path);
     } catch (error) {
-      if (error instanceof PatchError || error instanceof NoteParseError)
-        return invalid("ops", error.message);
+      if (error instanceof PathError) return invalid("path", error.message);
       throw error;
     }
-    if (raw === note.raw) return { status: "applied", noteId: note.id, rev: note.rev, seq: note.seq, runId };
-    const data = check(sql, raw, note.id);
+    const data = check(sql, mutation.raw);
     if (Array.isArray(data)) return { status: "invalid", issues: data };
-    return write(sql, ctx, runId, note, { ...note, raw }, "update");
-  });
+    const id = String(data["id"]);
+    if (getNote(sql, id)) return invalid("id", `A note with id ${id} already exists.`);
+    const live = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL");
+    const clash = findClash(
+      live.map((row) => row.path),
+      path,
+    );
+    if (clash !== undefined) return invalid("path", `${path} clashes with ${clash}.`);
+    return write(
+      sql,
+      ctx,
+      runId,
+      undefined,
+      { id, path, raw: mutation.raw, class: mutation.class, deletedAt: null },
+      "create",
+    );
+  }
+
+  const note = getNote(sql, mutation.noteId);
+  const deleted = note?.deletedAt !== null;
+  if (!note || (deleted && mutation.op !== "put")) {
+    return invalid("noteId", `No note with id ${mutation.noteId}.`);
+  }
+  if (note.rev !== mutation.baseRev) return { status: "conflict", noteId: note.id, rev: note.rev };
+  if (mutation.op === "delete")
+    return write(sql, ctx, runId, note, { ...note, deletedAt: ctx.now }, "delete");
+
+  let raw: string;
+  try {
+    raw = mutation.op === "put" ? mutation.raw : patch(note.raw, mutation.ops);
+  } catch (error) {
+    if (error instanceof PatchError || error instanceof NoteParseError) return invalid("ops", error.message);
+    throw error;
+  }
+  if (raw === note.raw && !deleted) {
+    return { status: "applied", noteId: note.id, rev: note.rev, seq: note.seq, runId };
+  }
+  const data = check(sql, raw, note.id);
+  if (Array.isArray(data)) return { status: "invalid", issues: data };
+  const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
+  if (taken !== undefined)
+    return invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
+  return write(sql, ctx, runId, note, { ...note, raw, deletedAt: null }, deleted ? "restore" : "update");
+}
+
+/** Records a conflict proposal: `change` goes from the note as it is (`before`) to the side it kept out (`after`). */
+export function propose(sql: Sql, noteId: string, change: Diff, ctx: Context): string {
+  const id = ulid(ctx.now);
+  sql.all(
+    "INSERT INTO proposals (id, noteId, patch, actor, status, kind) VALUES (?, ?, ?, ?, 'open', 'conflict')",
+    id,
+    noteId,
+    JSON.stringify(change),
+    ctx.actor,
+  );
+  return id;
 }
 
 export interface UndoConflict {
@@ -303,7 +328,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       string,
       { fields: Record<string, Change<unknown>>; body?: Change<string>; live?: Change<boolean> }
     >();
-    const propose = (noteId: string, d: Diff) => {
+    const hold = (noteId: string, d: Diff) => {
       const p = pending.get(noteId) ?? { fields: {} };
       for (const [key, change] of Object.entries(d.fields)) {
         const held = p.fields[key];
@@ -337,7 +362,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         if (!held && deepEqual(now.data, then.data) && now.body === then.body) {
           write(sql, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
           undone.add(note.id);
-        } else propose(note.id, inverseFrom(now, d));
+        } else hold(note.id, inverseFrom(now, d));
         continue;
       }
 
@@ -345,7 +370,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       if (d.live?.before === true) {
         if (now.live && !held?.live) continue;
         if (held?.live || findClash(livePaths(sql), note.path) !== undefined)
-          propose(note.id, inverseFrom(now, d));
+          hold(note.id, inverseFrom(now, d));
         else {
           write(sql, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
           undone.add(note.id);
@@ -355,7 +380,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
 
       // Changed by the run, deleted since: nothing to put the values back on.
       if (!now.live || held?.live) {
-        propose(note.id, inverseFrom(now, d));
+        hold(note.id, inverseFrom(now, d));
         continue;
       }
 
@@ -386,7 +411,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       // Part of an undo can leave a note failing its type (a required field removed while the field that made
       // it required stays): the whole step then waits for the person instead.
       if (raw !== note.raw && Array.isArray(check(sql, raw, note.id))) {
-        propose(note.id, inverseFrom(now, d));
+        hold(note.id, inverseFrom(now, d));
         continue;
       }
       if (raw !== note.raw) {
@@ -394,7 +419,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         undone.add(note.id);
       }
       const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
-      if (Object.keys(clash.fields).length > 0 || body) propose(note.id, { ...clash, ...(body && { body }) });
+      if (Object.keys(clash.fields).length > 0 || body) hold(note.id, { ...clash, ...(body && { body }) });
     }
 
     // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
@@ -410,15 +435,7 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
         ...(p.live && !same(p.live) && { live: p.live }),
       };
       if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
-      const proposalId = ulid(ctx.now);
-      sql.all(
-        "INSERT INTO proposals (id, noteId, patch, actor, status, kind) VALUES (?, ?, ?, ?, 'open', 'conflict')",
-        proposalId,
-        noteId,
-        JSON.stringify(d),
-        ctx.actor,
-      );
-      conflicts.push({ noteId, proposalId, diff: d });
+      conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
     }
     return { runId: undoRunId, undone: [...undone], conflicts };
   });

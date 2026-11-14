@@ -9,10 +9,12 @@
   "dependencies": {
     "@better-auth/passkey": "1.7.22",
     "@brainiac/base": "workspace:*",
+    "@brainiac/core": "workspace:*",
     "better-auth": "1.7.22",
     "pg": "8.23.1"
   },
   "devDependencies": {
+    "@brainiac/sync": "workspace:*",
     "@cloudflare/workers-types": "5.20261114.1",
     "@types/pg": "8.23.1",
     "miniflare": "4.20260730.0"

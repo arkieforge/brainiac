@@ -1,0 +1,19 @@
+{
+  "name": "@brainiac/sync",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  },
+  "dependencies": {
+    "@brainiac/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@brainiac/base": "workspace:*",
+    "fast-check": "4.10.2"
+  }
+}
