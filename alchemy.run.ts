@@ -8,10 +8,26 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+// Doppler's prd config holds prod's Neon project; it and the prod stage only ever run together, so a laptop
+// (dev config) can't deploy prod onto dev data and no other stage can reach prod's. A layer under the
+// providers, because `destroy` builds those but never runs the stack program below.
+const dopplerMatchesStage = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const { stage } = yield* Alchemy.Stack;
+    const doppler = yield* Config.String("DOPPLER_CONFIG").pipe(Config.withDefault("(none)"));
+    if ((stage === "prod") !== (doppler === "prd")) {
+      return yield* Effect.die(new Error(`Stage ${stage} can't run with Doppler config ${doppler}.`));
+    }
+  }).pipe(Effect.orDie),
+);
+
 export default Alchemy.Stack(
   "brainiac",
   {
-    providers: Neon.providers().pipe(Layer.provideMerge(Cloudflare.providers())),
+    providers: Neon.providers().pipe(
+      Layer.provideMerge(Cloudflare.providers()),
+      Layer.provideMerge(dopplerMatchesStage),
+    ),
     // Shared by laptops, worktrees and CI. Its own Worker, because the account hosts other apps' stores.
     state: Cloudflare.state({ workerName: "brainiac-state" }),
   },
@@ -19,20 +35,14 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const prod = stage === "prod";
 
-    // Doppler's prd config holds prod's Neon project; it and the prod stage only ever run together, so a
-    // laptop (dev config) can't deploy prod onto dev data and no other stage can reach prod's.
-    const doppler = yield* Config.String("DOPPLER_CONFIG").pipe(Config.withDefault("(none)"));
-    if (prod !== (doppler === "prd")) {
-      return yield* Effect.die(new Error(`Stage ${stage} can't run with Doppler config ${doppler}.`));
-    }
-
     // The names Alchemy 0.94 gave (`brainiac-<id>-<stage>`), so 2.0 adopted prod in place and every stage
     // keeps a readable workers.dev URL. R2 names allow no underscores, and 2.0 stages have them (`dev_sam`).
     const name = (id: string) => `brainiac-${id}-${stage.replaceAll("_", "-")}`;
     const projectId = yield* Config.String("NEON_PROJECT_ID");
 
     const stack = Effect.gen(function* () {
-      const blobs = yield* Cloudflare.R2.Bucket("blobs", { name: name("blobs") });
+      // Previews and dev stages tear down with their files; in prod, protect() refuses the delete anyway.
+      const blobs = yield* Cloudflare.R2.Bucket("blobs", { name: name("blobs"), forceDestroy: !prod });
       const jobs = yield* Cloudflare.Queues.Queue("jobs", { name: name("jobs") });
 
       // Accounts, billing state and the base registry. Each stage gets its own branch of the Doppler
