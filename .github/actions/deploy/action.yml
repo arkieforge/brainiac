@@ -7,6 +7,9 @@ inputs:
   doppler-token:
     description: Doppler service token for the stage's config (dev for previews, prd for prod)
     required: true
+  e2e:
+    description: Run `vp run e2e` against the stage after the doctor (previews only; prod has no dev sign-in)
+    default: "false"
 runs:
   using: composite
   steps:
@@ -46,4 +49,20 @@ runs:
         status=0
         doppler run -- node scripts/doctor.ts --stage "$STAGE" 2>&1 | tee doctor.log || status=$?
         { echo "### Doctor"; echo '```'; cat doctor.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        exit $status
+    # Signs in through the real pages with no person: the dev sign-in link, then real passkey ceremonies on
+    # Chrome's virtual authenticator (scripts/e2e.ts).
+    - if: inputs.e2e == 'true'
+      shell: bash
+      env:
+        DOPPLER_TOKEN: ${{ inputs.doppler-token }}
+        STAGE: ${{ inputs.stage }}
+      run: |
+        set -o pipefail
+        node_modules/.bin/playwright install --with-deps --only-shell chromium >/dev/null
+        # The dev sign-in link carries the token; mask it in case anything prints the link.
+        doppler run -- sh -c 'echo "::add-mask::$DEV_SIGN_IN_TOKEN"'
+        status=0
+        doppler run -- node scripts/e2e.ts --stage "$STAGE" 2>&1 | tee e2e.log || status=$?
+        { echo "### e2e"; echo '```'; cat e2e.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
         exit $status

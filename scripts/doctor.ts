@@ -79,7 +79,12 @@ const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
 const get = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 
 /** What a signed-out visitor can see of a stage, each with the fix when it's wrong. */
-export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promise<unknown>): Check[] => {
+export const stageChecks = (
+  origin: string,
+  prod: boolean,
+  readLogs: () => Promise<unknown>,
+  bindingNames: () => Promise<string[]>,
+): Check[] => {
   const signIn = get(`${origin}/sign-in`).then(async (res) => ({
     status: res.status,
     html: await res.text(),
@@ -146,6 +151,18 @@ export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promi
         return issuer === `${origin}/api/auth` || `Issuer is ${issuer ?? `missing (${res.status})`}.`;
       },
     },
+    // Dev sign-in skips every check on who you are. Asking the route can't tell (a wrong token gets the same 404 as
+    // no route), so on prod this reads the deployed Worker's bindings instead (apps/worker/src/dev.ts).
+    ...(prod
+      ? [
+          {
+            name: "No dev sign-in on prod",
+            run: async () =>
+              !(await bindingNames()).includes("DEV_SIGN_IN_TOKEN") ||
+              "The prod Worker has DEV_SIGN_IN_TOKEN bound; remove it from Doppler prd and redeploy.",
+          },
+        ]
+      : []),
     {
       name: "Stored logs readable (vp run logs)",
       optional: true,
@@ -154,8 +171,15 @@ export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promi
   ];
 };
 
-/** The stage's public origin: its DOMAIN when it has one, else its workers.dev URL. */
-async function stageOrigin(stage: string, config: string, accountId: string) {
+/**
+ * The stage's public origin: `local` is `vp run dev`, prod is its DOMAIN when it has one, and the rest are on
+ * workers.dev.
+ */
+export async function stageOrigin(stage: string) {
+  if (stage === "local") return "http://localhost:1337";
+  const config = dopplerConfig(stage);
+  const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
+  if (!accountId) throw new Error(`Couldn't read Doppler config ${config}; run \`vp run doctor\` first.`);
   const domain = stage === "prod" ? secret("DOMAIN", config) : undefined;
   if (domain) return `https://${domain}`;
   const token = secret("CLOUDFLARE_API_TOKEN", config) ?? "";
@@ -198,9 +222,18 @@ async function stageCheckList(stage: string): Promise<Check[]> {
         },
       }),
     });
-  const origin = await stageOrigin(stage, config, accountId);
+  const origin = await stageOrigin(stage);
   await waitForWorker(origin);
-  return stageChecks(origin, stage === "prod", readLogs);
+  // Names only: the settings API never returns a secret's value.
+  const bindingNames = async () => {
+    const token = secret("CLOUDFLARE_API_TOKEN", config) ?? "";
+    const settings = (await cloudflare(
+      `/accounts/${accountId}/workers/scripts/${workerName(stage)}/settings`,
+      token,
+    )) as { bindings: { name: string }[] };
+    return settings.bindings.map((b) => b.name);
+  };
+  return stageChecks(origin, stage === "prod", readLogs, bindingNames);
 }
 
 async function main() {

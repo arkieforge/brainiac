@@ -113,6 +113,9 @@ export default Alchemy.Stack(
           JOBS: jobs,
           HYPERDRIVE: hyperdrive,
           BETTER_AUTH_SECRET: authSecret,
+          STAGE: stage,
+          // Dev sign-in as the fixture student (apps/worker/src/dev.ts); prod never gets it.
+          ...(prod ? {} : yield* secretIf("DEV_SIGN_IN_TOKEN")),
           TURNSTILE_SITE_KEY: turnstileSite,
           ...(turnstileSecret && { TURNSTILE_SECRET_KEY: Redacted.make(turnstileSecret) }),
           ...(yield* secretIf("GOOGLE_CLIENT_ID")),

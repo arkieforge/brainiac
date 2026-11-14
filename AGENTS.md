@@ -116,6 +116,9 @@ calling work done, walk this list and say which entries applied:
 - Stop what you started, by the task you started it with. Run dev servers from your own shell so they end
   with your session; don't detach them with `nohup`, `setsid` or `tmux` unless asked.
 - Need a second checkout? `git worktree add` it next to this one, not in `/tmp`. Remove it when done.
+- Never ask a person to sign in for you. `vp run dev:sign-in --stage <stage|local>` gives a link that signs a
+  browser in as the fixture student, and `vp run dev:token` an `/mcp` token
+  ([Signing in](docs/operations/development.md#signing-in-while-you-work)). Prod has neither.
 
 ## Verifying
 

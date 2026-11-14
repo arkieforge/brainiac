@@ -11,6 +11,9 @@
     "typecheck": "effect-tsgo tsc -p . && vp run -r typecheck",
     "knip": "knip",
     "doctor": "node scripts/doctor.ts",
+    "dev:sign-in": "node scripts/dev-auth.ts sign-in",
+    "dev:token": "node scripts/dev-auth.ts token",
+    "e2e": "node scripts/e2e.ts",
     "logs": "node scripts/logs.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"
@@ -26,6 +29,7 @@
     "alchemy": "2.0.0-beta.87",
     "effect": "4.1.4",
     "knip": "6.45.1",
+    "playwright": "1.64.1",
     "vite-plus": "1.6.0"
   },
   "engines": {

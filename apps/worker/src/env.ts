@@ -17,4 +17,8 @@ export interface Env {
   /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;
+  /** The Alchemy stage: `prod`, `pr-<n>`, `dev_<you>`, `live_<you>`. */
+  STAGE: string;
+  /** Dev sign-in as the fixture student (dev.ts). Bound only outside prod, from Doppler `dev`. */
+  DEV_SIGN_IN_TOKEN?: string;
 }
