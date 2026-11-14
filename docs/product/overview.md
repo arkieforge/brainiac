@@ -21,7 +21,7 @@ Anyone who keeps retyping the same life into forms. Each job below is one "appli
 
 ## Name
 
-**Brainiac**, built in the open at `arkieforge/brainiac`. The CLI is `brainiac` and the MCP tools are `mcp__brainiac__*`. The domain isn't chosen yet, so this plan writes `<domain>` (for example `mcp.<domain>`). Before launch, check trademark clashes and register the domain.
+**Brainiac**, built in the open at `arkieforge/brainiac`. The CLI is `brainiac` and the MCP tools are `mcp__brainiac__*`. The domain isn't chosen yet, so this plan writes `<domain>` (for example `<domain>/mcp`). Before launch, check trademark clashes and register the domain.
 
 ## What makes it different
 
@@ -57,7 +57,7 @@ The mode only decides whether a laptop keeps a working copy. Cloud is the full p
 | Editing                        | Site editor (schema form + markdown source with live preview), live                                    | Any editor or Obsidian, live                                                                                                                                                  |
 | query / search / related / ask | In the DO: FTS5 + vectors + graph                                                                      | Local SQLite with the same code for the notes the device holds; sensitive notes it doesn't hold are forwarded to the DO when online; keyword-only offline, and answers say so |
 | File text                      | Extracted at ingest (Workers AI `toMarkdown`); pages it can't read are handed to your Claude as images | Synced files use the cloud extraction; local-only files use bundled pdf.js text, and your Claude reads the rest                                                               |
-| Agents                         | Remote MCP `mcp.<domain>` (OAuth)                                                                      | `brainiac mcp serve` (stdio)                                                                                                                                                  |
+| Agents                         | Remote MCP `<domain>/mcp` (OAuth)                                                                      | `brainiac mcp serve` (stdio)                                                                                                                                                  |
 | Review, questions, approvals   | Site and phone                                                                                         | Same; `brainiac review` lists them and opens the passkey page to decide                                                                                                       |
 | Applications, CVs, packets     | Built in the cloud, PDFs via Typst                                                                     | Same, or locally                                                                                                                                                              |
 | Secrets                        | Cloud vault, used only by the extension's form fill                                                    | Same vault; never written to disk                                                                                                                                             |

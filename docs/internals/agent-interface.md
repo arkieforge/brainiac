@@ -1,6 +1,6 @@
 # Agent interface
 
-MCP is the main way in. The same tools are served by `mcp.<domain>` (OAuth, works as a claude.ai connector on a normal subscription) and `brainiac mcp serve` (stdio for Claude Code, T3 Code, Codex). The CLI has the same commands with `--json`. Brainiac supplies data and checks; the model doing the thinking is always yours.
+MCP is the main way in. The same tools are served by `<domain>/mcp` (OAuth, works as a claude.ai connector on a normal subscription) and `brainiac mcp serve` (stdio for Claude Code, T3 Code, Codex). The CLI has the same commands with `--json`. Brainiac supplies data and checks; the model doing the thinking is always yours.
 
 | Phase | Tool           | Does                                                                                                                                                                                                                                                        |
 | ----- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
