@@ -52,9 +52,11 @@ ${script}
 export interface SignInPageOptions {
   turnstileSiteKey: string;
   providers: readonly ("google" | "github")[];
+  /** Whether this stage can send email. Better Auth reports a code as sent even when sending failed. */
+  emailCodes: boolean;
 }
 
-export function signInPage({ turnstileSiteKey, providers }: SignInPageOptions): Response {
+export function signInPage({ turnstileSiteKey, providers, emailCodes }: SignInPageOptions): Response {
   const labels = { google: "Google", github: "GitHub" };
   const social = providers
     .map(
@@ -64,7 +66,8 @@ export function signInPage({ turnstileSiteKey, providers }: SignInPageOptions): 
   return page(
     "Sign in",
     `<section><button type="button" id="passkey">Sign in with a passkey</button></section>
-<form id="email"><label>New here, or no passkey with you? Get a code by email.
+${emailCodes ? "" : '<p class="note">Email codes aren\'t set up on this server yet.</p>'}
+<form id="email"${emailCodes ? "" : " hidden"}><label>New here, or no passkey with you? Get a code by email.
 <input type="email" name="email" required autocomplete="email"></label>
 <div id="turnstile"></div><button>Email me a code</button></form>
 <form id="code" hidden><label>Enter the code we sent.

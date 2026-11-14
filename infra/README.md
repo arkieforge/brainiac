@@ -34,12 +34,12 @@ when you are done with a personal stage.
 Auth settings are optional: each feature stays off until its values exist, so a stage deploys without them.
 The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state.
 
-| Secret                                       | Turns on                                                                                                                                                                   |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Turnstile on sign-up. Other stages fall back to Cloudflare's always-pass test keys; prod has no fallback, so sign-up there refuses until both are set                      |
-| `EMAIL_FROM`                                 | Email codes and recovery notices, through Cloudflare Email Service. The address must be on a domain onboarded to it. Without it, both fail with an error and nothing sends |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`   | Sign in with Google. Redirect URI: `<worker url>/api/auth/callback/google`                                                                                                 |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | Sign in with GitHub. Callback URL: `<worker url>/api/auth/callback/github`                                                                                                 |
+| Secret                                       | Turns on                                                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Turnstile on sign-up. Other stages fall back to Cloudflare's always-pass test keys; prod has no fallback, so sign-up there refuses until both are set                                                                    |
+| `EMAIL_FROM`                                 | Email codes and recovery notices, through Cloudflare Email Service. The address must be on a domain onboarded to it. Without it nothing sends: the sign-in page offers no email codes, and a recovery passkey is refused |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`   | Sign in with Google. Redirect URI: `<worker url>/api/auth/callback/google`                                                                                                                                               |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | Sign in with GitHub. Callback URL: `<worker url>/api/auth/callback/github`                                                                                                                                               |
 
 GitHub gets read-only Doppler service tokens: `DOPPLER_TOKEN_DEV` as a repo secret (previews), and
 `DOPPLER_TOKEN_PRD` in the `production` environment, which only `main` can deploy to.

@@ -122,7 +122,11 @@ export default {
         ...(env.GOOGLE_CLIENT_ID ? (["google"] as const) : []),
         ...(env.GITHUB_CLIENT_ID ? (["github"] as const) : []),
       ];
-      return signInPage({ turnstileSiteKey: env.TURNSTILE_SITE_KEY, providers });
+      return signInPage({
+        turnstileSiteKey: env.TURNSTILE_SITE_KEY,
+        providers,
+        emailCodes: Boolean(env.EMAIL && env.EMAIL_FROM),
+      });
     }
     return new Response("Not found", { status: 404 });
   },
