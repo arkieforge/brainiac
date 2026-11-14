@@ -131,15 +131,16 @@ class Editor {
     );
     // The value's own end, not its outer range, which can swallow comment lines that follow it.
     const last = isNode(node) && node.range ? node.range[1] : first.range[1];
-    let end = this.lineEnd(last);
-    // In a compact `- key: value` item, the next key moves up after the dash to take this one's place.
+    const end = this.lineEnd(last);
+    // The first key of a compact `- key: value` item: leave the dash on its own line and the rest of the
+    // mapping below it untouched (comments and anchors included), which is still the same list item.
     if (
       slot.kind === "pair" &&
       start === first.range[0] &&
       this.src.slice(this.lineStart(start), start).trim()
     ) {
-      const next = slot.parent.items[slot.parent.items.indexOf(slot.pair) + 1]?.key;
-      if (isNode(next) && next.range) end = next.range[0];
+      const dashEnd = this.src.slice(0, start).trimEnd().length;
+      return this.splice(dashEnd, this.src[end - 1] === "\n" ? end - 1 : end, "");
     }
     return this.splice(start, end, "");
   }

@@ -127,7 +127,15 @@ describe("patch front-matter", () => {
   it("removes the first key of a list item's mapping and keeps the item valid", () => {
     const raw = "---\na:\n  - first: old\n    second: kept\n    third: kept\n---\n";
     const out = patch(raw, [{ op: "unset", path: ["a", 0, "first"] }]);
-    expect(out).toBe("---\na:\n  - second: kept\n    third: kept\n---\n");
+    expect(out).toBe("---\na:\n  -\n    second: kept\n    third: kept\n---\n");
+    expect(parseNote(out).data["a"]).toEqual([{ second: "kept", third: "kept" }]);
+    // Anything after the removed key (comments, anchors) stays as written.
+    const anchored = "---\na:\n  - first: old\n    # keep me\n    &k second: kept\n    third: *k\n---\n";
+    const kept = patch(anchored, [{ op: "unset", path: ["a", 0, "first"] }]);
+    expect(kept).toBe("---\na:\n  -\n    # keep me\n    &k second: kept\n    third: *k\n---\n");
+    // `&k` anchors the key, so `*k` reads "second" before and after.
+    expect(parseNote(kept).data["a"]).toEqual([{ second: "kept", third: "second" }]);
+    expect(parseNote(anchored).data["a"]).toEqual([{ first: "old", second: "kept", third: "second" }]);
   });
 
   it("adds front-matter to a note without any", () => {
