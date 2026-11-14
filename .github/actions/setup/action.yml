@@ -1,12 +1,37 @@
 name: setup
-description: pnpm, Node 26 and the locked dependencies; vp comes from the pinned vite-plus devDependency.
+description: Node 26 and the locked dependencies, with node_modules/.bin on PATH so jobs call vp, knip and alchemy directly.
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
     - uses: actions/setup-node@v7
       with:
         node-version: 26
-        cache: pnpm
-    - run: pnpm install --frozen-lockfile
+        package-manager-cache: false
+    # node_modules itself is cached, so a hit skips pnpm entirely (bootstrapping pnpm alone takes ~7s).
+    - id: modules
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+          packages/*/node_modules
+          oxlint-plugin-brainiac/node_modules
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node26-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
+    - if: steps.modules.outputs.cache-hit != 'true'
+      uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+    - if: steps.modules.outputs.cache-hit != 'true'
+      run: pnpm install --frozen-lockfile
+      shell: bash
+    # Saved straight after install, before any job writes caches of its own into node_modules. Parallel jobs
+    # that all missed race to save; the losers only log it.
+    - if: steps.modules.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+          packages/*/node_modules
+          oxlint-plugin-brainiac/node_modules
+        key: ${{ steps.modules.outputs.cache-primary-key }}
+    - run: echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
       shell: bash
