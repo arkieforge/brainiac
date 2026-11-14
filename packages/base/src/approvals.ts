@@ -4,7 +4,7 @@
 // and keeps each signature to one use, in the mutation's own transaction, so cloud and local judge alike.
 import { createHash, randomBytes } from "node:crypto";
 
-import { deepEqual, isUlid, PathError, resolveRelation, type PlanItem } from "@brainiac/core";
+import { deepEqual, findClash, isUlid, PathError, resolveRelation, type PlanItem } from "@brainiac/core";
 
 import { diff, stateOf } from "./diff.ts";
 import { getNote, getNoteByPath, type NoteRow } from "./notes.ts";
@@ -42,7 +42,7 @@ const canonical = (value: unknown): string =>
 export const planHash = (items: readonly PlanItem[]): string =>
   createHash("sha256").update(canonical(items)).digest("base64url");
 
-const live = (note: NoteRow | undefined): Readonly<Record<string, unknown>> | undefined =>
+const liveData = (note: NoteRow | undefined): Readonly<Record<string, unknown>> | undefined =>
   note && note.deletedAt === null ? JSON.parse(note.fm) : undefined;
 
 /**
@@ -57,16 +57,29 @@ function verifiedFields(verified: unknown): string[] {
     : [];
 }
 
-/** The note a `supersedes` relation names (a path relative to the note, or an id), if it is live. */
-function superseded(sql: Sql, from: string, relation: unknown): NoteRow | undefined {
-  if (typeof relation !== "string") return undefined;
-  if (isUlid(relation)) return getNote(sql, relation);
-  try {
-    return getNoteByPath(sql, resolveRelation(from, relation));
-  } catch (error) {
-    if (error instanceof PathError) return undefined;
-    throw error;
+/**
+ * Whether a `supersedes` relation (a path relative to the note, or an id) names a live verified note. Paths
+ * match as the record matches them, whatever their case or Unicode form, as a Mac or Obsidian would open them.
+ */
+function supersedesVerified(sql: Sql, from: NoteRow, relation: unknown): boolean {
+  if (typeof relation !== "string") return false;
+  let target: NoteRow | undefined;
+  if (isUlid(relation)) target = getNote(sql, relation);
+  else {
+    let path: string;
+    try {
+      path = resolveRelation(from.path, relation);
+    } catch (error) {
+      if (error instanceof PathError) return false;
+      throw error;
+    }
+    const live = sql
+      .all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL")
+      .map((r) => r.path);
+    const match = findClash(live, path);
+    target = match === undefined ? undefined : getNoteByPath(sql, match);
   }
+  return target !== undefined && target.id !== from.id && Object.hasOwn(liveData(target) ?? {}, "verified");
 }
 
 /**
@@ -76,15 +89,18 @@ function superseded(sql: Sql, from: string, relation: unknown): NoteRow | undefi
  * after, in one transaction or two, is caught at the first step.
  */
 function needsApproval(sql: Sql, { before, after }: Effect): boolean {
-  const was = live(before);
-  const is = live(after);
-  if (is && !deepEqual(was?.["supersedes"], is["supersedes"])) {
-    const target = superseded(sql, after.path, is["supersedes"]);
-    if (target && target.id !== after.id && Object.hasOwn(live(target) ?? {}, "verified")) return true;
-  }
+  const was = liveData(before);
+  const is = liveData(after);
+  // Adding, moving or removing an edge into a verified note changes which verified value is current.
+  if (
+    !deepEqual(was?.["supersedes"], is?.["supersedes"]) &&
+    ((before && supersedesVerified(sql, before, was?.["supersedes"])) ||
+      supersedesVerified(sql, after, is?.["supersedes"]))
+  )
+    return true;
   if (!was || !Object.hasOwn(was, "verified")) return is !== undefined && Object.hasOwn(is, "verified");
   if (!is || before?.path !== after.path) return true;
-  return ["verified", "type", ...verifiedFields(was["verified"])].some(
+  return ["verified", "type", "supersedes", ...verifiedFields(was["verified"])].some(
     (key) => Object.hasOwn(was, key) !== Object.hasOwn(is, key) || !deepEqual(was[key], is[key]),
   );
 }
@@ -119,7 +135,10 @@ export function settle(
   ctx: Grant & { readonly actor: string; readonly now: number },
   scope: "change" | "undo",
 ): NeedsApproval | undefined {
-  const needing = effects.filter((effect) => needsApproval(sql, effect));
+  const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
+  // Deleting more than five notes at once needs a signature whatever they hold, and no review session covers it.
+  const bulk = deleting.length > BULK_DELETE;
+  const needing = bulk ? effects : effects.filter((effect) => needsApproval(sql, effect));
   if (needing.length === 0) return undefined;
   const items = effects
     .map(({ before, after }): PlanItem => ({
@@ -140,21 +159,20 @@ export function settle(
   }
   if (ctx.review !== undefined) {
     const [review] = sql.all<ReviewRow>("SELECT * FROM review_runs WHERE nonce = ?", ctx.review);
-    const deletes = effects.filter(({ before, after }) => live(before) && !live(after)).length;
     // The session is the person's own, not a bearer token: its nonce in anyone else's hands does nothing.
     if (
       review &&
       review.actor === ctx.actor &&
       review.assertion !== "" &&
       review.expiresAt > ctx.now &&
-      deletes <= BULK_DELETE
+      !bulk
     ) {
       const shown = new Set<string>(JSON.parse(review.items));
       const covered = needing.every(
         ({ before, after }) =>
           shown.has(after.id) &&
           (scope === "undo" ||
-            (live(before) !== undefined && live(after) !== undefined && before?.path === after.path)),
+            (liveData(before) !== undefined && liveData(after) !== undefined && before?.path === after.path)),
       );
       if (covered) return undefined;
     }
@@ -243,10 +261,17 @@ export function startReview(sql: Sql, noteIds: readonly string[], actor: string,
 }
 
 /** Opens the session once its nonce is signed: valid for 10 minutes, and only a new signature renews it. */
-export function openReview(sql: Sql, nonce: string, signature: Signature, now: number): Opened {
+export function openReview(
+  sql: Sql,
+  nonce: string,
+  actor: string,
+  signature: Signature,
+  now: number,
+): Opened {
   return sql.transaction((): Opened => {
     const [review] = sql.all<ReviewRow>("SELECT * FROM review_runs WHERE nonce = ?", nonce);
-    if (!review || review.assertion !== "" || review.expiresAt <= now)
+    // Only whoever started it may open it, so a session started by anyone else is never signed into theirs.
+    if (!review || review.actor !== actor || review.assertion !== "" || review.expiresAt <= now)
       return { error: "This review session can't be opened. Start a new one." };
     if (!advance(sql, signature)) return { error: "This passkey signature was already used." };
     sql.all(

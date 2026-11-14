@@ -56,10 +56,14 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
-    // Front-matter is stored as JSON: an alias that contains itself (`a: &a [*a]`) can't be. A `__proto__` key
-    // reads as an object's prototype in most code that touches it, so no field may have that name.
+    // Front-matter is stored as JSON, and must survive it unchanged: an alias that contains itself
+    // (`a: &a [*a]`) can't be stored, nor can .inf or .nan. A `__proto__` key reads as an object's prototype in
+    // most code that touches it, so no field may have that name.
     JSON.stringify(data, (key, value: unknown) => {
       if (key === "__proto__") throw new Error("__proto__ can't be a field name.");
+      // JSON would store .inf and .nan as null, so a change between them would go unseen.
+      if (typeof value === "number" && !Number.isFinite(value))
+        throw new Error(`${key} must be a finite number.`);
       return value;
     });
   } catch (error) {

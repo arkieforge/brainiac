@@ -313,9 +313,9 @@ export const approvalCases: Record<string, Case> = {
       mutate(sql, patchOf(sql, ielts, [set("overall", overall)]), { ...human(now), review: nonce });
     // Not signed yet.
     untouched(sql, () => fix(8.5, T0));
-    ok("review" in openReview(sql, nonce, signed(), T0 + 1));
+    ok("review" in openReview(sql, nonce, "human", signed(), T0 + 1));
     // A nonce opens once.
-    ok("error" in openReview(sql, nonce, signed(), T0 + 2));
+    ok("error" in openReview(sql, nonce, "human", signed(), T0 + 2));
     applied(fix(8.5, T0 + 2));
     // Verify: extending the verification on a note shown.
     applied(
@@ -448,7 +448,7 @@ export const approvalCases: Record<string, Case> = {
       return created.noteId;
     });
     const nonce = startReview(sql, ids, "human", T0);
-    ok("review" in openReview(sql, nonce, signed(), T0));
+    ok("review" in openReview(sql, nonce, "human", signed(), T0));
     const [first] = ids;
     ok(first);
     // The nonce in an agent's hands does nothing.
@@ -458,6 +458,86 @@ export const approvalCases: Record<string, Case> = {
     // Undoing the run would delete six verified notes: a bulk delete needs its own signature.
     untouched(sql, () => undoRun(sql, "import", { ...human(), review: nonce }));
     applied(mutate(sql, patchOf(sql, first, [set("overall", 9)]), { ...human(), review: nonce }));
+  },
+
+  "front-matter refuses values JSON can't keep, like .inf and .nan": (sql, fixtures) => {
+    const { tum } = record(sql, fixtures);
+    const note = getNote(sql, tum);
+    ok(note);
+    // Stored as JSON, each would read as null, so a change between them would never be seen.
+    for (const value of [".inf", "-.inf", ".nan"]) {
+      const text: string = note.raw.replace("status: preparing", `status: preparing\nscore: ${value}`);
+      equal(
+        mutate(sql, { op: "put", noteId: tum, baseRev: note.rev, raw: text }, agent()).status,
+        "invalid",
+        value,
+      );
+    }
+  },
+
+  "adding, removing or redirecting an edge into a verified note is held, whatever the path's case": (
+    sql,
+    fixtures,
+  ) => {
+    const { ielts } = record(sql, fixtures);
+    // A verified note's own `supersedes` is part of what was verified, whatever it points at.
+    untouched(sql, () => mutate(sql, patchOf(sql, ielts, [unset("supersedes")]), agent()));
+    withApproval(
+      sql,
+      {
+        op: "create",
+        path: "facts/tests/ielts-2025-03.md",
+        raw: superseding("x.md").replace("supersedes: x.md\n", "verified: {by: human, fields: [overall]}\n"),
+        class: "sensitive",
+      },
+      human(),
+    );
+    // The verified 2026 score supersedes the verified 2025 one: removing or redirecting that edge is held.
+    untouched(sql, () => mutate(sql, patchOf(sql, ielts, [unset("supersedes")]), agent()));
+    untouched(sql, () => mutate(sql, patchOf(sql, ielts, [set("supersedes", "x.md")]), agent()));
+    // An unverified note pointing at it, by another case of its path: held to set, and to remove.
+    const next = {
+      op: "create",
+      path: "facts/tests/ielts-2027.md",
+      raw: superseding("IELTS-2025-03.md"),
+      class: "sensitive",
+    } as const;
+    untouched(sql, () => mutate(sql, next, agent()));
+    const { noteId } = withApproval(sql, next, human());
+    untouched(sql, () => mutate(sql, patchOf(sql, noteId, [unset("supersedes")]), agent()));
+    untouched(sql, () =>
+      mutate(sql, { op: "delete", noteId, baseRev: getNote(sql, noteId)?.rev ?? 0 }, agent()),
+    );
+  },
+
+  "deleting more than five notes in one change is held, verified or not": (sql, fixtures) => {
+    migrate(sql);
+    for (let i = 0; i < 6; i++) {
+      applied(
+        mutate(
+          sql,
+          {
+            op: "create",
+            path: `facts/roles/r-${i}.md`,
+            raw: raw(fixtures, TUM).replace(/^id: .*$/m, `id: ${ulid(T0 + i)}`),
+            class: "normal",
+          },
+          { ...agent(), runId: "import" },
+        ),
+      );
+    }
+    const nonce = startReview(sql, [], "human", T0);
+    ok("review" in openReview(sql, nonce, "human", signed(), T0));
+    untouched(sql, () => undoRun(sql, "import", agent()));
+    untouched(sql, () => undoRun(sql, "import", { ...human(), review: nonce }));
+  },
+
+  "only whoever started a review session can open it": (sql, fixtures) => {
+    const { ielts } = record(sql, fixtures);
+    const nonce = startReview(sql, [ielts], "connection:agent", T0);
+    same(openReview(sql, nonce, "human", signed(), T0), {
+      error: "This review session can't be opened. Start a new one.",
+    });
   },
 
   "no sequence of changes without an approval moves a verified value or lets a held change land": (
@@ -497,10 +577,19 @@ export const approvalCases: Record<string, Case> = {
                     ["title"],
                     ["expires"],
                     ["status"],
+                    ["supersedes"],
                   ),
                   value: fc.oneof(
                     fc.integer({ min: 0, max: 9 }),
-                    fc.constantFrom("Award", "x", ["overall"], { by: "agent" }),
+                    fc.constantFrom(
+                      "Award",
+                      "x",
+                      ["overall"],
+                      { by: "agent" },
+                      "ielts-2025-03.md",
+                      "IELTS-2025-03.md",
+                      "x.md",
+                    ),
                   ),
                 }),
                 fc.record({
@@ -512,6 +601,7 @@ export const approvalCases: Record<string, Case> = {
                     ["verified", "fields"],
                     ["type"],
                     ["title"],
+                    ["supersedes"],
                   ),
                 }),
                 fc.record({
@@ -546,6 +636,25 @@ export const approvalCases: Record<string, Case> = {
         const ieltsRaw = raw(fixtures, IELTS).replace(/^id: .*$/m, `id: ${ids.ielts}`);
         const tumRaw = raw(fixtures, TUM).replace(/^id: .*$/m, `id: ${ids.tum}`);
         const ieltsPath = `${dir}${IELTS}`;
+        // The verified score the IELTS note supersedes, so that edge is in the verified set too.
+        withApproval(
+          sql,
+          {
+            op: "create",
+            path: `${dir}facts/tests/ielts-2025-03.md`,
+            raw: [
+              "---",
+              `id: ${ulid(LATER)}`,
+              "type: TestScore",
+              "overall: 7",
+              "verified: {by: human, fields: [overall]}",
+              "---",
+              "",
+            ].join("\n"),
+            class: "sensitive",
+          },
+          human(LATER),
+        );
         const created = withApproval(
           sql,
           { op: "create", path: ieltsPath, raw: ieltsRaw, class: "sensitive" },
@@ -575,12 +684,12 @@ export const approvalCases: Record<string, Case> = {
         const unsignedReview = startReview(sql, [ids.ielts, ids.tum], "human", LATER);
         // Signed, over a note the steps never touch.
         const otherReview = startReview(sql, [ulid(LATER)], "human", LATER);
-        ok("review" in openReview(sql, otherReview, signed(), LATER));
+        ok("review" in openReview(sql, otherReview, "human", signed(), LATER));
         const expiredReview = startReview(sql, [ids.ielts], "human", LATER - REVIEW_MS - 2);
-        ok("review" in openReview(sql, expiredReview, signed(), LATER - REVIEW_MS - 1));
+        ok("review" in openReview(sql, expiredReview, "human", signed(), LATER - REVIEW_MS - 1));
         // Signed and current over both notes, but opened by the site, which never acts in these steps.
         const sitesReview = startReview(sql, [ids.ielts, ids.tum], "client:site", LATER);
-        ok("review" in openReview(sql, sitesReview, signed(), LATER));
+        ok("review" in openReview(sql, sitesReview, "client:site", signed(), LATER));
         const grants = {
           none: {},
           bogus: { approvalId: "made-up" },

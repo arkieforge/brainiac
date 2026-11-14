@@ -159,11 +159,15 @@ describe("approvals", () => {
     const { authenticator, approver } = passkey();
     const nonce = await base.startReview(["01M6ADBH80DEGPEVAAVR2625V1"], human);
     const intruder = createAuthenticator(ORIGIN);
-    const forged = { ...intruder.authenticate({ challenge: nonce }), id: approver.credentialId };
-    expect(await base.openReview(nonce, forged, approver)).toHaveProperty("error");
+    const forged = {
+      ...intruder.authenticate({ challenge: nonce }),
+      id: approver.credentialId,
+      rawId: approver.credentialId,
+    };
+    expect(await base.openReview(nonce, forged, approver, human)).toHaveProperty("error");
     const assertion = authenticator.authenticate({ challenge: nonce });
-    expect(await base.openReview(nonce, assertion, approver)).toEqual({ review: nonce });
-    expect(await base.openReview(nonce, assertion, approver)).toHaveProperty("error");
+    expect(await base.openReview(nonce, assertion, approver, human)).toEqual({ review: nonce });
+    expect(await base.openReview(nonce, assertion, approver, human)).toHaveProperty("error");
     // A session over a note doesn't cover creating it: a review covers notes that already exist.
     expect(await base.mutate(create, { ...human, review: nonce })).toMatchObject({ status: "needsApproval" });
   });

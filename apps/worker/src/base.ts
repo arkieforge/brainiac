@@ -126,9 +126,14 @@ export class Base extends DurableObject<Env> {
   }
 
   /** Opens a review session once its nonce is signed: 10 minutes of verify, fix and undo on its notes. */
-  async openReview(nonce: string, response: AuthenticationResponseJSON, approver: Approver): Promise<Opened> {
+  async openReview(
+    nonce: string,
+    response: AuthenticationResponseJSON,
+    approver: Approver,
+    caller: Caller,
+  ): Promise<Opened> {
     const signed = await this.check(response, nonce, approver);
-    return "error" in signed ? signed : openReview(this.sql, nonce, signed, Date.now());
+    return "error" in signed ? signed : openReview(this.sql, nonce, caller.actor, signed, Date.now());
   }
 
   private check(response: AuthenticationResponseJSON, challenge: string, approver: Approver) {
