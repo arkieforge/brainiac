@@ -10,6 +10,7 @@ import { emailOTP } from "better-auth/plugins/email-otp";
 import { jwt } from "better-auth/plugins/jwt";
 
 import { fetchClientMetadataResource } from "./cimd-fetch.ts";
+import { connectedApps } from "./connected-apps.ts";
 import { otpEmail, type Mailer } from "./email.ts";
 import { recovery } from "./recovery.ts";
 
@@ -30,6 +31,13 @@ export interface AuthConfig {
 /** Entry points that can create an account. Passkey sign-in can't, so it skips the challenge. */
 const SIGN_UP_PATHS = ["/email-otp/send-verification-otp", "/sign-in/social"];
 
+/**
+ * How long an MCP access token lives (Better Auth's default). It's a JWT /mcp checks without Neon, so it outlives
+ * a Disconnect; tools must also find the connection's consent on every call (docs/internals/security.md). Not
+ * shorter: Codex doesn't refresh, it sends the person through sign-in again when its token runs out.
+ */
+export const ACCESS_TOKEN_SECONDS = 60 * 60;
+
 /** Where MCP clients connect, and the audience every access token is bound to. */
 export const mcpResource = (baseURL: string) => `${baseURL}/mcp`;
 
@@ -48,6 +56,8 @@ export const authOptions = (config: AuthConfig) =>
       "/email-otp/request-password-reset",
       "/forget-password/email-otp",
       "/email-otp/reset-password",
+      // Leaves the client's refresh tokens working; Disconnect (connected-apps.ts) ends the grant instead.
+      "/oauth2/delete-consent",
     ],
     // Session checks skip Neon for 5 minutes, so a short Neon outage doesn't sign anyone out.
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
@@ -79,8 +89,10 @@ export const authOptions = (config: AuthConfig) =>
         loginPage: "/sign-in",
         consentPage: "/consent",
         grantTypes: ["authorization_code", "refresh_token"],
+        accessTokenExpiresIn: ACCESS_TOKEN_SECONDS,
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
+      connectedApps(),
     ],
   }) satisfies BetterAuthOptions;
 

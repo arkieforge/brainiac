@@ -76,8 +76,11 @@ async function account(request: Request, auth: ReturnType<typeof createAuth>): P
     query: { disableCookieCache: true },
   });
   if (!session) return Response.redirect(new URL("/sign-in", request.url).toString(), 303);
-  const passkeys = await auth.api.listPasskeys({ headers: request.headers });
-  return accountPage(session.user.email, passkeys, vouchedUntil(session.session, passkeys));
+  const [passkeys, apps] = await Promise.all([
+    auth.api.listPasskeys({ headers: request.headers }),
+    auth.api.listConnectedApps({ headers: request.headers }),
+  ]);
+  return accountPage(session.user.email, passkeys, vouchedUntil(session.session, passkeys), apps);
 }
 
 // OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may

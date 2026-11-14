@@ -1,5 +1,6 @@
 // The pages auth needs before the web app exists (#50): sign in or up, enroll passkeys, and let an MCP client
 // in. Plain HTML with a little inline script; the WebAuthn ceremonies use the browser's own JSON helpers.
+import type { ConnectedApp } from "./connected-apps.ts";
 import { canApprove, type ApprovingPasskey } from "./recovery.ts";
 
 /** What the account page asks for next: a first passkey is required, a second strongly suggested. */
@@ -122,6 +123,7 @@ export function accountPage(
   email: string,
   passkeys: readonly ApprovingPasskey[],
   vouchedUntil: number,
+  apps: readonly ConnectedApp[],
   now = new Date(),
 ): Response {
   const step = nextPasskeyStep(passkeys);
@@ -140,11 +142,19 @@ export function accountPage(
 <button type="button" class="quiet" data-remove="${escape(p.id)}" data-approves="${canApprove(p, now)}" data-last="${canApprove(p, now) && approving === 1}">Remove</button></li>`;
     })
     .join("");
+  const appRows = apps
+    .map((a) => {
+      const from = URL.canParse(a.clientId) ? new URL(a.clientId).host : a.clientId;
+      return `<li><span>${escape(a.name ?? from)}<br><span class="note">${escape(from)}, connected ${a.connectedAt.toUTCString()}</span></span>
+<button type="button" class="quiet" data-disconnect="${escape(a.clientId)}" data-name="${escape(a.name ?? from)}">Disconnect</button></li>`;
+    })
+    .join("");
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
 ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" id="add">Add a passkey</button></section>`}
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
+${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `// Changing passkeys asks for one that can approve first (the proof lasts 10 minutes, and a security key can
 // take a while to find), so a new one needn't wait 72 hours. Someone who lost theirs can carry on when adding,
@@ -171,6 +181,13 @@ for (const button of document.querySelectorAll("[data-remove]")) {
     // A passkey that's still waiting can go without proof; that's how you remove one you didn't add.
     if (button.dataset.approves === "true") await confirmPasskey();
     await api("/passkey/delete-passkey", { method: "POST", body: JSON.stringify({ id: button.dataset.remove }) });
+    location.reload();
+  });
+}
+for (const button of document.querySelectorAll("[data-disconnect]")) {
+  button.onclick = run(async () => {
+    if (!confirm("Disconnect " + button.dataset.name + "? It loses access to your record.")) return;
+    await api("/connected-apps/disconnect", { method: "POST", body: JSON.stringify({ clientId: button.dataset.disconnect }) });
     location.reload();
   });
 }

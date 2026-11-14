@@ -3,7 +3,13 @@
 import { createResourceServerChallenge } from "@better-auth/oauth-provider";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { APIError, isAPIError } from "better-auth/api";
-import { verifyJwsAccessToken } from "better-auth/oauth2";
+import {
+  createDpopReplayStore,
+  enforceDpopBinding,
+  isDpopBindingError,
+  parseAccessTokenAuthorization,
+  verifyJwsAccessToken,
+} from "better-auth/oauth2";
 import { decodeProtectedHeader } from "jose";
 
 import { type createAuth, mcpResource } from "../auth/config.ts";
@@ -13,7 +19,7 @@ import { type createAuth, mcpResource } from "../auth/config.ts";
 const handler = createMcpHandler(() => new McpServer({ name: "brainiac", version: "0.0.0" }));
 
 // Signing keys, cached per isolate for 5 minutes (every origin of a stage shares one key table). A token naming
-// a key we don't have refetches, at most every 30 seconds; tests that make new keys must move the clock on.
+// a key we don't have refetches, at most every 30 seconds.
 const jwksCache = {};
 
 // jose failures that mean we couldn't load keys, not that the token is bad.
@@ -32,28 +38,28 @@ const isTokenError = (error: unknown) =>
   /^ERR_J(WT|WS|WK|OSE)/.test(error.code) &&
   !KEY_LOADING_ERRORS.has(error.code);
 
-const invalidToken = (description: string) =>
-  new APIError("UNAUTHORIZED", {
-    message: description,
-    error: "invalid_token",
-    error_description: description,
-  });
+const unauthorized = (message: string, error?: "invalid_token" | "invalid_dpop_proof") =>
+  new APIError("UNAUTHORIZED", { message, ...(error && { error, error_description: message }) });
 
 /**
  * Checks the access token in-process. `requireMcpAuth` from `@better-auth/mcp` fetches our own `/jwks` over
  * HTTP, which costs a network hop per cold isolate and timed out behind a public hostname in testing.
  */
 async function verify(auth: ReturnType<typeof createAuth>, request: Request, resource: string) {
-  const token = /^Bearer (\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
-  if (!token) throw new APIError("UNAUTHORIZED", { message: "missing authorization header" });
+  const authorization = parseAccessTokenAuthorization(request.headers.get("authorization"));
+  if (!authorization?.token) throw unauthorized("missing authorization header");
+  if (authorization.scheme === "Unknown")
+    throw unauthorized("authorization scheme must be Bearer or DPoP", "invalid_token");
+  const { token } = authorization;
   // A header that isn't JSON makes jose throw a bare TypeError, which would read as an outage below.
   try {
     decodeProtectedHeader(token);
   } catch {
-    throw invalidToken("invalid access token");
+    throw unauthorized("invalid access token", "invalid_token");
   }
+  let claims;
   try {
-    const claims = await verifyJwsAccessToken(token, {
+    claims = await verifyJwsAccessToken(token, {
       jwksFetch: () => auth.api.getJwks(),
       jwksCacheKey: jwksCache,
       verifyOptions: {
@@ -62,15 +68,26 @@ async function verify(auth: ReturnType<typeof createAuth>, request: Request, res
         requiredClaims: ["azp", "exp", "sub"],
       },
     });
-    // A DPoP-bound token is only good with its proof, which this endpoint doesn't check yet (#11), so it fails
-    // closed rather than accepting the token as a plain bearer.
-    if (claims.cnf !== undefined) throw invalidToken("sender-constrained tokens aren't accepted yet");
-    return claims;
   } catch (error) {
     // Anything else (Neon down, keys unreadable) isn't the token's fault; saying it was would make the client
     // refresh, and maybe send the person through sign-in, over a blip.
-    throw isTokenError(error) ? invalidToken("invalid access token") : error;
+    throw isTokenError(error) ? unauthorized("invalid access token", "invalid_token") : error;
   }
+  // A DPoP-bound token (`cnf.jkt`) is good only with a fresh proof from its key, each proof used once. Proofs
+  // are remembered in Neon's verification table, so a replay is caught on any isolate; a bearer token skips it.
+  try {
+    await enforceDpopBinding({
+      payload: claims,
+      authorization,
+      proofJwt: request.headers.get("dpop"),
+      method: request.method,
+      url: request.url,
+      replayStore: createDpopReplayStore((await auth.$context).internalAdapter),
+    });
+  } catch (error) {
+    throw isDpopBindingError(error) ? unauthorized(error.message, error.code) : error;
+  }
+  return claims;
 }
 
 /** A request without a valid token for this origin's `/mcp` gets the 401 that starts a client's sign-in. */
