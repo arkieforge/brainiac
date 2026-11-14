@@ -24,7 +24,9 @@ ul{padding:0;list-style:none}li{display:flex;justify-content:space-between;align
 const api = async (path, init = {}) => {
   const res = await fetch("/api/auth" + path, { ...init, headers: { "content-type": "application/json", ...init.headers } });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(body?.message ?? "Something went wrong. Try again.");
+  // The ref is the request's Cloudflare ray id, which finds its log lines: \`vp run logs --stage <stage> --ray <ref>\`.
+  const ref = res.headers.get("cf-ray")?.split("-")[0];
+  if (!res.ok) throw new Error(body?.message ?? "Something went wrong. Try again." + (ref ? " If it keeps happening, send us ref " + ref + "." : ""));
   return body;
 };
 const run = (fn) => async (event) => {

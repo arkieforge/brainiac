@@ -21,4 +21,26 @@ describe("worker", () => {
     const res = await get("/nope");
     expect(res.status).toBe(404);
   });
+
+  it("sends plain HTTP to HTTPS before auth runs, keeping the method, path and query", async () => {
+    // Over http, Better Auth's MCP plugin refused the http resource URL and every /api/auth request 500ed.
+    const res = await worker.fetch(
+      new Request("http://brainiac.test/api/auth/email-otp/send-verification-otp?x=1", { method: "POST" }),
+      {} as Env,
+      {} as ExecutionContext,
+    );
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe(
+      "https://brainiac.test/api/auth/email-otp/send-verification-otp?x=1",
+    );
+  });
+
+  it("leaves local dev on http://localhost alone", async () => {
+    const res = await worker.fetch(
+      new Request("http://localhost:1337/health"),
+      {} as Env,
+      {} as ExecutionContext,
+    );
+    expect(res.status).toBe(200);
+  });
 });

@@ -24,12 +24,13 @@ when you are done with a personal stage.
 
 ## Secrets (Doppler project `braniac`)
 
-| Secret                  | What                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`  | Account token: Workers Scripts, R2, Queues, Hyperdrive, KV, AI, Browser, Secrets |
-| `CLOUDFLARE_ACCOUNT_ID` | The account Brainiac deploys to                                                  |
-| `NEON_API_KEY`          | Creates and deletes the per-stage branches                                       |
-| `NEON_PROJECT_ID`       | `brainiac-dev` in `dev`, `brainiac-prod` in `prd`                                |
+| Secret                  | What                                                                                                                                                                                                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`  | Account token: Workers Scripts, R2, Queues, Hyperdrive, KV, AI, Browser, Secrets                                                                                                                                                                                              |
+| `CLOUDFLARE_ACCOUNT_ID` | The account Brainiac deploys to                                                                                                                                                                                                                                               |
+| `CLOUDFLARE_LOGS_TOKEN` | `prd` only. Read-only: Workers Observability Read and Workers Tail Read, for `vp run logs --stage prod`. Kept out of `dev` because prod's logs hold real people's data. Other stages read logs with `dev`'s `CLOUDFLARE_API_TOKEN`, which can tail but can't read stored logs |
+| `NEON_API_KEY`          | Creates and deletes the per-stage branches                                                                                                                                                                                                                                    |
+| `NEON_PROJECT_ID`       | `brainiac-dev` in `dev`, `brainiac-prod` in `prd`                                                                                                                                                                                                                             |
 
 Auth settings are optional: each feature stays off until its values exist, so a stage deploys without them.
 The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state.

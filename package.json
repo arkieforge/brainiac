@@ -11,6 +11,7 @@
     "typecheck": "effect-tsgo tsc -p . && vp run -r typecheck",
     "knip": "knip",
     "doctor": "node scripts/doctor.ts",
+    "logs": "node scripts/logs.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"
   },

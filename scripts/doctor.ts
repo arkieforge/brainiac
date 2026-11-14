@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 // `vp run doctor`: checks this machine can build, test and deploy Brainiac, and says how to fix what isn't.
+// `vp run doctor --stage <stage>`: probes a deployed stage from outside, read-only and signed out, the way a
+// person reaches it. CI runs it after every deploy; the doctor skill starts from it when a stage misbehaves.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
+
+import { cloudflare, dopplerConfig, secret, workerName } from "./logs.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
 interface Check {
   name: string;
-  run: () => string | true; // true = ok, string = how to fix
+  run: () => string | true | Promise<string | true>; // true = ok, string = how to fix
   optional?: boolean;
 }
 
@@ -68,10 +73,128 @@ export const checks: Check[] = [
   },
 ];
 
-if (import.meta.main) {
+// Cloudflare's always-pass Turnstile key, which only non-prod stages may use (alchemy.run.ts).
+const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
+
+const get = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+
+/** What a signed-out visitor can see of a stage, each with the fix when it's wrong. */
+export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promise<unknown>): Check[] => {
+  const signIn = get(`${origin}/sign-in`).then(async (res) => ({
+    status: res.status,
+    html: await res.text(),
+  }));
+  return [
+    {
+      name: `Worker answers (${origin})`,
+      run: async () =>
+        (await get(`${origin}/health`)).ok || "The Worker isn't serving; check the deploy job.",
+    },
+    {
+      // Auth over plain http used to 500 on every request (the MCP plugin refuses an http base URL).
+      name: "Plain HTTP redirects to HTTPS",
+      run: async () => {
+        const res = await get(`${origin.replace("https:", "http:")}/sign-in`, { redirect: "manual" });
+        const to = res.headers.get("location") ?? "";
+        return (
+          (res.status >= 300 && res.status < 400 && to.startsWith("https:")) ||
+          `http:// answered ${res.status}${to ? ` to ${to}` : ""}; it must redirect to https.`
+        );
+      },
+    },
+    {
+      name: "Database reachable through Hyperdrive",
+      run: async () =>
+        (await get(`${origin}/health/db`)).ok ||
+        "/health/db failed: check the Neon branch and Hyperdrive (`vp run logs --stage <stage>`).",
+    },
+    {
+      name: prod ? "Sign-in page uses a real Turnstile key" : "Sign-in page has a Turnstile key",
+      run: async () => {
+        const { status, html } = await signIn;
+        const key = /sitekey: "([^"]*)"/.exec(html)?.[1];
+        if (status !== 200) return `/sign-in answered ${status}.`;
+        return (
+          (key && (!prod || key !== TURNSTILE_TEST_SITE_KEY)) ||
+          "TURNSTILE_SITE_KEY is missing or the test key, so sign-up refuses (infra/README.md)."
+        );
+      },
+    },
+    {
+      name: "Email codes on",
+      optional: !prod,
+      run: async () =>
+        !/<form id="email" hidden/.test((await signIn).html) ||
+        "EMAIL_FROM isn't set for this stage, so no email codes or recovery notices (infra/README.md).",
+    },
+    {
+      name: "Sign-up refuses without Turnstile",
+      run: async () => {
+        const res = await get(`${origin}/api/auth/email-otp/send-verification-otp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin },
+          body: JSON.stringify({ email: "doctor@example.com", type: "sign-in" }),
+        });
+        return res.status === 400 || `Expected 400 without a captcha token, got ${res.status}.`;
+      },
+    },
+    {
+      name: "OAuth metadata for MCP clients",
+      run: async () => {
+        const res = await get(`${origin}/.well-known/oauth-authorization-server`);
+        const issuer = res.ok ? ((await res.json()) as { issuer?: string }).issuer : undefined;
+        return issuer === `${origin}/api/auth` || `Issuer is ${issuer ?? `missing (${res.status})`}.`;
+      },
+    },
+    {
+      name: "Stored logs readable (vp run logs)",
+      optional: true,
+      run: () => readLogs().then(() => true as const),
+    },
+  ];
+};
+
+/** The stage's public origin: its DOMAIN when it has one, else its workers.dev URL. */
+async function stageOrigin(stage: string, config: string, accountId: string) {
+  const domain = stage === "prod" ? secret("DOMAIN", config) : undefined;
+  if (domain) return `https://${domain}`;
+  const token = secret("CLOUDFLARE_API_TOKEN", config) ?? "";
+  const { subdomain } = (await cloudflare(`/accounts/${accountId}/workers/subdomain`, token)) as {
+    subdomain: string;
+  };
+  return `https://${workerName(stage)}.${subdomain}.workers.dev`;
+}
+
+async function stageCheckList(stage: string): Promise<Check[]> {
+  const config = dopplerConfig(stage);
+  const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
+  if (!accountId) throw new Error(`Couldn't read Doppler config ${config}; run \`vp run doctor\` first.`);
+  const logsToken = secret("CLOUDFLARE_LOGS_TOKEN", config) ?? secret("CLOUDFLARE_API_TOKEN", config) ?? "";
+  const readLogs = () =>
+    cloudflare(`/accounts/${accountId}/workers/observability/telemetry/query`, logsToken, {
+      method: "POST",
+      body: JSON.stringify({
+        queryId: "brainiac-doctor",
+        view: "events",
+        timeframe: { from: Date.now() - 60_000, to: Date.now() },
+        limit: 1,
+        parameters: {
+          filters: [
+            { key: "$workers.scriptName", operation: "eq", type: "string", value: workerName(stage) },
+          ],
+        },
+      }),
+    });
+  return stageChecks(await stageOrigin(stage, config, accountId), stage === "prod", readLogs);
+}
+
+async function main() {
+  const { values } = parseArgs({ options: { stage: { type: "string" } } });
   let failed = 0;
-  for (const check of checks) {
-    const result = check.run();
+  for (const check of values.stage ? await stageCheckList(values.stage) : checks) {
+    const result = await Promise.resolve()
+      .then(check.run)
+      .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
     const ok = result === true;
     if (!ok && !check.optional) failed++;
     console.log(
@@ -79,4 +202,11 @@ if (import.meta.main) {
     );
   }
   process.exitCode = failed ? 1 : 0;
+}
+
+if (import.meta.main) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
 }
