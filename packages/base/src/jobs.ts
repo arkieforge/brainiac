@@ -5,7 +5,11 @@ import type { Sql } from "./sql.ts";
 
 /** A dispatched job not acknowledged within this long is dispatched again. */
 export const LEASE_MS = 5 * 60_000;
-/** After this many dispatches a job is marked failed and left for `brainiac doctor`. */
+/**
+ * After this many dispatches a job is marked failed.
+ * shortcut: nothing shows or retries a failed job yet, so its note stays out of search at that revision until
+ * the next edit; `brainiac doctor` (#8) and the site's record health should list them.
+ */
 export const MAX_ATTEMPTS = 5;
 /** Deleted notes are tombstones this long, then purged, and undo works from revisions this old (contract §6). */
 export const TOMBSTONE_MS = 30 * 24 * 60 * 60_000;

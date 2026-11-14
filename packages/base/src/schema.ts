@@ -233,6 +233,11 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       approvalId TEXT
     )`,
   ],
+  // The alarm's purge reads these on every wake.
+  [
+    "CREATE INDEX revisions_at ON revisions (at)",
+    "CREATE INDEX notes_deleted ON notes (deletedAt) WHERE deletedAt IS NOT NULL",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

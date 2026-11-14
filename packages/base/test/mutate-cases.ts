@@ -377,4 +377,114 @@ export const mutateCases: Record<string, Case> = {
     // The feed still says it was deleted, for clients catching up.
     equal(rows(sql, "changes", noteId).length, 2);
   },
+
+  // An edit by someone else between two of the run's revisions is never rolled back with the run.
+  "undo keeps an edit made between two revisions of the run": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000002";
+    const set = (baseRev: number, value: number, ctx: Context) =>
+      applied(
+        mutate(sql, { op: "patch", noteId, baseRev, ops: [{ op: "set", path: ["overall"], value }] }, ctx),
+      );
+    set(1, 8.5, by(T0 + 1, run));
+    set(2, 9, by(T0 + 2));
+    set(3, 7, by(T0 + 3, run));
+    const result = undoRun(sql, run, by(T0 + 4));
+    equal(field(sql, noteId, "overall"), 9);
+    same(
+      result.conflicts.map((c) => c.diff),
+      [{ fields: { overall: { before: 9, after: 8 } } }],
+    );
+  },
+
+  "undo reverses a whole run newest first, across notes": (sql, fixtures) => {
+    migrate(sql);
+    const { raw } = fixture(fixtures, TUM);
+    const first = applied(mutate(sql, { op: "create", path: TUM, raw, class: "normal" }, by(T0)));
+    // The run replaces the note with a new one at the same path.
+    const run = "01M6RUN0000000000000000003";
+    applied(mutate(sql, { op: "delete", noteId: first.noteId, baseRev: 1 }, by(T0 + 1, run)));
+    const replacement = raw.replace(first.noteId, "01M6ZZZZZZZZZZZZZZZZZZZZZZ");
+    const second = applied(
+      mutate(sql, { op: "create", path: TUM, raw: replacement, class: "normal" }, by(T0 + 2, run)),
+    );
+    const result = undoRun(sql, run, by(T0 + 3));
+    same(result.conflicts, []);
+    same(
+      [getNote(sql, first.noteId)?.deletedAt, getNote(sql, second.noteId)?.deletedAt === null],
+      [null, false],
+    );
+  },
+
+  "undo of an edit to a note deleted since proposes the whole inverse": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000004";
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["overall"], value: 9 }] },
+        by(T0, run),
+      ),
+    );
+    applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by(T0 + 1)));
+    const result = undoRun(sql, run, by(T0 + 2));
+    same(result.undone, []);
+    same(
+      result.conflicts.map((c) => c.diff),
+      [{ fields: { overall: { before: 9, after: 8 } } }],
+    );
+    ok(getNote(sql, noteId)?.deletedAt !== null);
+  },
+
+  "an undo that would leave a note failing its type waits for the person": (sql) => {
+    migrate(sql);
+    sql.all(
+      "INSERT INTO schema (version, manifest) VALUES (1, ?)",
+      "schema_version: 1\ntypes:\n  A: {version: 1, fields: {}}\n  B: {version: 1, fields: {role: {kind: text, required: true}}}\n",
+    );
+    const raw = "---\nid: 01M6ZZZZZZZZZZZZZZZZZZZZZZ\ntype: A\n---\n";
+    const { noteId } = applied(mutate(sql, { op: "create", path: "a.md", raw, class: "normal" }, by()));
+    const run = "01M6RUN0000000000000000005";
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["role"], value: "referee" }] },
+        by(T0, run),
+      ),
+    );
+    // `role` is now what makes the note a valid B.
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 2, ops: [{ op: "set", path: ["type"], value: "B" }] },
+        by(),
+      ),
+    );
+    const result = undoRun(sql, run, by());
+    same([result.undone, result.conflicts.length], [[], 1]);
+    same([field(sql, noteId, "type"), field(sql, noteId, "role")], ["B", "referee"]);
+  },
+
+  "deleting a note drops its chunks' vectors too": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    putChunks(sql, noteId, 1, chunkNote(stored(sql, noteId)));
+    sql.all("INSERT INTO vectors (chunkId, model, q) SELECT id, 'bge-m3', x'00' FROM chunks");
+    applied(mutate(sql, { op: "delete", noteId, baseRev: 1 }, by()));
+    same(sql.all("SELECT chunkId FROM vectors"), []);
+  },
+
+  "undoing a run from inside it starts a run of its own": (sql, fixtures) => {
+    const { noteId } = withIelts(sql, fixtures);
+    const run = "01M6RUN0000000000000000006";
+    applied(
+      mutate(
+        sql,
+        { op: "patch", noteId, baseRev: 1, ops: [{ op: "set", path: ["overall"], value: 9 }] },
+        by(T0, run),
+      ),
+    );
+    const result = undoRun(sql, run, by(T0 + 1, run));
+    ok(result.runId !== run);
+    equal(field(sql, noteId, "overall"), 8);
+  },
 };

@@ -44,7 +44,10 @@ async function create(base: DurableObjectStub<TestBase>) {
 describe("Base DO", () => {
   it("dispatches a job committed before a crash, once it is back", async () => {
     const base = await record("crash");
+    // The commit arms the alarm, which the runtime keeps across a crash.
+    const armed = base().nextAlarm();
     const { noteId } = await create(base());
+    await armed;
     // The process dies after the commit, before any dispatch.
     await expect(base().crash()).rejects.toThrow();
 

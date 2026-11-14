@@ -22,6 +22,8 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "./env.ts";
 
+const RETRY_MS = 60_000;
+
 /** What the outbox puts on the jobs queue: the record (this DO's own id, never from a request) and the job. */
 export interface JobMessage {
   readonly base: string;
@@ -65,7 +67,10 @@ export class Base extends DurableObject<Env> {
     return result;
   }
 
-  /** The note a job works on, or `null` when the job is done or stale (its note has moved on). */
+  /**
+   * The note a job works on, or `null` when the job is done or stale (its note has moved on). For the jobs
+   * consumer only: it returns sensitive text with no connection check, so no transport may expose it.
+   */
   jobInput(jobId: string): NoteRow | null {
     return jobInput(this.sql, jobId)?.note ?? null;
   }
@@ -85,9 +90,17 @@ export class Base extends DurableObject<Env> {
     purge(this.sql, now);
     const due = dueJobs(this.sql, now);
     if (due.length > 0) {
-      await this.env.JOBS.sendBatch(
-        due.map((job) => ({ body: { base: this.ctx.id.toString(), jobId: job.id } })),
-      );
+      try {
+        await this.env.JOBS.sendBatch(
+          due.map((job) => ({ body: { base: this.ctx.id.toString(), jobId: job.id } })),
+        );
+      } catch (error) {
+        // The queue is down: the jobs stay due. Try again in a minute rather than spinning, and rather than
+        // throwing, since the runtime stops retrying a failing alarm after a few attempts.
+        console.error("job dispatch failed", error);
+        void this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
+        return;
+      }
       markDispatched(
         this.sql,
         due.map((job) => job.id),
@@ -97,8 +110,10 @@ export class Base extends DurableObject<Env> {
     this.wake();
   }
 
-  /** Points the alarm at the next background work, or clears it. No await separates it from the write it follows,
-   * so the runtime commits both together. */
+  /**
+   * Points the alarm at the next background work, or clears it. No await separates it from the write it
+   * follows, so the runtime commits both together.
+   */
   private wake(): void {
     const at = nextWake(this.sql, Date.now());
     void (at === null ? this.ctx.storage.deleteAlarm() : this.ctx.storage.setAlarm(at));

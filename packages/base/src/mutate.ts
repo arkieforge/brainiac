@@ -254,41 +254,49 @@ export interface UndoResult {
   readonly conflicts: readonly UndoConflict[];
 }
 
-/** Folds a note's diffs in one run, oldest first, into one: the earliest `before`, the latest `after`. */
-function fold(diffs: readonly Diff[]): Diff {
-  const fields: Record<string, Change<unknown>> = {};
-  let body: Change<string> | undefined;
-  let live: Change<boolean> | undefined;
-  for (const d of diffs) {
-    for (const [key, change] of Object.entries(d.fields)) {
-      const first = fields[key] ?? change;
-      fields[key] = {
-        ...side("before", Object.hasOwn(first, "before"), first.before),
-        ...side("after", Object.hasOwn(change, "after"), change.after),
-      };
-    }
-    if (d.body) body = { before: (body ?? d.body).before ?? "", after: d.body.after ?? "" };
-    if (d.live) live = { before: (live ?? d.live).before ?? false, after: d.live.after ?? false };
-  }
-  return { fields, ...(body && { body }), ...(live && { live }) };
+/** What undoing `d` would do, from the note as it is now: kept on a conflict proposal for the person to pick. */
+function inverseFrom(now: State, d: Diff): Diff {
+  const fields = Object.fromEntries(
+    Object.entries(d.fields).map(([key, change]) => [
+      key,
+      {
+        ...side("before", Object.hasOwn(now.data, key), now.data[key]),
+        ...side("after", Object.hasOwn(change, "before"), change.before),
+      },
+    ]),
+  );
+  return {
+    fields,
+    ...(d.body && { body: { before: now.body, after: d.body.before ?? "" } }),
+    ...(d.live && { live: { before: now.live, after: d.live.before ?? false } }),
+  };
 }
 
+const livePaths = (sql: Sql) =>
+  sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL").map((row) => row.path);
+
 /**
- * Undoes every change a run made, by applying the inverse patches stored on its revisions. Values go back
- * as values, so a restored number is written in YAML's canonical form (`8.0` comes back as `8`). A field edited
- * since the run is left as it is now and becomes a conflict proposal, as does a note created by the run and
- * edited since, or a deleted note whose path another note has taken.
+ * Undoes every change a run made by applying the inverse patch of each of its revisions, newest first
+ * across the whole run, so a later edit by anyone else is never rolled back with it. Values go back as
+ * values, so a restored number is written in YAML's canonical form (`8.0` comes back as `8`). What can't go
+ * back becomes a conflict proposal and the note keeps its current value: a field edited since, a note the
+ * run created and someone edited since, a deleted note whose path is taken, a note deleted since, or an
+ * undo that would leave the note failing its type.
  */
 export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
-  const undoRunId = ctx.runId ?? ulid(ctx.now);
+  // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
+  const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
   return sql.transaction(() => {
-    const revisions = sql.all<{ noteId: string; rev: number; patch: string }>(
-      "SELECT noteId, rev, patch FROM revisions WHERE runId = ? ORDER BY noteId, rev",
+    // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
+    // part; keep whole runs if people undo month-old runs.
+    const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
+      `SELECT revisions.noteId, revisions.patch, revisions.raw FROM revisions
+       JOIN changes ON changes.noteId = revisions.noteId AND changes.rev = revisions.rev
+       WHERE revisions.runId = ? ORDER BY changes.seq DESC`,
       runId,
     );
-    const byNote = Map.groupBy(revisions, (revision) => revision.noteId);
-    const undone: string[] = [];
+    const undone = new Set<string>();
     const conflicts: UndoConflict[] = [];
     const conflict = (noteId: string, d: Diff) => {
       const proposalId = ulid(ctx.now);
@@ -302,53 +310,49 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       conflicts.push({ noteId, proposalId, diff: d });
     };
 
-    for (const [noteId, rows] of byNote) {
-      const note = getNote(sql, noteId);
+    for (const revision of revisions) {
+      const note = getNote(sql, revision.noteId);
       if (!note) continue; // purged with its tombstone
-      const run = fold(rows.map((row) => JSON.parse(row.patch)));
+      const d: Diff = JSON.parse(revision.patch);
       const now = stateOf(note);
-      const lastRev = rows.at(-1)?.rev ?? 0;
 
-      // The run created it: undoing deletes it, unless someone edited it since.
-      if (run.live?.before === false) {
+      // Created by the run: undoing deletes it, unless it was edited since.
+      if (d.live?.before === false) {
         if (!now.live) continue;
-        if (note.rev !== lastRev) conflict(noteId, { fields: {}, live: { before: true, after: false } });
+        const then = parseNote(revision.raw);
+        const untouched = deepEqual(now.data, then.data) && now.body === then.body;
+        if (!untouched) conflict(note.id, inverseFrom(now, d));
         else {
           write(sql, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
-          undone.push(noteId);
+          undone.add(note.id);
         }
         continue;
       }
 
-      // The run deleted it: undoing restores it, if its path is still free.
-      let restore = false;
-      if (run.live?.before === true && !now.live) {
-        const taken = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL");
-        if (
-          findClash(
-            taken.map((row) => row.path),
-            note.path,
-          ) !== undefined
-        ) {
-          conflict(noteId, { fields: {}, live: { before: false, after: true } });
-          continue;
+      // Deleted by the run: undoing restores it, if its path is still free.
+      if (d.live?.before === true) {
+        if (now.live) continue;
+        if (findClash(livePaths(sql), note.path) !== undefined) conflict(note.id, inverseFrom(now, d));
+        else {
+          write(sql, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
+          undone.add(note.id);
         }
-        restore = true;
-      } else if (!now.live) {
-        // Deleted since the run by someone else: nothing to put the values back on.
-        conflict(noteId, { fields: {}, live: { before: false, after: true } });
+        continue;
+      }
+
+      // Changed by the run, deleted since: nothing to put the values back on.
+      if (!now.live) {
+        conflict(note.id, inverseFrom(now, d));
         continue;
       }
 
       const ops: PatchOp[] = [];
       const clash: Record<string, Change<unknown>> = {};
-      for (const [key, change] of Object.entries(run.fields)) {
+      for (const [key, change] of Object.entries(d.fields)) {
         const has = Object.hasOwn(now.data, key);
         const current = now.data[key];
-        const atAfter = has === Object.hasOwn(change, "after") && deepEqual(current, change.after);
-        const atBefore = has === Object.hasOwn(change, "before") && deepEqual(current, change.before);
-        if (atBefore) continue;
-        if (!atAfter) {
+        if (has === Object.hasOwn(change, "before") && deepEqual(current, change.before)) continue;
+        if (has !== Object.hasOwn(change, "after") || !deepEqual(current, change.after)) {
           clash[key] = {
             ...side("before", has, current),
             ...side("after", Object.hasOwn(change, "before"), change.before),
@@ -363,19 +367,24 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult {
       }
       let raw = patch(note.raw, ops);
       let bodyClash: Change<string> | undefined;
-      if (run.body && now.body !== run.body.before) {
-        if (now.body === run.body.after)
-          raw = raw.slice(0, splitNote(raw).bodyStart) + (run.body.before ?? "");
-        else bodyClash = { before: now.body, after: run.body.before ?? "" };
+      if (d.body && now.body !== d.body.before) {
+        if (now.body === d.body.after) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.before ?? "");
+        else bodyClash = { before: now.body, after: d.body.before ?? "" };
+      }
+      // Part of an undo can leave a note failing its type (a required field removed while the field that made
+      // it required stays): the whole step then waits for the person instead.
+      if (raw !== note.raw && Array.isArray(check(sql, raw, note.id))) {
+        conflict(note.id, inverseFrom(now, d));
+        continue;
+      }
+      if (raw !== note.raw) {
+        write(sql, undo, undoRunId, note, { ...note, raw }, "update");
+        undone.add(note.id);
       }
       if (Object.keys(clash).length > 0 || bodyClash) {
-        conflict(noteId, { fields: clash, ...(bodyClash && { body: bodyClash }) });
-      }
-      if (raw !== note.raw || restore) {
-        write(sql, undo, undoRunId, note, { ...note, raw, deletedAt: null }, restore ? "restore" : "update");
-        undone.push(noteId);
+        conflict(note.id, { fields: clash, ...(bodyClash && { body: bodyClash }) });
       }
     }
-    return { runId: undoRunId, undone, conflicts };
+    return { runId: undoRunId, undone: [...undone], conflicts };
   });
 }
