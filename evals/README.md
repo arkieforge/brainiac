@@ -22,7 +22,7 @@ No eval exists yet; the harness is issue #27 (M1). When it lands, every eval fol
 ## Rules for cases
 
 - A case reproduces a real bad experience or guards a good one, and names its source.
-- Add the case before the fix. It must fail on the old text and pass on the new.
+- Add a `bad` case before the fix. It must fail on the old text and pass on the new. `guard` and `control` cases pass on both.
 - Add controls: ordinary work where the right action is simple. They catch over-correction.
 - Model output varies: a case fails when half or more of its samples fail, except exact-value and canary
   cases, which fail on any failing sample.
