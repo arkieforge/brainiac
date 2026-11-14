@@ -24,6 +24,7 @@ links the main checkout's `.env`.
 | `vp run deploy --stage <name>`  | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)           |
 | `vp run destroy --stage <name>` | Tear down a stage, Neon branch included                                         |
 | `vp run doctor`                 | Environment check                                                               |
+| `vp run logs --stage <name>`    | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)      |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
@@ -37,7 +38,7 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 | `oxlint-plugin-brainiac` | Repo-specific lint rules, each with tests                                        |
 | `evals/`                 | Model-behaviour evals ([README](../../evals/README.md))                          |
 | `infra/`                 | Infrastructure notes and, later, database migrations                             |
-| `scripts/`               | Doctor, worktree setup, reference-repo sync                                      |
+| `scripts/`               | Doctor, logs, worktree setup, reference-repo sync                                |
 | `assets/`                | Brand and icon sources                                                           |
 | `.agents/skills`         | Skills for agents working on this repo (`.claude/skills` links here)             |
 | `.repos/`                | Read-only reference checkouts, gitignored                                        |
@@ -49,7 +50,7 @@ needs one).
 ## Secrets
 
 Secrets (Cloudflare, Neon, Alchemy state, later treg) live in Doppler: workplace **LaunchPad**, project
-**braniac**, config `dev` (`prd` is for CI's prod deploy only). [infra/README.md](../../infra/README.md) lists
+**braniac**, config `dev` (`prd` is for CI's prod deploy, plus the read-only token for prod's logs). [infra/README.md](../../infra/README.md) lists
 each one, the stages and how prod is protected. Nothing secret goes in `.env` or the repo. Doppler logins are scoped per folder, so a laptop with
 several workplaces picks the right one by directory:
 
