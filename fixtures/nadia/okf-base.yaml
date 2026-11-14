@@ -1,0 +1,62 @@
+# Open Knowledge Format v0.2 manifest for the fixture record.
+schema_version: 1
+types:
+  Education:
+    version: 1
+    folder: facts/education
+    fields:
+      institution: {kind: text, required: true, example: Northvale University}
+      degree: {kind: text, required: true, example: BSc Computer Science}
+      start: {kind: date}
+      end: {kind: date}
+      cgpa: {kind: number, example: 3.82}
+      scale: {kind: number, example: 4}
+      sources: {kind: list}
+  TestScore:
+    version: 1
+    folder: facts/tests
+    fields:
+      test: {values: [ielts-academic, toefl-ibt, gre], required: true}
+      overall: {kind: number, required: true, example: 8.0}
+      sections: {kind: mapping, example: "{listening: 8.5, reading: 8.0}"}
+      date: {kind: date, required: true}
+      expires: {kind: date}
+      trf_number: {kind: text}
+      supersedes: {kind: relation, example: ielts-2025-03.md}
+      sources: {kind: list}
+      verified: {kind: mapping}
+  Role:
+    version: 1
+    folder: facts/roles
+    fields:
+      org: {kind: text, required: true, example: Acme Robotics}
+      title: {kind: text, required: true, example: Software Engineering Intern}
+      kind: {values: [internship, job, research, volunteer]}
+      start: {kind: date, required: true}
+      end: {kind: date}
+  Application:
+    version: 1
+    folder: applications
+    fields:
+      kind: {values: [university, scholarship, job], required: true}
+      deadline: {kind: date, required: true}
+      portal: {kind: text, example: "https://campus.tum.de"}
+      portal_login: {kind: text, example: "secret:portal.tum"}
+      status: {values: [preparing, submitted, decided], required: true}
+      requirements: {kind: list}
+  Document:
+    version: 1
+    folder: documents
+    fields:
+      kind: {values: [transcript, test-report, certificate, id], required: true}
+      issuer: {kind: text}
+      issued: {kind: date}
+      expires: {kind: date}
+      file: {kind: text, example: files/transcript-bsc.pdf}
+      proves: {kind: list}
+  Person:
+    version: 1
+    folder: people
+    fields:
+      role: {values: [referee, advisor, family], required: true}
+      org: {kind: text}

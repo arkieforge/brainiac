@@ -38,6 +38,21 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 - **Source and generated output are separate**: `out/` and `derived/` can be rebuilt; versions you actually submitted are frozen on the application.
 - **Filenames** are normalized to Unicode NFC and checked case-insensitively for clashes, so macOS, Windows and Linux copies agree.
 
+### How edits keep your text
+
+The stored form is the raw markdown, and `patch` in `packages/core` changes only the bytes of the node it
+edits, so comments, key order, quoting and blank lines survive every save:
+
+- Setting a field to the value it already has changes nothing. A changed scalar is rewritten in place.
+- New values are written as one line in flow style (`{by: human}`, `[a, b]`); text with line breaks becomes
+  one double-quoted line. A new key goes at the end of its mapping, at that mapping's indentation.
+- An edit inside a flow collection (`sections: {listening: 8.5}`) rewrites that whole collection, so its
+  other values come back in YAML's canonical form (`8.0` becomes `8`). Block collections never do.
+- Removing the last key of a nested block mapping writes `{}` (or `[]` for a list), so the field keeps its kind.
+- A section is the text under a heading up to the next heading of the same or a higher level; headings
+  inside code fences don't count.
+- Validation errors name the field, the allowed values and an example, from the type in `okf-base.yaml`.
+
 ### Example notes
 
 ```

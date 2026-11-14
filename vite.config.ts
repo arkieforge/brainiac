@@ -2,7 +2,15 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
 // Reference repos (`.repos/`) and generated state are read by agents, never linted, formatted or tested.
-const IGNORED = [".repos/**", ".alchemy/**", "**/node_modules/**", "**/dist/**", "pnpm-lock.yaml"];
+// Fixture notes are kept the way people write them, which is what the core tests check we never reformat.
+const IGNORED = [
+  ".repos/**",
+  ".alchemy/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "pnpm-lock.yaml",
+  "fixtures/**",
+];
 
 export default defineConfig({
   test: {

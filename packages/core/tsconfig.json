@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // Node's types declare the Web Crypto global that Workers, browsers and Node all provide.
+  "compilerOptions": { "types": ["node"] },
+  "include": ["src"]
+}
