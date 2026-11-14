@@ -17,6 +17,7 @@ allowBuilds:
   esbuild: true
   workerd: true
   sharp: false
-# miniflare pins sharp 0.35.2 (libheif and librsvg advisories, fixed in 0.35.5); only its Images binding uses it.
+# miniflare 4 pins sharp 0.35.2 and undici 7.28.0, which have advisories fixed in these patch versions.
 overrides:
   sharp: 0.35.5
+  undici: 7.30.1
