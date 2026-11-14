@@ -12,7 +12,7 @@ Proof is output you saw yourself in this session. Match the proof to the change:
 | Any code                                      | `vp check` and `vp test run <files you touched>`                     | The command output                    |
 | Types, schemas, tool descriptions             | `vp run typecheck`                                                   | Output                                |
 | A bug                                         | A test that fails on `main`, then passes                             | Both runs                             |
-| Sync, merges, approvals                       | The property tests for that module                                   | Output, including the seed on failure |
+| Sync, merges, approvals                       | `vp test run packages/sync packages/core/src/merge.test.ts`          | Output, including the seed on failure |
 | `packages/base` (SQL, migrations)             | `vp test run packages/base`: every case on bun:sqlite and in workerd | Output                                |
 | The Worker or DO                              | `vp test run apps/worker`: the real Base DO and queue in workerd     | Output                                |
 | Model-facing text (MCP tools, skill, prompts) | The eval cases that cover it (`evals/README.md`)                     | The run's `summary.md`                |

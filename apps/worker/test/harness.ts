@@ -2,7 +2,8 @@
 // see and steer: reads, a crash, and running the dispatcher when the test says rather than when it fires.
 import { getNote, search, type ChunkInput, type Family, type Job } from "@brainiac/base";
 
-import { Base } from "../src/base.ts";
+import { ACTOR_HEADER, Base } from "../src/base.ts";
+import type { Env } from "../src/env.ts";
 import { consume } from "../src/jobs.ts";
 
 export class TestBase extends Base {
@@ -53,4 +54,12 @@ export class TestBase extends Base {
   }
 }
 
-export default { queue: consume };
+export default {
+  queue: consume,
+  // Stands in for the authenticated route (#13): every socket reaches one record, as "tester".
+  fetch: (request: Request, env: Env) => {
+    const headers = new Headers(request.headers);
+    headers.set(ACTOR_HEADER, "tester");
+    return env.BASE.get(env.BASE.idFromName("sync")).fetch(request.url, { headers });
+  },
+};

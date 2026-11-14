@@ -15,19 +15,26 @@ Every tab, phone, laptop daemon and agent talks to the person's Base DO over one
 ## Protocol
 
 ```
-// client → DO
+// client → DO (one WebSocket per client; packages/core protocol.ts, checked on arrival)
 hello    { clientId, cursor: seq | null, lastAssigned: clientSeq, ackedUpTo, schemaVersion, appVersion }
-mutate   { clientId, clientSeq, ackedUpTo, noteId, baseRev, digest, patch, approvalId? }
+mutate   { clientId, clientSeq, ackedUpTo, noteId, baseRev, change }
+         change: create { path, raw, class } | put { raw, base } | delete { base }   // base: the text it was made on
 // DO → client
-snapshot { seq, notes }                 // cursor missing or older than the 90-day log; client rebases pending on it
-changes  { from, to, items }            // catch-up, then live
+welcome  { clientId, highWater, ackedUpTo }   // answer to hello
+snapshot { seq, notes }                 // cursor missing, ahead of the record, or older than the 90-day log
+changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
 result   { clientId, clientSeq, ok, rev?, conflict?, needsApproval?, error? }
+gap      { clientId, highWater }        // resend from highWater + 1
+reset    { clientId, clientSeq, reason } // two machines share this id
 ```
+
+The DO computes each mutation's digest itself. `needsApproval` and an `approvalId` on `mutate` arrive with
+approvals (#12).
 
 - **Exactly once, in order**: each client's mutations are applied strictly in sequence. The DO accepts only `highWater + 1`; a gap is refused, so the client resends in order. Results are kept until the client acknowledges them. A duplicate older than that gets "already processed, reconcile": the client re-reads that note's current revision, which is enough because the change log or a snapshot shows what happened.
 - **Every result consumes its number**: a mutation that comes back as a conflict, `needsApproval` or invalid still uses up its `clientSeq` (the high-water mark advances in the same transaction); the edit moves to _blocked_, and the queue keeps going. Resending it later (after you approve or fix it) takes a new number. Acknowledgment is implicit: every `hello` and `mutate` carries `ackedUpTo`, and the DO drops results and digests up to that point. A reconcile never discards local intent: if the client's edit differs from what the server has, it goes back in the queue with its **original** base revision and base text, so it passes through the three-way merge and can't silently overwrite another device's later change.
-- **Two machines, one identity** (for example a full OS migration while the old laptop still runs): a `clientSeq` that arrives with a different digest, or one the DO has no digest for while the client still holds it as pending, resets that client and runs repair.
-- **Copies and restores are caught**: the `clientId` lives in the OS config folder, and `state.db` records which `clientId` owns its pending queue. A copied vault on another machine sees a different owner, discards the copied queue and runs `brainiac repair`, which diffs files against the server, so nothing replays twice. A machine restored from an old backup sends a `hello` whose last assigned `clientSeq` is below the server's high-water mark: it is treated as a reset, gets a new `clientId`, and repairs the same way. No edit is dropped, and none is applied twice.
+- **Two machines, one identity** (for example a full OS migration while the old laptop still runs): a `clientSeq` that arrives with a different digest, or one the DO has already dropped, gets a `reset` naming it. The copy that still holds that change as pending repairs under a new id; the other ignores it, so a late duplicate never resets a healthy client.
+- **Copies and restores are caught**: the `clientId` lives in the OS config folder, and `state.db` records which `clientId` owns its pending queue. A copied vault on another machine sees a different owner, discards the copied queue and runs `brainiac repair`, which diffs files against the server, so nothing replays twice. A machine restored from an old backup learns it from `welcome`: the DO's high-water mark is above the last `clientSeq` it assigned, or the DO has seen it acknowledge more than it has. It takes a new `clientId` and repairs the same way. The client decides, because a late `hello` carries old counters and only the client knows its current ones. No edit is dropped, and none is applied twice.
 - **Held proposals** live only in the DO and are never applied to working copies until released (see "The contract").
 - **Version skew**: `hello` carries schema and app versions. An outdated CLI can still read but must upgrade before writing changes it doesn't understand, and it is told exactly that.
 - **Ordering** comes only from the DO's `seq`. Device clocks are display-only.

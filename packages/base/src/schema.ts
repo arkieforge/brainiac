@@ -238,6 +238,8 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "CREATE INDEX revisions_at ON revisions (at)",
     "CREATE INDEX notes_deleted ON notes (deletedAt) WHERE deletedAt IS NOT NULL",
   ],
+  // The highest ackedUpTo a client has sent: a hello below it comes from a restored or copied client.
+  ["ALTER TABLE clients ADD COLUMN ackedUpTo INTEGER NOT NULL DEFAULT 0"],
 ];
 
 /** The SQL schema version this code writes. */
