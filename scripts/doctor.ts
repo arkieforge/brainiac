@@ -165,6 +165,19 @@ async function stageOrigin(stage: string, config: string, accountId: string) {
   return `https://${workerName(stage)}.${subdomain}.workers.dev`;
 }
 
+/**
+ * A Worker deployed for the first time takes a few seconds before its workers.dev hostname answers, so the doctor
+ * run right after a preview's first deploy failed every check that came early. Wait up to a minute for /health;
+ * if it never answers, the checks run anyway and say so.
+ */
+async function waitForWorker(origin: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const res = await get(`${origin}/health`).catch(() => undefined);
+    if (res?.ok) return;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+}
+
 async function stageCheckList(stage: string): Promise<Check[]> {
   const config = dopplerConfig(stage);
   const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
@@ -185,7 +198,9 @@ async function stageCheckList(stage: string): Promise<Check[]> {
         },
       }),
     });
-  return stageChecks(await stageOrigin(stage, config, accountId), stage === "prod", readLogs);
+  const origin = await stageOrigin(stage, config, accountId);
+  await waitForWorker(origin);
+  return stageChecks(origin, stage === "prod", readLogs);
 }
 
 async function main() {

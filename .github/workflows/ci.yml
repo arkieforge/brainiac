@@ -89,7 +89,6 @@ jobs:
         with:
           stage: pr-${{ github.event.pull_request.number }}
           doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
-          doctor-webhook: ${{ secrets.T3_DOCTOR_WEBHOOK }}
 
   # Prod deploys only from here, after every check passes. The prd token lives in the production environment,
   # which only main can use.
@@ -112,4 +111,3 @@ jobs:
         with:
           stage: prod
           doppler-token: ${{ secrets.DOPPLER_TOKEN_PRD }}
-          doctor-webhook: ${{ secrets.T3_DOCTOR_WEBHOOK }}
