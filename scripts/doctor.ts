@@ -83,7 +83,7 @@ export const stageChecks = (
   origin: string,
   prod: boolean,
   readLogs: () => Promise<unknown>,
-  devToken: string | undefined,
+  bindingNames: () => Promise<string[]>,
 ): Check[] => {
   const signIn = get(`${origin}/sign-in`).then(async (res) => ({
     status: res.status,
@@ -151,29 +151,18 @@ export const stageChecks = (
         return issuer === `${origin}/api/auth` || `Issuer is ${issuer ?? `missing (${res.status})`}.`;
       },
     },
-    prod
-      ? {
-          // Dev sign-in skips every check on who you are; prod must never answer it (apps/worker/src/dev.ts).
-          name: "Dev sign-in is off",
-          run: async () => {
-            const res = await get(`${origin}/dev/sign-in?token=doctor`, { redirect: "manual" });
-            return res.status === 404 || `/dev/sign-in answered ${res.status} on prod; it must not exist.`;
+    // Dev sign-in skips every check on who you are. Asking the route can't tell (a wrong token gets the same 404 as
+    // no route), so on prod this reads the deployed Worker's bindings instead (apps/worker/src/dev.ts).
+    ...(prod
+      ? [
+          {
+            name: "No dev sign-in on prod",
+            run: async () =>
+              !(await bindingNames()).includes("DEV_SIGN_IN_TOKEN") ||
+              "The prod Worker has DEV_SIGN_IN_TOKEN bound; remove it from Doppler prd and redeploy.",
           },
-        }
-      : {
-          name: "Dev sign-in works (vp run dev:sign-in)",
-          optional: true,
-          run: async () => {
-            if (!devToken) return "DEV_SIGN_IN_TOKEN isn't in Doppler dev (infra/README.md).";
-            const res = await get(`${origin}/dev/sign-in?token=${encodeURIComponent(devToken)}`, {
-              redirect: "manual",
-            });
-            return (
-              (res.status === 303 && Boolean(res.headers.get("set-cookie"))) ||
-              `/dev/sign-in answered ${res.status}; redeploy the stage after setting the token.`
-            );
-          },
-        },
+        ]
+      : []),
     {
       name: "Stored logs readable (vp run logs)",
       optional: true,
@@ -235,7 +224,16 @@ async function stageCheckList(stage: string): Promise<Check[]> {
     });
   const origin = await stageOrigin(stage);
   await waitForWorker(origin);
-  return stageChecks(origin, stage === "prod", readLogs, secret("DEV_SIGN_IN_TOKEN", config));
+  // Names only: the settings API never returns a secret's value.
+  const bindingNames = async () => {
+    const token = secret("CLOUDFLARE_API_TOKEN", config) ?? "";
+    const settings = (await cloudflare(
+      `/accounts/${accountId}/workers/scripts/${workerName(stage)}/settings`,
+      token,
+    )) as { bindings: { name: string }[] };
+    return settings.bindings.map((b) => b.name);
+  };
+  return stageChecks(origin, stage === "prod", readLogs, bindingNames);
 }
 
 async function main() {

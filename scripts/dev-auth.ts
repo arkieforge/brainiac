@@ -20,11 +20,11 @@ export async function signInLink(
   if (!token) throw new Error("DEV_SIGN_IN_TOKEN isn't in Doppler dev; see infra/README.md.");
   const origin = await stageOrigin(stage);
   const query = new URLSearchParams({
-    token,
     ...(opts.as && { as: opts.as }),
     ...(opts.next && { next: opts.next }),
   });
-  return { origin, token, url: `${origin}/dev/sign-in?${query}` };
+  // The token goes in the fragment, which the browser never sends: the page posts it in a header (dev.ts).
+  return { origin, token, url: `${origin}/dev/sign-in?${query}#${new URLSearchParams({ token })}` };
 }
 
 async function main() {

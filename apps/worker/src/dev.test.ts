@@ -27,32 +27,49 @@ function setup() {
     sendEmail: async () => {},
   };
   const auth = createAuth(config);
-  const signIn = (query: string) => serveDev(new Request(`${ORIGIN}/dev/sign-in?${query}`), config, TOKEN);
+  /** What the sign-in page does with the link: POST its query, the fragment's token in the header. */
+  const signIn = (query: string, token = TOKEN) =>
+    serveDev(
+      new Request(`${ORIGIN}/dev/sign-in?${query}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      config,
+      TOKEN,
+    );
   /** Who the cookie from a sign-in belongs to, as the real auth handler sees it. */
   const whoIs = async (res: Response) => {
     const cookie = res.headers.get("set-cookie")?.split(";")[0] ?? "";
     const session = await auth.api.getSession({ headers: new Headers({ cookie }) });
     return session?.user.email;
   };
-  return { config, auth, signIn, whoIs };
+  const landsOn = async (res: Response) => {
+    const body: unknown = await res.json();
+    return body && typeof body === "object" && "location" in body ? body.location : undefined;
+  };
+  return { config, auth, signIn, whoIs, landsOn };
 }
 
 describe("dev sign-in", () => {
   it("signs the holder of the token in as the fixture student", async () => {
-    const { signIn, whoIs } = setup();
-    const res = await signIn(`token=${TOKEN}`);
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/account");
-    expect(res.headers.get("set-cookie")).toMatch(/HttpOnly.*Secure/);
-    expect(await whoIs(res)).toBe(FIXTURE_STUDENT.email);
+    const { signIn, whoIs, landsOn } = setup();
+    const res = await signIn("");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toMatch(/HttpOnly.*Secure.*Max-Age=\d+/);
+    expect(await whoIs(res.clone())).toBe(FIXTURE_STUDENT.email);
+    expect(await landsOn(res)).toBe(`${ORIGIN}/account`);
     // Signing in again finds the same account rather than making another.
-    expect(await whoIs(await signIn(`token=${TOKEN}`))).toBe(FIXTURE_STUDENT.email);
+    expect(await whoIs(await signIn(""))).toBe(FIXTURE_STUDENT.email);
   });
 
-  it("looks like nothing is there without the right token", async () => {
-    const { signIn } = setup();
-    for (const query of ["", "token=wrong", `token=${TOKEN}x`]) {
-      const res = await signIn(query);
+  it("serves the link's page without the token, and nothing without the right one", async () => {
+    const { config, signIn } = setup();
+    // The token stays in the link's fragment, so the page itself needs none and sets nothing.
+    const page = await serveDev(new Request(`${ORIGIN}/dev/sign-in?as=x`), config, TOKEN);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("set-cookie")).toBeNull();
+    for (const token of ["", "wrong", `${TOKEN}x`]) {
+      const res = await signIn("", token);
       expect(res.status).toBe(404);
       expect(res.headers.get("set-cookie")).toBeNull();
     }
@@ -60,16 +77,22 @@ describe("dev sign-in", () => {
 
   it("makes a separate fixture account per tag, and refuses tags that aren't plain", async () => {
     const { signIn, whoIs } = setup();
-    expect(await whoIs(await signIn(`token=${TOKEN}&as=e2e-1`))).toBe("ada.okafor+e2e-1@example.edu");
-    expect((await signIn(`token=${TOKEN}&as=${encodeURIComponent("x@evil.example")}`)).status).toBe(404);
+    expect(await whoIs(await signIn("as=e2e-1"))).toBe("ada.okafor+e2e-1@example.edu");
+    expect((await signIn(`as=${encodeURIComponent("x@evil.example")}`)).status).toBe(404);
   });
 
-  it("only redirects within the site", async () => {
-    const { signIn } = setup();
-    expect((await signIn(`token=${TOKEN}&next=/consent`)).headers.get("location")).toBe("/consent");
-    for (const next of ["//evil.example/", "https://evil.example/", "/\\evil.example/", ""]) {
-      const res = await signIn(`token=${TOKEN}&next=${encodeURIComponent(next)}`);
-      expect(res.headers.get("location")).toBe("/account");
+  it("only lands within the site", async () => {
+    const { signIn, landsOn } = setup();
+    expect(await landsOn(await signIn("next=/consent?x=1"))).toBe(`${ORIGIN}/consent?x=1`);
+    for (const next of [
+      "//evil.example/",
+      "https://evil.example/",
+      "/\\evil.example/",
+      "/.//evil.example/",
+      "",
+    ]) {
+      const location = await landsOn(await signIn(`next=${encodeURIComponent(next)}`));
+      expect(new URL(String(location)).origin).toBe(ORIGIN);
     }
   });
 });
@@ -81,6 +104,8 @@ describe("dev token", () => {
   it("mints an access token that /mcp accepts, and nothing without the dev token", async () => {
     const { config, auth } = setup();
     expect((await mint(config, "Bearer wrong")).status).toBe(404);
+    const get = new Request(`${ORIGIN}/dev/token`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect((await serveDev(get, config, TOKEN)).status).toBe(404);
     const res = await mint(config, `Bearer ${TOKEN}`);
     expect(res.status).toBe(200);
     const body: unknown = await res.json();

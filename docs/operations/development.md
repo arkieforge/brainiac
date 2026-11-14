@@ -76,13 +76,14 @@ on by `DEV_SIGN_IN_TOKEN` in Doppler `dev`, the way T3 Code's reusable dev crede
   and you're the fictional fixture student (`ada.okafor@example.edu`). `--as <tag>` gives a separate fresh
   account (`ada.okafor+<tag>@example.edu`); `--next /path` picks where it lands.
 - **An agent or script calling `/mcp`:** `vp run dev:token --stage pr-12` prints a one-hour access token.
-- **Passkeys:** a dev sign-in session has none. Add one on `/account` with Chrome's virtual authenticator
-  (DevTools → More tools → WebAuthn), or a real one. `vp run e2e` does this on its own.
-- **Approvals** still need a passkey: dev sign-in only gets you in.
+- **Passkeys and approvals:** a dev session starts with no passkey. Add one on `/account` with Chrome's virtual
+  authenticator (DevTools → More tools → WebAuthn) or a real one; on a fresh `--as` account the first one can
+  approve at once, as on any new account. `vp run e2e` does this on its own.
 
-The link carries the token, so treat it like a password, and never paste one into an issue, PR or chat. Prod has
-none: the token is never bound there, the Worker refuses `/dev/` on prod anyway, and the deploy doctor fails if
-prod answers it.
+The token rides in the link's `#fragment`, which the browser never sends, so it stays out of request logs and
+history; still, treat the link like a password and never paste one into an issue, PR or chat. Prod has none: the
+token is never bound there, the Worker refuses `/dev/` on prod anyway, and the deploy doctor fails if the prod
+Worker ever has it bound.
 
 ## Reference repos
 

@@ -1,10 +1,12 @@
 // Dev sign-in, Brainiac's version of T3 Code's reusable dev credential. A stage that has DEV_SIGN_IN_TOKEN
 // (Doppler `dev` only) signs whoever holds it in as the fictional fixture student, with no email code or passkey:
-//   GET  /dev/sign-in?token=<t>[&as=<tag>][&next=/path]   sets the session cookie; open it once per browser
-//   POST /dev/token, `authorization: Bearer <t>`, [?as=<tag>]   an access token for /mcp, for agents and scripts
+//   /dev/sign-in[?as=<tag>][&next=/path]#token=<t>   a link to open once per browser. The token rides in the
+//     fragment, which browsers never send, so it stays out of request logs and history: the page reads it and
+//     POSTs it back in a header, and the answer sets the session cookie.
+//   POST /dev/token[?as=<tag>], `authorization: Bearer <t>`   an access token for /mcp, for agents and scripts
 // `as` signs in a separate fixture account (ada.okafor+<tag>@example.edu), so an e2e run starts from a new one.
 // `vp run dev:sign-in` and `vp run dev:token` build these for a stage. Never on prod: alchemy.run.ts doesn't bind the
-// token there, index.ts refuses /dev/ when STAGE is prod, and the deploy doctor fails if prod answers it.
+// token there, index.ts refuses /dev/ when STAGE is prod, and the deploy doctor fails if prod's Worker has it bound.
 import { betterAuth } from "better-auth";
 import { testUtils } from "better-auth/plugins";
 
@@ -42,22 +44,39 @@ const fixtureEmail = (tag: string | null) => {
 };
 
 /**
- * Where to land after signing in: only somewhere on this origin. Parsed as a URL, because browsers read `/\host`
- * as `//host`, which a prefix check lets through.
+ * Where to land after signing in: only somewhere on this origin, as an absolute URL. Browsers read `/\\host` as
+ * `//host`, and `/.//host` normalizes to a path of `//host`, so neither a prefix check nor a bare path is safe.
  */
-const samePath = (next: string | null, origin: string) => {
+const landing = (next: string | null, origin: string) => {
   const target = next ? URL.parse(next, origin) : null;
-  return target?.origin === origin ? `${target.pathname}${target.search}${target.hash}` : "/account";
+  return target?.origin === origin ? target.href : `${origin}/account`;
 };
+
+// Moves the fragment's token into a header, drops it from the address bar and history, then follows the answer.
+const SIGN_IN_PAGE = `<!doctype html><meta charset="utf-8"><title>Dev sign-in · Brainiac</title><p id="status">Signing in…</p>
+<script>
+const token = new URLSearchParams(location.hash.slice(1)).get("token") ?? "";
+history.replaceState(null, "", location.pathname + location.search);
+fetch(location.href, { method: "POST", headers: { authorization: "Bearer " + token } })
+  .then((res) => (res.ok ? res.json() : Promise.reject(new Error("dev sign-in answered " + res.status))))
+  .then((body) => location.replace(body.location))
+  .catch((error) => { document.getElementById("status").textContent = error.message; });
+</script>`;
 
 /** Serves /dev/*. The caller has already checked this stage has a token and isn't prod. */
 export async function serveDev(request: Request, config: AuthConfig, token: string): Promise<Response> {
   const url = new URL(request.url);
-  const signIn = url.pathname === "/dev/sign-in" && request.method === "GET";
+  if (url.pathname === "/dev/sign-in" && request.method === "GET") {
+    return new Response(SIGN_IN_PAGE, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "frame-ancestors 'none'",
+      },
+    });
+  }
+  const signIn = url.pathname === "/dev/sign-in" && request.method === "POST";
   const mint = url.pathname === "/dev/token" && request.method === "POST";
-  const given = signIn
-    ? url.searchParams.get("token")
-    : /^Bearer (\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+  const given = /^Bearer (\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
   const email = fixtureEmail(url.searchParams.get("as"));
   // A wrong token looks the same as no dev sign-in at all.
   if (!(signIn || mint) || !given || !email || !(await matches(given, token))) return notFound();
@@ -73,7 +92,8 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
 
   if (mint) {
     const resource = mcpResource(url.origin);
-    // The claims /mcp checks (mcp/handler.ts), signed with this stage's own keys.
+    // The claims /mcp checks (mcp/handler.ts), signed with this stage's own keys. No OAuth client or consent stands
+    // behind `brainiac-dev`, so once tools check consent (#13, #17) they need to let it through on non-prod stages.
     const { token: accessToken } = await auth.api.signJWT({
       body: {
         payload: {
@@ -100,15 +120,9 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
     "HttpOnly",
     `SameSite=${cookie.sameSite}`,
     ...(cookie.secure ? ["Secure"] : []),
+    // Lasts as long as the session, like a real sign-in's cookie.
+    ...(cookie.expires ? [`Max-Age=${cookie.expires - Math.floor(Date.now() / 1000)}`] : []),
   ];
-  return new Response(null, {
-    status: 303,
-    headers: {
-      location: samePath(url.searchParams.get("next"), url.origin),
-      "set-cookie": [`${cookie.name}=${cookie.value}`, ...attributes].join("; "),
-      "cache-control": "no-store",
-      // The link carries the token; don't hand it to whatever the next page loads.
-      "referrer-policy": "no-referrer",
-    },
-  });
+  const headers = new Headers({ "set-cookie": [`${cookie.name}=${cookie.value}`, ...attributes].join("; ") });
+  return Response.json({ location: landing(url.searchParams.get("next"), url.origin) }, { headers });
 }
