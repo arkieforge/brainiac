@@ -5,6 +5,27 @@ import type { Env } from "./index.ts";
 // Durable Object behaviour is tested in workerd (base.test.ts).
 vi.mock("cloudflare:workers", () => ({ DurableObject: Object }));
 
+// A stand-in for pg's pool. No database is here, so every connect fails, but it remembers whether the pool had
+// already ended, which the real one refuses ("Cannot use a pool after calling end on the pool").
+const pools: FakePool[] = [];
+class FakePool {
+  ended = false;
+  connects = 0;
+  connectsAfterEnd = 0;
+  constructor() {
+    pools.push(this);
+  }
+  async connect(): Promise<never> {
+    this.connects++;
+    if (this.ended) this.connectsAfterEnd++;
+    throw new Error("no database in tests");
+  }
+  async end() {
+    this.ended = true;
+  }
+}
+vi.mock("pg", () => ({ Pool: FakePool, Client: class {} }));
+
 const { default: worker } = await import("./index.ts");
 // Routing never touches bindings; /health/db is proved against a real stage instead.
 const get = (path: string) =>
@@ -55,5 +76,24 @@ describe("worker", () => {
       {} as ExecutionContext,
     );
     expect(res.status).toBe(200);
+  });
+
+  it("keeps the database open until auth's setup is done, even when /mcp answers first", async () => {
+    // Better Auth starts its setup (seeding the /mcp resource) as soon as it is made. A request without a token got
+    // its 401 first, the pool ended, and the seed then failed and logged an error on every such request.
+    const work: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (promise: Promise<unknown>) => void work.push(promise) } as ExecutionContext;
+    const env = {
+      STAGE: "pr-1",
+      HYPERDRIVE: { connectionString: "postgres://test" },
+      BETTER_AUTH_SECRET: "a-test-secret-that-is-long-enough-to-pass",
+    } as Env;
+    const res = await worker.fetch(new Request("https://brainiac.test/mcp", { method: "POST" }), env, ctx);
+    expect(res.status).toBe(401);
+    await Promise.all(work);
+    const pool = pools.at(-1);
+    expect(pool?.connects).toBeGreaterThan(0);
+    expect(pool?.connectsAfterEnd).toBe(0);
+    expect(pool?.ended).toBe(true);
   });
 });
