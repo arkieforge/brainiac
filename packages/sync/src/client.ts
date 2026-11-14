@@ -215,8 +215,8 @@ export class SyncClient {
   }
 
   /**
-   * Under a new id, sends every pending change again, in order, exactly as it was made (with the text it
-   * was made on), so the record's merge decides each one. Changes that already landed merge to nothing.
+   * Under a new id, sends every pending change again, in order, exactly as it was made (same changeId,
+   * same base text). The record answers a changeId it has seen with its first answer and merges only the rest.
    */
   #repair(): void {
     const { state } = this;
