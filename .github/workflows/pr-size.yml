@@ -1,0 +1,47 @@
+name: pr-size
+
+# Labels each PR size:XS to size:XXL by changed lines, not counting tests and the lockfile (unless the PR is
+# only those), so reviewers see how big a change is before opening it.
+# pull_request_target so fork PRs can be labelled too. It runs no PR code: no checkout, only the files API.
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout, runs no PR code
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Label PR size
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # One "<lines> <counted>" row per file; counted is 0 for tests and the lockfile.
+          rows=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[]
+            | "\(.additions + .deletions) \(if .filename | test("\\.test\\.|(^|/)tests?/|(^|/)pnpm-lock\\.yaml$") then 0 else 1 end)"')
+          lines=$(awk '$2 == 1 { s += $1 } END { print s + 0 }' <<<"$rows")
+          [ "$lines" -gt 0 ] || lines=$(awk '{ s += $1 } END { print s + 0 }' <<<"$rows")
+
+          if   [ "$lines" -lt 10 ];   then size=XS
+          elif [ "$lines" -lt 30 ];   then size=S
+          elif [ "$lines" -lt 100 ];  then size=M
+          elif [ "$lines" -lt 500 ];  then size=L
+          elif [ "$lines" -lt 1000 ]; then size=XL
+          else size=XXL
+          fi
+          echo "PR #$PR: $lines counted lines -> size:$size"
+
+          current=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name | select(startswith("size:"))')
+          for label in $current; do
+            [ "$label" = "size:$size" ] || gh api -X DELETE "repos/$REPO/issues/$PR/labels/$label" >/dev/null
+          done
+          grep -qx "size:$size" <<<"$current" || gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=size:$size" >/dev/null

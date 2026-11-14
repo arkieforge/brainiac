@@ -1,0 +1,11 @@
+# zizmor (the workflow security lint in ci.yml). The repo's pinning rule: GitHub's own actions by major
+# tag, everything else by commit SHA with the version in a comment.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "actions/*": ref-pin
+        "*": hash-pin
+  # Asks for the newer `$/` syntax for local actions; `./` works everywhere, so we keep it.
+  self-repository:
+    disable: true

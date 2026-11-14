@@ -2,16 +2,102 @@ name: Bug
 description: Something that behaves differently from the plan or the docs.
 labels: ["type:bug"]
 body:
-  - type: textarea
-    id: what
+  - type: markdown
     attributes:
-      label: What happened, and what should have
+      value: |
+        One problem per issue. Security problems go to a [private report](https://github.com/arkieforge/brainiac/security/advisories/new), never here.
+        Use the fictional fixture student in every step, log and screenshot. Never paste real grades, IDs, documents or tokens.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: Nothing here contains a real person's data or a secret.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - data (notes, types, record format)
+        - sync (sync engine, local copy daemon)
+        - mcp (MCP tools, skill, prompts)
+        - auth (sign-in, passkeys, OAuth)
+        - security (permissions, approvals, secrets)
+        - rag (search, indexes, filing)
+        - site
+        - cli
+        - applications
+        - connectors
+        - infra (deploys, CI, Alchemy)
+        - evals
+        - Not sure
     validations:
       required: true
+
   - type: textarea
-    id: repro
+    id: steps
     attributes:
       label: Steps to reproduce
-      description: Use the fixture record, never real personal data.
+      description: The smallest repro that fails every time.
+      placeholder: |
+        1. Sign in as the fixture student
+        2. Edit a TestScore note on the site while the daemon is offline
+        3. Bring the daemon back
     validations:
       required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should have happened, with the doc that says so (docs/...) if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Data lost, corrupted or shown to the wrong person
+        - Blocks work completely
+        - Wrong result or frequent failure
+        - Minor or occasional
+        - Cosmetic
+    validations:
+      required: true
+
+  - type: input
+    id: where
+    attributes:
+      label: Where and which build
+      description: Stage (local dev, pr-<n> preview, prod) or client (daemon, CLI, Claude Code, claude.ai), and the commit if known.
+      placeholder: pr-58 preview @ 2d4156d, Claude Code 2.4
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The few relevant lines only. Redact tokens, emails and paths with your name.
+      render: shell
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Screenshots or recordings
+      description: Fixture data only.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm,.log,.txt,.json"

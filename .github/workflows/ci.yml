@@ -38,8 +38,36 @@ jobs:
             run: knip
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - run: ${{ matrix.run }}
+
+  # Fails a PR that adds or bumps a dependency to a version with a known moderate-or-worse vulnerability.
+  dependencies:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: moderate
+          # Nearly everything here is a devDependency that CI runs (alchemy, vite-plus), so all scopes count.
+          fail-on-scopes: runtime, development, unknown
+
+  # zizmor lints the workflows for injection, token leaks and unpinned actions (.github/zizmor.yml).
+  workflows:
+    name: Workflow security
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: pipx run zizmor==1.31.1 --format github --min-severity low .github
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive. It runs beside the
   # checks rather than after them, so the preview is up as soon as possible.
@@ -54,6 +82,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/deploy
         with:
@@ -74,6 +104,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/deploy
         with:

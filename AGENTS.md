@@ -157,7 +157,7 @@ Settings for this repo, which the skills read from here:
 - **PRs** (`file-pr`): conventional titles, the problem first, how it was proved. No AI attribution lines.
 - **Merging**: squash. `main` has no branch protection yet, so CI green plus the merge gate in `full-send`
   is the bar.
-- **Babysitting**: no review bots are installed yet; CI is the only check.
+- **Babysitting**: no review bots are installed yet; CI and CodeQL code scanning are the checks.
 
 Repo skills live in `.agents/skills` (Codex reads them there; `.claude/skills` links to the same folder):
 `triage`, `test-brainiac`, `doctor`.

@@ -1,0 +1,68 @@
+[
+  { "name": "area:data", "color": "1d76db", "description": "Notes, types and the record format" },
+  { "name": "area:sync", "color": "5319e7", "description": "Sync engine and the local copy daemon" },
+  { "name": "area:mcp", "color": "0052cc", "description": "MCP tools, the skill and prompts" },
+  { "name": "area:auth", "color": "b60205", "description": "Sign-in, passkeys, tokens and MCP OAuth" },
+  {
+    "name": "area:security",
+    "color": "d93f0b",
+    "description": "Permissions, approvals, secrets and isolation"
+  },
+  { "name": "area:rag", "color": "006b75", "description": "Ingest, search, indexes and filing" },
+  { "name": "area:site", "color": "fbca04", "description": "The web app" },
+  { "name": "area:cli", "color": "c5def5", "description": "The brainiac CLI" },
+  { "name": "area:applications", "color": "e99695", "description": "Tracker, CVs, packets and letters" },
+  { "name": "area:connectors", "color": "f9d0c4", "description": "Imports, email-in and outside services" },
+  { "name": "area:infra", "color": "0e8a16", "description": "Alchemy stages, deploys and CI" },
+  { "name": "area:evals", "color": "bfd4f2", "description": "Model behaviour checks in evals/" },
+  { "name": "type:feature", "color": "a2eeef", "description": "A brief for one milestone" },
+  { "name": "type:bug", "color": "d73a4a", "description": "Behaves differently from the plan or the docs" },
+  {
+    "name": "type:spike",
+    "color": "d4c5f9",
+    "description": "A time-boxed question to answer before building"
+  },
+  { "name": "type:test", "color": "c2e0c6", "description": "A test suite or harness" },
+  { "name": "type:epic", "color": "3e4b9e", "description": "A milestone's parent issue" },
+  { "name": "type:decision", "color": "fef2c0", "description": "A call the owner has to make" },
+  {
+    "name": "council",
+    "color": "5319e7",
+    "description": "Run the council skill to 9.5 before filing the PR"
+  },
+  {
+    "name": "needs-info",
+    "color": "d876e3",
+    "description": "Waiting on the author; closes after 14 days without a reply"
+  },
+  {
+    "name": "size:XS",
+    "color": "0e8a16",
+    "description": "Under 10 changed lines, tests and lockfile excluded"
+  },
+  {
+    "name": "size:S",
+    "color": "5ebd3e",
+    "description": "10 to 29 changed lines, tests and lockfile excluded"
+  },
+  {
+    "name": "size:M",
+    "color": "fbca04",
+    "description": "30 to 99 changed lines, tests and lockfile excluded"
+  },
+  {
+    "name": "size:L",
+    "color": "fe7d37",
+    "description": "100 to 499 changed lines, tests and lockfile excluded"
+  },
+  {
+    "name": "size:XL",
+    "color": "d93f0b",
+    "description": "500 to 999 changed lines, tests and lockfile excluded"
+  },
+  {
+    "name": "size:XXL",
+    "color": "b60205",
+    "description": "1,000 or more changed lines, tests and lockfile excluded"
+  }
+]
