@@ -43,9 +43,6 @@ The session secret isn't here; `alchemy.run.ts` generates one per stage and keep
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`   | Sign in with Google. Redirect URI: `<worker url>/api/auth/callback/google`                                                                                                                                               |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | Sign in with GitHub. Callback URL: `<worker url>/api/auth/callback/github`                                                                                                                                               |
 
-`T3_DOCTOR_WEBHOOK` (a GitHub repo secret, not in Doppler) is the T3 Code webhook CI calls when the doctor fails
-after a deploy; it starts an agent that follows the `doctor` skill. Unset, the job still fails, with no agent.
-
 GitHub gets read-only Doppler service tokens: `DOPPLER_TOKEN_DEV` as a repo secret (previews), and
 `DOPPLER_TOKEN_PRD` in the `production` environment, which only `main` can deploy to.
 
