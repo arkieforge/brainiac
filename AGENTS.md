@@ -56,6 +56,13 @@ pay for, through MCP. Brainiac itself runs no model.
 schemas, the skill, prompts. Read [evals/README.md](evals/README.md) before changing that text, and add a
 case that fails before a fix.
 
+## Issues are briefs
+
+Every issue is written as a prompt you can act on cold: context links, goal, what ships, out of scope,
+where, depends on, rules, verify, done when, how it breaks. Read the linked docs before writing code, and
+check its "Depends on" issues are closed. When you open an issue, write it the same way (the feature
+template asks for each part).
+
 ## Pull requests
 
 - Only open a PR when asked. One request, one PR. Conventional, plain titles:

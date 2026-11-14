@@ -1,32 +1,56 @@
 name: Feature
-description: Something Brainiac should do, scoped to one phase.
+description: Work for one milestone, written as a brief an agent can pick up cold.
 labels: ["type:feature"]
 body:
-  - type: textarea
-    id: why
+  - type: markdown
     attributes:
-      label: Why
-      description: The problem, in one or two sentences. Link the plan section.
+      value: Write this as a prompt for an agent that has never seen the repo. Link docs instead of copying them.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: The problem in one or two sentences, and the doc page it comes from (docs/...).
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
       label: What ships
-      description: The smallest version that does the job. Name what is explicitly out of scope.
+      description: The smallest version that does the job, as a list.
+    validations:
+      required: true
+  - type: textarea
+    id: out
+    attributes:
+      label: Out of scope
+      description: What this deliberately doesn't do.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where
+      description: Files and packages to touch or create.
+    validations:
+      required: true
+  - type: input
+    id: deps
+    attributes:
+      label: Depends on
+      description: "Issue numbers that must land first, or: nothing."
     validations:
       required: true
   - type: textarea
     id: done
     attributes:
       label: Done when
-      description: Checkable acceptance criteria, including the tests or eval cases that prove it.
+      description: Checkable criteria, each with the test, property test or eval case that proves it.
       value: |
         - [ ]
     validations:
       required: true
   - type: textarea
-    id: risks
+    id: breaks
     attributes:
       label: How it breaks
-      description: Failure modes this must handle (see "How it breaks" in the plan).
+      description: Failure modes this must handle (docs/internals/failure-modes.md).

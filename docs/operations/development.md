@@ -6,6 +6,7 @@
 2. `vp i` installs dependencies (pnpm 12 underneath) and `prepare` installs the git hooks.
 3. `vp run doctor` checks your machine and tells you what's missing.
 4. Optional: `vp run repos:sync` clones the reference repos into `.repos/` (see below).
+5. Secrets: set up Doppler for this folder (see [Secrets](#secrets)).
 
 In a T3 Code worktree, `t3.json` runs `scripts/setup-worktree.ts` on creation, which does steps 2 and 4 and
 links the main checkout's `.env`.
@@ -42,6 +43,22 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 Some folders T3 Code has don't exist here yet, on purpose: `native/` (no native code planned),
 `packaging/` (arrives with the CLI release, see the daemon issue), `patches/` (only when a dependency
 needs one).
+
+## Secrets
+
+Secrets (Cloudflare, Neon, treg) live in Doppler: workplace **LaunchPad**, project **braniac**, config
+`dev`. Nothing secret goes in `.env` or the repo. Doppler logins are scoped per folder, so a laptop with
+several workplaces picks the right one by directory:
+
+```sh
+doppler login --scope ~/Work/brainiac                 # approve in the browser with the LaunchPad account
+doppler login --scope ~/.t3/worktrees/brainiac        # T3 Code worktrees of this repo
+doppler setup --no-interactive                        # reads doppler.yaml: project braniac, config dev
+```
+
+`vp run dev`, `deploy` and `destroy` run through `doppler run`, so Alchemy gets the secrets. Worktree setup
+runs `doppler setup` for you. On macOS the token lives in the login keychain, so Doppler only works in a
+signed-in session.
 
 ## Reference repos
 
