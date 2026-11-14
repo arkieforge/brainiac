@@ -1,0 +1,32 @@
+name: Feature
+description: Something Brainiac should do, scoped to one phase.
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem, in one or two sentences. Link the plan section.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What ships
+      description: The smallest version that does the job. Name what is explicitly out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Checkable acceptance criteria, including the tests or eval cases that prove it.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: How it breaks
+      description: Failure modes this must handle (see "How it breaks" in the plan).

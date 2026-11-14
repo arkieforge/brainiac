@@ -1,0 +1,17 @@
+name: Bug
+description: Something that behaves differently from the plan or the docs.
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what should have
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Use the fixture record, never real personal data.
+    validations:
+      required: true

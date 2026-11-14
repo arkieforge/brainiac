@@ -1,0 +1,23 @@
+name: Spike
+description: A time-boxed question to answer before building (a vendor limit, an API, a risk).
+labels: ["type:spike"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What we don't know, and which decision depends on it.
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: How we'll find out
+      description: The smallest experiment, and the time box.
+    validations:
+      required: true
+  - type: textarea
+    id: fallback
+    attributes:
+      label: If the answer is no
+      description: The fallback the plan already names.
