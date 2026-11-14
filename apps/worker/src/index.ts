@@ -11,6 +11,7 @@ import { accountPage, signInPage } from "./auth/pages.ts";
 import { vouchedUntil } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
+import { serveDev } from "./dev.ts";
 import { consume } from "./jobs.ts";
 import { serveMcp } from "./mcp/handler.ts";
 
@@ -53,21 +54,28 @@ const authConfig = (request: Request, env: Env, database: AuthConfig["database"]
   github: oauthApp(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
 });
 
-/** Better Auth per request, over a pool Hyperdrive backs (it keeps the real connections warm). */
-async function withAuth(
+/** Auth's config per request, over a pool Hyperdrive backs (it keeps the real connections warm). */
+async function withAuthConfig(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
-  use: (auth: ReturnType<typeof createAuth>) => Promise<Response>,
+  use: (config: AuthConfig) => Promise<Response>,
 ): Promise<Response> {
   // Up to 5, because Better Auth runs some queries beside an open transaction.
   const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 5 });
   try {
-    return await use(createAuth(authConfig(request, env, pool)));
+    return await use(authConfig(request, env, pool));
   } finally {
     ctx.waitUntil(pool.end());
   }
 }
+
+const withAuth = (
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  use: (auth: ReturnType<typeof createAuth>) => Promise<Response>,
+) => withAuthConfig(request, env, ctx, (config) => use(createAuth(config)));
 
 async function account(request: Request, auth: ReturnType<typeof createAuth>): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
@@ -110,6 +118,12 @@ export default {
     const { pathname } = url;
     if (pathname === "/health") return Response.json({ ok: true });
     if (pathname === "/health/db") return checkDb(env, ctx);
+    if (pathname.startsWith("/dev/")) {
+      // Dev sign-in (dev.ts) exists only where the token is bound, and never on prod even if it were.
+      const token = env.DEV_SIGN_IN_TOKEN;
+      if (!token || env.STAGE === "prod") return new Response("Not found", { status: 404 });
+      return withAuthConfig(request, env, ctx, (config) => serveDev(request, config, token));
+    }
     if (AUTH_SERVER_METADATA.has(pathname))
       return withAuth(request, env, ctx, (auth) => oauthProviderAuthServerMetadata(auth)(request));
     if (OPENID_METADATA.has(pathname))

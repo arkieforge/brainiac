@@ -79,7 +79,12 @@ const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
 const get = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 
 /** What a signed-out visitor can see of a stage, each with the fix when it's wrong. */
-export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promise<unknown>): Check[] => {
+export const stageChecks = (
+  origin: string,
+  prod: boolean,
+  readLogs: () => Promise<unknown>,
+  devToken: string | undefined,
+): Check[] => {
   const signIn = get(`${origin}/sign-in`).then(async (res) => ({
     status: res.status,
     html: await res.text(),
@@ -146,6 +151,29 @@ export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promi
         return issuer === `${origin}/api/auth` || `Issuer is ${issuer ?? `missing (${res.status})`}.`;
       },
     },
+    prod
+      ? {
+          // Dev sign-in skips every check on who you are; prod must never answer it (apps/worker/src/dev.ts).
+          name: "Dev sign-in is off",
+          run: async () => {
+            const res = await get(`${origin}/dev/sign-in?token=doctor`, { redirect: "manual" });
+            return res.status === 404 || `/dev/sign-in answered ${res.status} on prod; it must not exist.`;
+          },
+        }
+      : {
+          name: "Dev sign-in works (vp run dev:sign-in)",
+          optional: true,
+          run: async () => {
+            if (!devToken) return "DEV_SIGN_IN_TOKEN isn't in Doppler dev (infra/README.md).";
+            const res = await get(`${origin}/dev/sign-in?token=${encodeURIComponent(devToken)}`, {
+              redirect: "manual",
+            });
+            return (
+              (res.status === 303 && Boolean(res.headers.get("set-cookie"))) ||
+              `/dev/sign-in answered ${res.status}; redeploy the stage after setting the token.`
+            );
+          },
+        },
     {
       name: "Stored logs readable (vp run logs)",
       optional: true,
@@ -154,8 +182,15 @@ export const stageChecks = (origin: string, prod: boolean, readLogs: () => Promi
   ];
 };
 
-/** The stage's public origin: its DOMAIN when it has one, else its workers.dev URL. */
-async function stageOrigin(stage: string, config: string, accountId: string) {
+/**
+ * The stage's public origin: `local` is `vp run dev`, prod is its DOMAIN when it has one, and the rest are on
+ * workers.dev.
+ */
+export async function stageOrigin(stage: string) {
+  if (stage === "local") return "http://localhost:1337";
+  const config = dopplerConfig(stage);
+  const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
+  if (!accountId) throw new Error(`Couldn't read Doppler config ${config}; run \`vp run doctor\` first.`);
   const domain = stage === "prod" ? secret("DOMAIN", config) : undefined;
   if (domain) return `https://${domain}`;
   const token = secret("CLOUDFLARE_API_TOKEN", config) ?? "";
@@ -198,9 +233,9 @@ async function stageCheckList(stage: string): Promise<Check[]> {
         },
       }),
     });
-  const origin = await stageOrigin(stage, config, accountId);
+  const origin = await stageOrigin(stage);
   await waitForWorker(origin);
-  return stageChecks(origin, stage === "prod", readLogs);
+  return stageChecks(origin, stage === "prod", readLogs, secret("DEV_SIGN_IN_TOKEN", config));
 }
 
 async function main() {

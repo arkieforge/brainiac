@@ -13,18 +13,21 @@ links the main checkout's `.env`.
 
 ## Commands
 
-| Command                         | Does                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------ |
-| `vp check`                      | Format check, lint and type-aware checks                                                   |
-| `vp test run [files]`           | Tests (Vitest through Vite+)                                                               |
-| `vp run typecheck`              | `effect-tsgo` type check in every workspace                                                |
-| `vp run knip`                   | Unused files, exports and dependencies                                                     |
-| `vp run dev`                    | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)            |
-| `vp run plan --stage <name>`    | What a deploy would change, without applying it                                            |
-| `vp run deploy --stage <name>`  | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                      |
-| `vp run destroy --stage <name>` | Tear down a stage, Neon branch included                                                    |
-| `vp run doctor`                 | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy) |
-| `vp run logs --stage <name>`    | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                 |
+| Command                             | Does                                                                                                |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `vp check`                          | Format check, lint and type-aware checks                                                            |
+| `vp test run [files]`               | Tests (Vitest through Vite+)                                                                        |
+| `vp run typecheck`                  | `effect-tsgo` type check in every workspace                                                         |
+| `vp run knip`                       | Unused files, exports and dependencies                                                              |
+| `vp run dev`                        | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)                     |
+| `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
+| `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
+| `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
+| `vp run doctor`                     | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy)          |
+| `vp run logs --stage <name>`        | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                          |
+| `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student (`--stage local` for `vp run dev`)            |
+| `vp run dev:token --stage <name>`   | An access token for that stage's `/mcp`, as the fixture student                                     |
+| `vp run e2e --stage <name>`         | Sign-in, a passkey, sign-out and passkey sign-in in a real browser (`--headed`, `--evidence <dir>`) |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
@@ -63,6 +66,23 @@ doppler setup --no-interactive                        # reads doppler.yaml: proj
 `vp run dev`, `deploy` and `destroy` run through `doppler run`, so Alchemy gets the secrets. Worktree setup
 runs `doppler setup` for you. On macOS the token lives in the login keychain, so Doppler only works in a
 signed-in session.
+
+## Signing in while you work
+
+Nobody signs in by hand on a dev stage. Every stage but prod has dev sign-in (`apps/worker/src/dev.ts`), turned
+on by `DEV_SIGN_IN_TOKEN` in Doppler `dev`, the way T3 Code's reusable dev credential works:
+
+- **A browser:** `vp run dev:sign-in --stage pr-12` prints a link. Open it once, in your browser or the agent's,
+  and you're the fictional fixture student (`ada.okafor@example.edu`). `--as <tag>` gives a separate fresh
+  account (`ada.okafor+<tag>@example.edu`); `--next /path` picks where it lands.
+- **An agent or script calling `/mcp`:** `vp run dev:token --stage pr-12` prints a one-hour access token.
+- **Passkeys:** a dev sign-in session has none. Add one on `/account` with Chrome's virtual authenticator
+  (DevTools → More tools → WebAuthn), or a real one. `vp run e2e` does this on its own.
+- **Approvals** still need a passkey: dev sign-in only gets you in.
+
+The link carries the token, so treat it like a password, and never paste one into an issue, PR or chat. Prod has
+none: the token is never bound there, the Worker refuses `/dev/` on prod anyway, and the deploy doctor fails if
+prod answers it.
 
 ## Reference repos
 
