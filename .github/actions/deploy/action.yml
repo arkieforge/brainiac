@@ -1,0 +1,33 @@
+name: deploy
+description: Deploy one Alchemy stage with Doppler secrets and write what changed to the job summary.
+inputs:
+  stage:
+    description: Alchemy stage, e.g. pr-12 or prod
+    required: true
+  doppler-token:
+    description: Doppler service token for the stage's config (dev for previews, prd for prod)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+    # Alchemy 0.94 has no plan command, so the summary is the deploy's own change log. Replaced or deleted
+    # resources also become warnings, since that is how a rename shows up.
+    - shell: bash
+      env:
+        DOPPLER_TOKEN: ${{ inputs.doppler-token }}
+        STAGE: ${{ inputs.stage }}
+        NO_COLOR: "1"
+      run: |
+        set -o pipefail
+        status=0
+        pnpm run deploy --stage "$STAGE" 2>&1 | tee deploy.log || status=$?
+        {
+          echo "### Stage \`$STAGE\`"
+          echo '```'
+          grep -E '^\[(created|updated|replaced|deleted)\]' deploy.log || echo "no changes"
+          echo '```'
+          grep -E '^brainiac \(' deploy.log || true
+        } >> "$GITHUB_STEP_SUMMARY"
+        grep -E '^\[(replaced|deleted)\]' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
+        exit $status

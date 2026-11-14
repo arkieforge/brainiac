@@ -10,20 +10,15 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR runs are cancelled; main runs queue so a prod deploy is never cut off.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # vp comes from the pinned vite-plus devDependency, so CI and laptops run the same toolchain.
+      - uses: ./.github/actions/setup
       - name: Format and lint
         run: pnpm exec vp check
       - name: Typecheck
@@ -32,3 +27,37 @@ jobs:
         run: pnpm exec vp test run
       - name: Unused files, exports and dependencies
         run: pnpm exec knip
+
+  # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive.
+  # Fork PRs get no secrets, so only same-repo PRs deploy. preview-cleanup.yml destroys it on close.
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/deploy
+        with:
+          stage: pr-${{ github.event.pull_request.number }}
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
+
+  # Prod deploys only from here, after the checks pass. The prd token lives in the production environment,
+  # which only main can use.
+  prod:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-24.04
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/deploy
+        with:
+          stage: prod
+          doppler-token: ${{ secrets.DOPPLER_TOKEN_PRD }}
