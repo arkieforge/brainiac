@@ -1,5 +1,6 @@
 // The protocol's named failure cases, each played out against the record's real `serve`.
-import { parseNote } from "@brainiac/core";
+import { mutate } from "@brainiac/base";
+import { parseNote, patch } from "@brainiac/core";
 import { describe, expect, it } from "vite-plus/test";
 
 import { setField, World, type Device } from "./sim.ts";
@@ -361,5 +362,41 @@ describe("sync chaos", () => {
     world.settle();
     expect(field(world, "status")).toBe("after");
     expect(laptop.client.state.blocked.get(B)?.at(-1)?.reason).toMatch(/can't be read/);
+  });
+
+  // Answers that wrote nothing (a change the record already had, a delete of a deleted note) count too.
+  it("a restored backup never replays changes the record answered without writing", () => {
+    const { world, laptop, phone } = start();
+    const C = "01M6CCCCCCCCCCCCCCCCCCCCC1";
+    phone.client.create(C, "notes/c.md", `---\nid: ${C}\ntype: Note\n---\n`, "normal");
+    world.settle();
+    // Both make the same change to A, and both delete C, while the laptop is away.
+    world.disconnect(laptop);
+    setField(laptop, A, "status", "B");
+    laptop.client.delete(C);
+    const backup = copy(laptop);
+    setField(phone, A, "status", "B");
+    phone.client.delete(C);
+    while (world.up(phone) || world.down(phone));
+    world.settle();
+    world.disconnect(laptop);
+    world.settle();
+    // Then the phone takes status back out (as it was before either change), and the person restores C.
+    phone.client.edit(A, patch(phone.client.working(A) ?? "", [{ op: "unset", path: ["status"] }]));
+    world.settle();
+    const tomb = world.note(C);
+    if (!tomb) throw new Error("C is gone");
+    mutate(
+      world.sql,
+      { op: "put", noteId: C, baseRev: tomb.rev, raw: tomb.raw },
+      { actor: "site", now: Date.now() },
+    );
+    world.disconnect(phone);
+    world.retire(laptop);
+    const restored = world.device("laptop", backup);
+    world.settle();
+    expect(field(world, "status")).toBeUndefined();
+    expect(world.note(C)?.deletedAt).toBeNull();
+    expectConverged(world, restored, phone);
   });
 });

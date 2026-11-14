@@ -127,11 +127,13 @@ export function nextWake(sql: Sql, now: number): number | null {
          FROM jobs WHERE status IN ('pending', 'dispatched')
        UNION ALL SELECT min(deletedAt) + ? FROM notes WHERE deletedAt IS NOT NULL
        UNION ALL SELECT min(at) + ? FROM revisions
-       UNION ALL SELECT min(at) + ? FROM changes)`,
+       UNION ALL SELECT min(at) + ? FROM changes
+       UNION ALL SELECT min(at) + ? FROM landed)`,
     now,
     LEASE_MS,
     TOMBSTONE_MS,
     TOMBSTONE_MS + HISTORY_GRACE_MS,
+    CHANGES_MS + HISTORY_GRACE_MS,
     CHANGES_MS + HISTORY_GRACE_MS,
   );
   return row?.at ?? null;
@@ -159,5 +161,6 @@ export function purge(sql: Sql, now: number): void {
     sql.all("DELETE FROM notes WHERE deletedAt <= ?", before);
     sql.all("DELETE FROM revisions WHERE at <= ?", now - TOMBSTONE_MS);
     sql.all("DELETE FROM changes WHERE at <= ?", now - CHANGES_MS);
+    sql.all("DELETE FROM landed WHERE at <= ?", now - CHANGES_MS);
   });
 }

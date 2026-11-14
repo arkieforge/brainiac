@@ -144,7 +144,24 @@ export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage 
     if (message.clientSeq > client.highWater + 1) {
       return { type: "gap", clientId: message.clientId, highWater: client.highWater };
     }
-    const result = apply(sql, message, ctx);
+    // Answered before under some client id (a replay after a repair): the same answer, never applied again,
+    // so a note deleted or reverted since stays that way and no proposal is opened twice.
+    // shortcut: answers are kept for 90 days, as long as the feed; a replay older than that is applied anew.
+    const [landed] = sql.all<{ result: string }>(
+      "SELECT result FROM landed WHERE changeId = ?",
+      message.changeId,
+    );
+    const result: Result = landed
+      ? { ...JSON.parse(landed.result), clientId: message.clientId, clientSeq: message.clientSeq }
+      : apply(sql, message, ctx);
+    if (!landed) {
+      sql.all(
+        "INSERT INTO landed (changeId, result, at) VALUES (?, ?, ?)",
+        message.changeId,
+        JSON.stringify(result),
+        ctx.now,
+      );
+    }
     sql.all("UPDATE clients SET highWater = ? WHERE clientId = ?", message.clientSeq, message.clientId);
     sql.all(
       "INSERT INTO results (clientId, clientSeq, digest, result) VALUES (?, ?, ?, ?)",
@@ -196,15 +213,6 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
     changeId: message.changeId,
   } as const;
   const current = getNote(sql, noteId);
-  // Already landed under some client id (this is a replay after a repair): answered as applied, never merged
-  // again, so a note deleted or reverted since stays that way.
-  // shortcut: the feed keeps changeIds for 90 days; a replay older than that merges like a new change.
-  const [landed] = sql.all<{ rev: number }>(
-    "SELECT rev FROM changes WHERE changeId = ? LIMIT 1",
-    message.changeId,
-  );
-  if (landed) return { ...done, ok: true, rev: current?.rev ?? landed.rev };
-  ctx = { ...ctx, changeId: message.changeId };
 
   // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
   // would roll back and leave the client resending it forever, stuck behind it.
