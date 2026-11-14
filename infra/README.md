@@ -31,8 +31,28 @@ when you are done with a personal stage.
 | `NEON_API_KEY`          | Creates and deletes the per-stage branches                                       |
 | `NEON_PROJECT_ID`       | `brainiac-dev` in `dev`, `brainiac-prod` in `prd`                                |
 
+Auth settings are optional: each feature stays off until its values exist, so a stage deploys without them.
+The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state.
+
+| Secret                                       | Turns on                                                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Turnstile on sign-up. Other stages fall back to Cloudflare's always-pass test keys; prod has no fallback, so sign-up there refuses until both are set                                                                    |
+| `EMAIL_FROM`                                 | Email codes and recovery notices, through Cloudflare Email Service. The address must be on a domain onboarded to it. Without it nothing sends: the sign-in page offers no email codes, and a recovery passkey is refused |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`   | Sign in with Google. Redirect URI: `<worker url>/api/auth/callback/google`                                                                                                                                               |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`   | Sign in with GitHub. Callback URL: `<worker url>/api/auth/callback/github`                                                                                                                                               |
+
 GitHub gets read-only Doppler service tokens: `DOPPLER_TOKEN_DEV` as a repo secret (previews), and
 `DOPPLER_TOKEN_PRD` in the `production` environment, which only `main` can deploy to.
+
+## Migrations
+
+`infra/migrations/*.sql` holds the Neon schema (Better Auth's tables so far). Every deploy applies new files to
+the stage's branch, in order, before the Worker updates; `vp run plan` shows the branch as an update while a file is pending (read the diff for which). History is forward only: an
+applied file is never edited, and a change goes in a new file that sorts after the others.
+
+Better Auth derives its tables from `apps/worker/src/auth/config.ts`, so a new plugin or field needs a new file.
+`apps/worker/src/auth/schema.test.ts` fails, naming each missing `table.column`, until one exists. Better
+Auth's `getMigrations(options).compileMigrations()` against a database at the current schema prints the SQL.
 
 ## State
 
