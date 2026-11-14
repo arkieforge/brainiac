@@ -48,7 +48,7 @@ const issuedTo = (returned: unknown) => {
 
 const PAGE = 100;
 
-/** Every matching row: the adapter returns 100 at most unless asked for more. */
+/** Every matching row: the adapter returns 100 at most unless asked for more, and pages need a fixed order. */
 async function findAll<T>(
   ctx: Ctx,
   model: string,
@@ -56,7 +56,13 @@ async function findAll<T>(
 ) {
   const rows: T[] = [];
   for (let offset = 0; ; offset += PAGE) {
-    const page = await ctx.context.adapter.findMany<T>({ model, where, limit: PAGE, offset });
+    const page = await ctx.context.adapter.findMany<T>({
+      model,
+      where,
+      limit: PAGE,
+      offset,
+      sortBy: { field: "id", direction: "asc" },
+    });
     rows.push(...page);
     if (page.length < PAGE) return rows;
   }

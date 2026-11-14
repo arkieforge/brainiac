@@ -829,7 +829,9 @@ describe("MCP clients", () => {
       });
     }
     const listed = await tab.ok("/connected-apps");
-    expect(Array.isArray(listed) && listed.length).toBe(101);
+    expect(
+      Array.isArray(listed) && new Set(listed.map((app: { clientId: string }) => app.clientId)).size,
+    ).toBe(101);
     expect(listed).toContainEqual(
       expect.objectContaining({ clientId: CLIENT_ID, name: "Example MCP client" }),
     );
