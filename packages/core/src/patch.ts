@@ -341,23 +341,45 @@ function setSection(body: string, heading: string, content: string, level: numbe
       continue;
     }
     if (fence !== undefined) continue;
-    // Closing hashes count only after whitespace, so `## C#` is the heading "C#".
-    const match = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*\r?\n?$/.exec(line);
-    if (!match) continue;
-    const hashes = match[1]?.length ?? 0;
+    const parsed = parseHeading(line);
+    if (!parsed) continue;
     if (found) {
-      if (hashes <= found.level) return replaceSection(body, found.end, index, content, true);
-    } else if (match[2] === heading.trim()) {
-      found = { end: index + line.length, level: hashes };
+      if (parsed.level <= found.level) return replaceSection(body, found.end, index, content, true);
+    } else if (parsed.text === heading.trim()) {
+      found = { end: index + line.length, level: parsed.level };
     }
   }
   if (found) return replaceSection(body, found.end, body.length, content, false);
   const gap = body === "" ? "" : body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n";
-  return `${body}${gap}${"#".repeat(level)} ${heading.trim()}\n\n${content.replace(/\n+$/, "")}\n`;
+  return `${body}${gap}${"#".repeat(level)} ${heading.trim()}\n\n${trimLineBreaks(content)}\n`;
+}
+
+/**
+ * An ATX heading's level and text. Closing hashes count only after whitespace, so `## C#` is the heading "C#".
+ * A plain scan rather than a regex, so a line of note text can't make it backtrack.
+ */
+function parseHeading(line: string): { level: number; text: string } | undefined {
+  let level = 0;
+  while (line[level] === "#") level++;
+  if (level < 1 || level > 6 || (line[level] !== " " && line[level] !== "\t")) return undefined;
+  const text = line.slice(level).trim();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end--;
+  if (end === 0) return { level, text: "" };
+  const closed = end < text.length && (text[end - 1] === " " || text[end - 1] === "\t");
+  return { level, text: closed ? text.slice(0, end).trimEnd() : text };
+}
+
+function trimLineBreaks(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === "\n") start++;
+  while (end > start && text[end - 1] === "\n") end--;
+  return text.slice(start, end);
 }
 
 /** A section reads `heading`, blank line, text, then a blank line before the next heading. */
 function replaceSection(body: string, start: number, end: number, content: string, beforeHeading: boolean) {
-  const text = `\n${content.replace(/^\n+|\n+$/g, "")}\n${beforeHeading ? "\n" : ""}`;
+  const text = `\n${trimLineBreaks(content)}\n${beforeHeading ? "\n" : ""}`;
   return body.slice(0, start) + text + body.slice(end);
 }
