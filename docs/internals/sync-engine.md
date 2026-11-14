@@ -4,13 +4,19 @@ Every tab, phone, laptop daemon and agent talks to the person's Base DO over one
 
 ## State on each client
 
-| Layer              | What it is                                                                                                                                                                  | Where                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **remote**         | The last server-acknowledged version of each note (rev + raw hash)                                                                                                          | IndexedDB / `.brainiac/state.db`                                                            |
-| **pending**        | Your changes not yet acknowledged, in order, each with `clientSeq`, its base revision and the base text (so a three-way merge still works after server history has expired) | Same, durable across restarts                                                               |
-| **server-waiting** | A remote change not yet written to disk, on filesystems without an atomic swap; shown in `describe` and on the site until you accept it                                     | `state.db`                                                                                  |
-| **blocked**        | Saved local edits the DO won't accept yet (conflict, needs approval, invalid), with the reason                                                                              | The file keeps your edit, marked "not synced: <reason>" in the CLI, the site and `describe` |
-| **working**        | What you see: the UI state or the files on disk = remote + pending                                                                                                          | Screen / disk                                                                               |
+| Layer              | What it is                                                                                                                                                                                                                       | Where                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **remote**         | The last server-acknowledged version of each note (rev and text). Sensitive notes only on a device you marked as yours with "keep sensitive notes" on; elsewhere they stay in memory and a restart fetches a snapshot            | IndexedDB / `.brainiac/state.db`                                                            |
+| **pending**        | Your changes not yet acknowledged, in order, each with `clientSeq`, its base revision and the base text (so a three-way merge still works after server history has expired)                                                      | Same, durable across restarts                                                               |
+| **server-waiting** | A remote change not yet written to disk, on filesystems without an atomic swap; shown in `describe` and on the site until you accept it                                                                                          | `state.db`                                                                                  |
+| **blocked**        | Saved local edits the DO won't accept yet (conflict, needs approval, invalid), with the reason                                                                                                                                   | The file keeps your edit, marked "not synced: <reason>" in the CLI, the site and `describe` |
+| **working**        | What you see: the UI state or the files on disk = remote + pending. Pending edits made on an older version show over the newest one, merged as the record will merge them, with your side kept where both changed the same thing | Screen / disk                                                                               |
+
+Every change to these layers is written to the store as soon as it is made, and the send is never held
+back for it: a send that outruns a write lost in a crash leaves the record's counters ahead of the stored
+ones, so the next `welcome` makes the client repair. In a browser each open tab is its own client with its
+own IndexedDB slot, held with a Web Lock; a closed tab's slot, pending edits and all, goes to the next tab
+that opens.
 
 ## Protocol
 

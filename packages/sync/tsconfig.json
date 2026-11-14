@@ -1,5 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
+  // The client runs in browsers (IndexedDB, Web Locks) and in Bun (state.db), so it is checked against both.
+  "compilerOptions": { "lib": ["ESNext", "DOM"], "types": ["bun"] },
   "include": ["src", "test"]
 }
