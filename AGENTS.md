@@ -56,6 +56,31 @@ pay for, through MCP. Brainiac itself runs no model.
 schemas, the skill, prompts. Read [evals/README.md](evals/README.md) before changing that text, and add a
 case that fails before a fix.
 
+## Workflow skills (tstack)
+
+The team uses [tstack](https://github.com/t3dotgg/tstack) in both Claude Code and Codex:
+
+```sh
+git clone https://github.com/t3dotgg/tstack
+cp -R tstack/skills/* ~/.claude/skills/   # Claude Code
+cp -R tstack/skills/* ~/.codex/skills/    # Codex
+```
+
+Settings for this repo, which the skills read from here:
+
+- **Proof** (`full-send`, `full-stop`): run the repo's verification skill,
+  [`test-brainiac`](.agents/skills/test-brainiac/SKILL.md). Its table maps each kind of change to the
+  command and evidence that prove it. Minimum: `vp check && vp run typecheck && vp test run && vp run knip`.
+- **Council**: the newest Claude Opus, GPT Sol and Gemini Pro at high effort. If a provider isn't
+  available, report it; don't substitute. Stop at 9.5 from every member.
+- **PRs** (`file-pr`): conventional titles, the problem first, how it was proved. No AI attribution lines.
+- **Merging**: squash. `main` has no branch protection yet, so CI green plus the merge gate in `full-send`
+  is the bar.
+- **Babysitting**: no review bots are installed yet; CI is the only check.
+
+Repo skills live in `.agents/skills` (Codex reads them there; `.claude/skills` links to the same folder):
+`triage`, `test-brainiac`, `doctor`.
+
 ## Issues are briefs
 
 Every issue is written as a prompt you can act on cold: context links, goal, what ships, out of scope,
