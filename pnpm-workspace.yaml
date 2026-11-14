@@ -13,6 +13,7 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-x64@0.69.0"
   - "@effect/tsgo@0.69.0"
 allowBuilds:
+  bun: true
   esbuild: true
   workerd: true
   sharp: false

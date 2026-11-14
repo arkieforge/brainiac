@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // Bun's types bring bun:sqlite and Node's (fs for the fixtures). The DO side is typed structurally
+  // (DurableObjectSql), because Workers' and Bun's global types can't share one program.
+  "compilerOptions": { "types": ["bun"] },
+  "include": ["src", "test"]
+}
