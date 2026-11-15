@@ -4,7 +4,7 @@
 // inbox input. It is advisory (docs/internals/contract.md): other programs can still read and write the folder.
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { type } from "arktype";
 
@@ -27,9 +27,12 @@ const READS = new Set(["Read", "Grep", "Glob"]);
 export const ToolCall = type({ tool_name: "string", tool_input: "Record<string, unknown>", cwd: "string" });
 export type ToolCall = typeof ToolCall.infer;
 
-/** `path` with symlinks resolved, also when it doesn't exist yet (a file Write would create). */
+/**
+ * `path` as the OS opens it: symlinks followed before any `..` applies, in the case stored on disk (a
+ * case-insensitive disk opens `Identity/` as `identity/`), also when it doesn't exist yet (a file Write would make).
+ */
 function real(path: string): string {
-  if (existsSync(path)) return realpathSync(path);
+  if (existsSync(path)) return realpathSync.native(path);
   const parent = dirname(path);
   return parent === path ? path : join(real(parent), basename(path));
 }
@@ -43,13 +46,20 @@ function within(path: string, folder: string): boolean {
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 
 /**
- * Why Claude Code should refuse this call (the agent reads it), or undefined to let it run. `vault` is the
- * resolved vault folder from the CLI's config.
+ * Why Claude Code should refuse this call (the agent reads it), or undefined to let it run. `configured` is
+ * the vault folder from the CLI's config.
  */
-export function refusal(call: ToolCall, vault: string, home = homedir()): string | undefined {
+export function refusal(call: ToolCall, configured: string, home = homedir()): string | undefined {
   const input = call.tool_input;
+  const vault = real(configured);
+  // Joined without normalizing, so `real` sees `link/..` as the OS does.
   const at = (...parts: string[]) =>
-    real(resolve(call.cwd, ...parts.map((part) => part.replace(/^~(?=$|\/)/, home))));
+    real(
+      parts.reduce((path, part) => {
+        const expanded = part.replace(/^~(?=$|[\\/])/, home);
+        return isAbsolute(expanded) ? expanded : `${path}${sep}${expanded}`;
+      }, call.cwd),
+    );
   const tools = "Use the brainiac MCP tools instead (describe, query, get, create, update)";
 
   const file = text(input["file_path"]) ?? text(input["notebook_path"]);
@@ -57,13 +67,12 @@ export function refusal(call: ToolCall, vault: string, home = homedir()): string
     return `${at(file)} is in the person's Brainiac record, which changes only through Brainiac. ${tools}, so the change is attributed and checked.`;
 
   if (call.tool_name === "Bash") {
-    const command = text(input["command"]) ?? "";
-    const fromHome = within(vault, home) ? relative(home, vault) : undefined;
-    const names = [
-      vault,
-      ...(fromHome ? [`~/${fromHome}`, `$HOME/${fromHome}`, `\${HOME}/${fromHome}`] : []),
-    ];
-    if (within(at("."), vault) || names.some((name) => command.includes(name)))
+    // Every word read as a path from the working folder. Best effort: a variable or glob can still reach the vault.
+    const words = (text(input["command"]) ?? "")
+      .replaceAll(/\$\{?HOME\}?(?=$|[\\/\s])/g, home)
+      .split(/[\s'"`;|&<>()=]+/)
+      .filter((word) => word !== "");
+    if ([".", ...words].some((word) => within(at(word), vault)))
       return `This command touches ${vault}, the person's Brainiac record. Don't read or change it from the shell. ${tools}.`;
   }
 

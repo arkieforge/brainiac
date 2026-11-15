@@ -141,6 +141,9 @@ describe("brainiac hook", () => {
       ["Bash", { command: "cat ~/brainiac/me.md" }],
       ["Bash", { command: 'rm "$HOME/brainiac/inbox/a.md"' }],
       ["Bash", { command: "ls" }, join(vault, "facts")],
+      ["Bash", { command: "cat brainiac/identity/passport.md" }, home],
+      ["Bash", { command: "printf new > brainiac/facts/roles/new.md" }, home],
+      ["Bash", { command: "cat ../brainiac/me.md" }],
     ];
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);
@@ -153,6 +156,8 @@ describe("brainiac hook", () => {
       ["Read", { file_path: join(vault, "documents/files/transcript-bsc.pdf") }],
       ["Read", { file_path: "inbox/a.md" }, vault],
       ["Read", { file_path: join(code, "ids/passport.md") }],
+      // ids/ is identity/, so its .. is the vault, whatever the path looks like.
+      ["Read", { file_path: join(code, "ids") + "/../facts/tests/ielts-2026-11.md" }],
       ["Grep", { pattern: "cgpa", path: vault }],
       ["Grep", { pattern: "cgpa" }, vault],
       ["Grep", { pattern: "cgpa", path: join(vault, "history") }],
@@ -171,6 +176,7 @@ describe("brainiac hook", () => {
       ["Edit", { file_path: join(code, "main.ts") }],
       ["Write", { file_path: join(home, "brainiac-notes.md") }],
       ["Bash", { command: "ls -la" }],
+      ["Bash", { command: 'git commit -m "brainiac notes"' }],
       ["Grep", { pattern: "cgpa", path: join(vault, "facts/roles") }],
       ["Glob", { pattern: "facts/roles/*.md", path: vault }],
       ["Glob", { pattern: "src/**/*.ts" }],

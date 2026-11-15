@@ -31,7 +31,8 @@ person. Use its type and field names; don't invent your own.
 ## Change the record through the tools
 
 - Update the note that exists rather than creating a near copy. A new event is a new note: a new test
-  attempt or a new role is `create`, and it `supersedes` the old one rather than overwriting it.
+  attempt or a new role is `create`, never an overwrite of the old one. Link `supersedes` only when the new
+  note replaces an earlier one, like a retake of the same test.
 - Send the `rev` you got from `get` with every `update`. On a conflict, get the note again and redo the change.
 - Run changes to many notes with `dry_run` first, then again with `expect` set to the count it matched.
 - `needsApproval` means nothing changed: ask the person to approve in Brainiac, then send the same call with
