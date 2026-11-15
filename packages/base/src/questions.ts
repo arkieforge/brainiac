@@ -1,5 +1,6 @@
 // The weekly email of questions (docs/product/features/questions.md): what it may say, from the record itself.
-// A sensitive question's words never leave the record this way; the email counts it and links to the site.
+// A sensitive question's words never leave the record this way, nor background filing's (mail apps make links of
+// them); the email counts them and links to the site.
 import { askNow, findQuestions, questionLine } from "@brainiac/core";
 
 import { manifestOf } from "./hold.ts";
@@ -11,6 +12,8 @@ export interface Digest {
   readonly lines: readonly string[];
   /** Sensitive questions asked now, named only on the site. */
   readonly private: number;
+  /** Background filing's questions asked now, named only on the site. */
+  readonly filer: number;
   /** Questions still waiting beyond these. */
   readonly more: number;
 }
@@ -43,8 +46,9 @@ export function digest(sql: Sql, now: number): Digest | undefined {
   const asked = askNow(open, now);
   if (asked.length === 0) return undefined;
   return {
-    lines: asked.filter((q) => !q.sensitive).map(questionLine),
+    lines: asked.filter((q) => !q.sensitive && !q.filer).map(questionLine),
     private: asked.filter((q) => q.sensitive).length,
+    filer: asked.filter((q) => q.filer && !q.sensitive).length,
     more: open.length - asked.length,
   };
 }
