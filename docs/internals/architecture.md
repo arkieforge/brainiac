@@ -21,6 +21,9 @@ Each person's record lives in **its own Durable Object with its own SQLite datab
   whose block is a week old, and the result is written through the mutation path as `connector:doi`. A result the
   record refuses (it would change a value the person verified) leaves the job failed, and a failed lookup waits a
   week like a successful one, so a DOI is never fetched in a loop.
+- **Profile reads are paid, so the person starts them**: the alarm enqueues a `drift` job only for a Profile never
+  read at its current link; after that, only the site's Check now (`checkProfiles`) enqueues one, and not for a
+  profile read less than a day ago. A failed one waits for the person to ask again.
 - **No retrieval holes, no stale text**: until new chunks replace them, old chunks are used only to find candidate notes; what's returned (snippets, context) always comes from the note's current revision. A stale snippet is never shown.
 
 ## Caching and file delivery

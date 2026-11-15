@@ -4,6 +4,7 @@ import type { SyncClient } from "@brainiac/sync";
 import { fieldsOf } from "../fields.ts";
 import { OFFLINE_SENSITIVE, useRecord } from "../record.ts";
 import { BodyEditor } from "./BodyEditor.tsx";
+import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
 
 /** Whether this note's edits have reached the record, and what to do about one that won't. */
@@ -53,6 +54,8 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
         {remote.class === "sensitive" && <span className="badge sensitive">sensitive</span>}
         <SyncState client={client} noteId={noteId} />
         {readOnly && <p className="sync-state warn">{OFFLINE_SENSITIVE}</p>}
+        {data["type"] === "Profile" && <CheckProfiles />}
+        <NoteDrift client={client} manifest={manifest} noteId={noteId} />
       </header>
       <div className="note-grid">
         <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />

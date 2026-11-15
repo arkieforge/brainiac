@@ -15,6 +15,8 @@ import {
   type Principal,
 } from "@brainiac/base";
 
+import { ownershipCode } from "@brainiac/core";
+
 import type { Approver } from "../src/approvals.ts";
 import { Base, type JobMessage } from "../src/base.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts";
@@ -22,10 +24,12 @@ import type { Env } from "../src/env.ts";
 import { consume, type Models } from "../src/jobs.ts";
 import { routeSite, type Session } from "../src/site.ts";
 import { registries } from "./registries.ts";
+import { linkedinOutput, treg } from "./treg.ts";
 
 export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
   readonly #lookups: ((result: "installed" | "dropped") => void)[] = [];
+  readonly #profiles: ((result: "installed" | "dropped") => void)[] = [];
   readonly #alarms: (() => void)[] = [];
   /** Sync messages left before the one this instance dies handling; 0 is none. */
   #dieAt = 0;
@@ -202,6 +206,17 @@ export class TestBase extends Base {
     return result;
   }
 
+  override installProfile(...args: Parameters<Base["installProfile"]>): "installed" | "dropped" {
+    const result = super.installProfile(...args);
+    for (const resolve of this.#profiles.splice(0)) resolve(result);
+    return result;
+  }
+
+  /** Resolves when the queue consumer next hands a profile read back. Call it before dispatching. */
+  nextProfile(): Promise<"installed" | "dropped"> {
+    return new Promise((resolve) => this.#profiles.push(resolve));
+  }
+
   /** Resolves when the queue consumer next hands a DOI lookup back. Call it before dispatching. */
   nextLookup(): Promise<"installed" | "dropped"> {
     return new Promise((resolve) => this.#lookups.push(resolve));
@@ -276,9 +291,26 @@ const models = {
   },
 } satisfies Models;
 
+/** The fixture profile's id, whose ownership code its fictional LinkedIn shows. */
+const FIXTURE_PROFILE = "01M7E81W00NTC6KVRWAZQ5KQMG";
+
+/** The outside world: treg as it answers for the fixture student, and the paper registries. */
+const outside = {
+  treg: treg({
+    "treg.linkedin.user.profile": {
+      output: linkedinOutput(ownershipCode(FIXTURE_PROFILE)),
+      raw: {},
+      _treg: { served_by: "fixture" },
+    },
+  }).web,
+  registries: registries().web,
+};
+
 export default {
   queue: (batch: MessageBatch<JobMessage>, env: Env) =>
-    consume(batch, { ...env, AI: models }, registries().web),
+    consume(batch, { ...env, AI: models, TREG_TOKEN: "treg-test-token" }, (url, init) =>
+      url.startsWith("https://treg.to/") ? outside.treg(url, init) : outside.registries(url, init),
+    ),
   fetch: (request: Request, env: Env) => {
     const site = routeSite(request, env, fakeSiteSession(request, env));
     if (site) return site;

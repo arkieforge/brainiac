@@ -22,7 +22,7 @@ Not on the bill: an Anthropic account. No auth vendor either: Better Auth runs i
 | ----------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------ |
 | Drift check of your own LinkedIn (public profile, started by you) | `linkedin.user.profile` (9 providers, 99.7% measured success) | ~$0.001                              |
 | Drift check of X bio and links                                    | `x.user.profile`                                              | ~$0.0002                             |
-| Check the Google Scholar listing of your papers                   | `google.serp.scholar`                                         | $0.001                               |
+| Check the Google Scholar listing of your papers                   | `google.serp.scholar` (Serper, one search per paper title)    | $0.001                               |
 | Save a link as clean text                                         | `web.extract` (15 providers)                                  | ~$0.004                              |
 | Company details on a Role (domain, logo)                          | `companies.enrich`                                            | from free                            |
 

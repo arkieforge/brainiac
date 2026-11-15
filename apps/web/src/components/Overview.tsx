@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 
 import { questionsOf } from "../questions.ts";
 import { useRecord } from "../record.ts";
+import { CheckProfiles } from "./Drift.tsx";
 import { overviewOf } from "../review.ts";
 
 /** Each mark as the overview draws it, and what it says to a screen reader. */
@@ -88,6 +89,11 @@ export function Overview() {
       {[...groups].map(([type, items]) => (
         <section key={type} className="group">
           <h2>{type}</h2>
+          {type === "Profile" && (
+            <p className="small">
+              <CheckProfiles />
+            </p>
+          )}
           <ul>
             {items.map((item) => (
               <Row key={item.noteId} item={item} asks={asks.get(item.noteId) ?? []} />

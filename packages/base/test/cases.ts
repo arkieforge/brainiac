@@ -30,6 +30,7 @@ import { ingestCases } from "./ingest-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { papersCases } from "./papers-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
+import { profilesCases } from "./profiles-cases.ts";
 import { vaultCases } from "./vault-cases.ts";
 import { toolCases } from "./tool-cases.ts";
 
@@ -138,6 +139,7 @@ export const cases: Record<string, Case> = {
   ...vaultCases,
   ...ingestCases,
   ...papersCases,
+  ...profilesCases,
   ...toolCases,
   ...githubCases,
   "a new record migrates to the latest version": (sql) => {

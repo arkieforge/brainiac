@@ -79,6 +79,16 @@ export {
   type NoteRow,
 } from "./notes.ts";
 export { DOI_ACTOR, installLookup, LOOKUP_MS, type Found } from "./papers.ts";
+export {
+  CHECK_CACHE_MS,
+  installProfile,
+  profileWork,
+  PROFILES_ACTOR,
+  requestChecks,
+  SCHOLAR_PAPERS,
+  type ProfileSeen,
+  type ProfileWork,
+} from "./profiles.ts";
 export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
 export { digest, questionEmails, setQuestionEmails, type Digest } from "./questions.ts";
 export { PERSON, project, type Principal } from "./project.ts";

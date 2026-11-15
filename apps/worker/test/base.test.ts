@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseNote } from "@brainiac/core";
+import { detect, parseManifest, parseNote, type ReviewNote } from "@brainiac/core";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -13,6 +13,7 @@ const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(FIXTURES, TUM), "utf8");
 const PAPER = "facts/papers/swahili-ner-2026.md";
+const PROFILE = "profiles/linkedin.md";
 const human = { actor: "human" };
 /** Reads as a connection without the sensitive scope. */
 const agent = { sensitive: false };
@@ -160,5 +161,47 @@ describe("Base DO", () => {
       },
     });
     expect(await base.actorOf(id ?? "")).toBe("connector:doi");
+  });
+
+  it("checks the fixture LinkedIn for drift through treg, and asking again the same day reads nothing", async () => {
+    const name = "drift";
+    const base = (await record(name))();
+    const manifest = readFileSync(join(FIXTURES, "okf-base.yaml"), "utf8");
+    await base.setManifest(manifest);
+    const read = base.nextProfile();
+    const [id] = await base.seed([
+      { path: PROFILE, raw: readFileSync(join(FIXTURES, PROFILE), "utf8"), class: "normal" },
+    ]);
+    await base.dispatch();
+    expect(await read).toBe("installed");
+    expect(await base.actorOf(id ?? "")).toBe("connector:profiles");
+
+    const notes = await base.notes(human);
+    if (!Array.isArray(notes)) throw new Error(JSON.stringify(notes));
+    const parsed: ReviewNote[] = notes.map((n) => ({ id: n.id, path: n.path, data: parseNote(n.raw).data }));
+    // The record says what the profile should; LinkedIn still shows the old headline.
+    expect(detect(parsed, parseManifest(manifest), Date.now()).filter((c) => c.noteId === id)).toEqual([
+      {
+        noteId: id,
+        detector: "drift",
+        field: "headline",
+        evidence: 'LinkedIn says "BSc Computer Science student at Northvale"',
+        related: [],
+        paste: "MSc Informatics applicant · NLP for low-resource languages",
+      },
+    ]);
+
+    // The site's Check now: read less than a day ago, so nothing is read or paid for again.
+    const asked = await mf.dispatchFetch("https://brainiac.test/api/profiles/check", {
+      method: "POST",
+      headers: {
+        cookie: `user=${name}`,
+        origin: "https://brainiac.test",
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(await asked.json()).toEqual({ checking: 0, cached: 1 });
+    expect((await base.jobs()).filter((job) => job.kind === "drift")).toEqual([]);
   });
 });
