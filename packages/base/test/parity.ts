@@ -26,7 +26,13 @@ export function answers(sql: Sql, fixtures: readonly Fixture[]) {
     }),
     feed: changesSince(sql, 0, reader),
     search: Object.fromEntries(
-      QUESTIONS.map((q) => [q, search(sql, reader, q).map((hit) => [paths.get(hit.noteId), hit.rank])]),
+      QUESTIONS.map((q) => [
+        q,
+        search(sql, reader, q).map((hit) => [
+          "noteId" in hit ? paths.get(hit.noteId) : hit.fileSha,
+          hit.rank,
+        ]),
+      ]),
     ),
   });
   return { person: as(PERSON), agent: as(AGENT) };

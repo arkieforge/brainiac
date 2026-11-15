@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PERSON, search, serve } from "@brainiac/base";
+import { PERSON, putChunks, search, serve } from "@brainiac/base";
 import { decodeClientMessage, patch, type NoteState } from "@brainiac/core";
 
 import { doctor, lockVault, request, restore, watchRequests } from "../src/commands.ts";
@@ -1476,6 +1476,23 @@ const cases: Record<string, () => Promise<void>> = {
     equal(search(rebuilt.sql, PERSON, "start").length, 3);
     rebuilt.close();
     third.daemon.stop();
+  },
+
+  async "an index built with older chunking is rebuilt from the files"() {
+    const v = await vault();
+    v.daemon.stop();
+    const stale = openIndex(join(v.root, ".brainiac", "index.db")).index;
+    // As an older release left it: other chunks, under another index version.
+    stale.sql.all("UPDATE meta SET value = 'chunks-0' WHERE key = 'chunks'");
+    for (const id of stale.sql.all<{ id: string }>("SELECT id FROM notes").map((row) => row.id))
+      putChunks(stale.sql, id, 0, []);
+    equal(search(stale.sql, PERSON, "start").length, 0);
+    stale.close();
+    const again = await open(v.record, v.root);
+    const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
+    equal(search(index.sql, PERSON, "start").length, 3);
+    index.close();
+    again.daemon.stop();
   },
 
   async "a vault copied to another machine never replays the copied queue or kept files"() {

@@ -5,7 +5,16 @@ import { createHash } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 
 import { bunSql } from "@brainiac/base/bun";
-import { chunkNote, getNote, migrate, putChunks, putNote, type NoteClass, type Sql } from "@brainiac/base";
+import {
+  chunkNote,
+  CHUNKS,
+  getNote,
+  migrate,
+  putChunks,
+  putNote,
+  type NoteClass,
+  type Sql,
+} from "@brainiac/base";
 import { NoteParseError } from "@brainiac/core";
 
 import { refuseSymlinks } from "./state.ts";
@@ -19,6 +28,8 @@ export interface Index {
     readonly class: NoteClass;
   }): void;
   drop(id: string): void;
+  /** Records that every file is indexed with this release's chunking, after a fresh index is filled. */
+  built(): void;
   close(): void;
 }
 
@@ -43,7 +54,8 @@ function open(path: string): Database {
 
 /**
  * Opens the index at `path`. One that is missing, or fails its integrity check or its migration, is made again
- * empty; `fresh` is then true and the caller re-indexes every file.
+ * empty; `fresh` is then true and the caller re-indexes every file. So it is when the index was built with
+ * another chunking (`CHUNKS`), so local keyword search finds what the cloud's does; it holds no vectors.
  */
 export function openIndex(path: string): { readonly index: Index; readonly fresh: boolean } {
   // Derived, so a symlink in its place (SQLite would write where it leads) is just removed, the link itself.
@@ -62,6 +74,9 @@ export function openIndex(path: string): { readonly index: Index; readonly fresh
     fresh = true;
   }
   const sql = bunSql(db);
+  // Recorded only once a rebuild is done (`built`), so one cut short starts over.
+  const [built] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'chunks'");
+  if (built?.value !== CHUNKS) fresh = true;
   return {
     fresh,
     index: {
@@ -86,6 +101,12 @@ export function openIndex(path: string): { readonly index: Index; readonly fresh
         try {
           sql.all("PRAGMA wal_checkpoint(TRUNCATE)"); // and out of the write-ahead log
         } catch {} // a reader holds it: the next drop or close clears it
+      },
+      built() {
+        sql.all(
+          "INSERT INTO meta (key, value) VALUES ('chunks', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+          CHUNKS,
+        );
       },
       close: () => db.close(),
     },

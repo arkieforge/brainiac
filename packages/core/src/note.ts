@@ -1,4 +1,4 @@
-import { isScalar, parseDocument, visit, type Document } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseDocument, visit, type Document } from "yaml";
 
 /** A note's raw text cut into its front-matter YAML and markdown body, with offsets into the raw text. */
 export interface NoteParts {
@@ -100,6 +100,49 @@ export interface Note {
   /** Front-matter as plain data (`{}` when there is none). */
   readonly data: Readonly<Record<string, unknown>>;
   readonly body: string;
+}
+
+// Bookkeeping, not what a note says: the header names the type and title, and the rest is ids and provenance.
+const UNSEARCHED = new Set(["id", "type", "title", "sources", "verified"]);
+
+/**
+ * A note's fields as readable text for search: `overall 8.0, sections: listening 8.5, writing 7.0`. Values read
+ * as written (`8.0`, not `8`), and secret references are left out, though they only name a secret.
+ */
+export function fieldsText(yaml: string): string {
+  const doc = parseFrontMatter(yaml);
+  // Callers pass a parsed note's front-matter: `parseNote` refuses aliases that loop or expand too far, and `depth`
+  // is only a backstop.
+  const render = (node: unknown, depth = 0): string => {
+    if (isAlias(node)) return depth > 16 ? "" : render(node.resolve(doc), depth + 1);
+    if (isScalar(node)) {
+      const text = String(node.source ?? node.value ?? "");
+      return text.startsWith("secret:") ? "" : text;
+    }
+    if (isSeq(node))
+      return node.items
+        .map((item) => render(item, depth))
+        .filter(Boolean)
+        .join(", ");
+    if (!isMap(node)) return "";
+    return node.items
+      .filter(
+        (pair) =>
+          depth > 0 ||
+          node !== doc.contents ||
+          !(isScalar(pair.key) && UNSEARCHED.has(String(pair.key.value))),
+      )
+      .map((pair) => {
+        const key = isScalar(pair.key) ? String(pair.key.value) : "";
+        const value = render(pair.value, depth);
+        if (!value) return "";
+        const nested = isMap(isAlias(pair.value) ? pair.value.resolve(doc) : pair.value);
+        return `${key.replaceAll("_", " ")}${nested ? ":" : ""} ${value}`;
+      })
+      .filter(Boolean)
+      .join(", ");
+  };
+  return isMap(doc.contents) ? render(doc.contents) : "";
 }
 
 export function parseNote(raw: string): Note {

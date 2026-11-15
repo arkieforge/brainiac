@@ -39,14 +39,18 @@ export {
   dueJobs,
   enqueue,
   finishJob,
+  IN_FLIGHT,
+  INDEX_VERSION,
   jobInput,
   LEASE_MS,
   markDispatched,
   MAX_ATTEMPTS,
   nextWake,
   purge,
+  reindex,
   TOMBSTONE_MS,
   type Job,
+  type JobInput,
   type JobKind,
 } from "./jobs.ts";
 export {
@@ -75,7 +79,22 @@ export {
 export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
 export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
-export { chunkNote, putChunks, search, type ChunkInput, type Family, type Hit } from "./search.ts";
+export { extracts, needsReading, pdfHidesText, PIPELINE, splitPages } from "./pages.ts";
+export {
+  chunkFile,
+  CHUNKS,
+  chunkNote,
+  dequantize,
+  EMBED_MODEL,
+  LONG_BODY,
+  fileOwner,
+  putChunks,
+  quantize,
+  search,
+  type ChunkInput,
+  type Family,
+  type Hit,
+} from "./search.ts";
 export { changesSince, currentSeq, hello, receive, serve, type Served } from "./sync.ts";
 export { doSql, type DurableObjectSql, type Sql, type SqlValue } from "./sql.ts";
 export {
@@ -84,9 +103,11 @@ export {
   FILE_TOKEN_MS,
   fileTokenBase,
   getFile,
+  installFile,
   kindHash,
   listFiles,
   mintFileToken,
+  mayClear,
   readText,
   recordUpload,
   refuseUpload,
@@ -96,6 +117,7 @@ export {
   viewFile,
   type Classified,
   type FileToken,
+  type Extracted,
   type FileRow,
   type FileView,
   type Uploaded,

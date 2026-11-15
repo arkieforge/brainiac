@@ -9,8 +9,11 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { parsePassport, scan, ulid, type Finding, type Passport } from "@brainiac/core";
 
 import { advance, canonical, type Signature } from "./approvals.ts";
-import { canSee, type Connection } from "./connections.ts";
+import { canSee, connectionOf, type Connection } from "./connections.ts";
+import { enqueue, finishJob } from "./jobs.ts";
 import { mutate, type Context, type Forbidden, type MutationResult } from "./mutate.ts";
+import { extracts, mediaType, needsReading, PIPELINE } from "./pages.ts";
+import { chunkFile, fileOwner, putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
 // AES-256-GCM: a fresh 12-byte IV per seal, the 16-byte tag after it, and a context string as associated data,
@@ -75,11 +78,11 @@ const hexWord = (token: string) =>
  * All of a file's text, or `undefined` when the checks can't be sure they read all of it: anything but plain
  * text, markdown or CSV, and in those, bytes that aren't UTF-8 or carry a PDF header, markup, character
  * references or a long encoded run (base64 or hex can hide a whole scan).
- * shortcut: PDFs and images read as `undefined` until extraction (#20) gives the checks their text; until then
- * they stay unclassified, which is safe and means they can't be cleared.
+ * A PDF reads as `undefined` here and gets its text from a `file` job (`installFile`); anything else stays
+ * unclassified, which is safe and means it can't be cleared.
  */
 export function readText(bytes: Uint8Array, mime: string): string | undefined {
-  if (!PLAIN.has(mime.split(";")[0]?.trim().toLowerCase() ?? "") || bytes.includes(0)) return undefined;
+  if (!PLAIN.has(mediaType(mime)) || bytes.includes(0)) return undefined;
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
@@ -137,9 +140,16 @@ export interface FileRow {
   readonly noteId: string | null;
   /** Bumped by every confirmation, so a signature over one kind change can't be used for another. */
   readonly rev: number;
+  /** How many pages its extraction found, once it has one. */
+  readonly pages: number | null;
+  /** The extraction (`PIPELINE`) that produced `checks`; 0 while a PDF waits for its first one. */
+  readonly pipelineVersion: number;
+  /** Who uploaded it (a revision's actor): a passport parsed later writes its note as them. */
+  readonly uploadedBy: string | null;
 }
 
-const COLUMNS = "sha256, r2Key, mime, bytes, class, checks, findings, kind, confirmedAt, noteId, rev";
+const COLUMNS =
+  "sha256, r2Key, mime, bytes, pages, class, checks, findings, kind, confirmedAt, noteId, rev, pipelineVersion, uploadedBy";
 
 export const getFile = (sql: Sql, sha256: string): FileRow | undefined =>
   sql.all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE sha256 = ?`, sha256)[0];
@@ -277,6 +287,7 @@ export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Con
       r2Key: upload.r2Key,
       mime: upload.mime,
       bytes: upload.bytes,
+      pages: null,
       class: classOf({ checks, kind: kind ?? null, confirmedAt }),
       checks,
       findings: JSON.stringify(findings),
@@ -284,13 +295,16 @@ export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Con
       confirmedAt,
       noteId: written?.noteId ?? null,
       rev: 0,
+      pipelineVersion: extracts(upload.mime) ? 0 : PIPELINE,
+      uploadedBy: ctx.actor,
     };
     sql.all(
-      `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       row.sha256,
       row.r2Key,
       row.mime,
       row.bytes,
+      row.pages,
       row.class,
       row.checks,
       row.findings,
@@ -298,7 +312,10 @@ export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Con
       row.confirmedAt,
       row.noteId,
       row.rev,
+      row.pipelineVersion,
+      row.uploadedBy,
     );
+    followUp(sql, row);
     const file = viewFile(ctx.connection, row);
     const seesNote = canSee(ctx.connection, PASSPORT_NOTE);
     return written && seesNote ? { file, note: written.result } : { file };
@@ -317,7 +334,7 @@ function writePassport(
   ctx: Context,
 ): { readonly result: MutationResult; readonly noteId: string | null } {
   const issuer = passport.issuer.toLowerCase();
-  const name = `passport.${issuer}.${sha256.slice(0, 12)}`;
+  const name = passportSecret(passport, sha256);
   const id = ulid(ctx.now);
   const raw = [
     "---",
@@ -360,6 +377,10 @@ function writePassport(
   // Only a written note is linked: a proposal the person rejects would leave the link pointing at nothing.
   return { result, noteId: result.status === "applied" ? id : null };
 }
+
+/** A passport's number is a secret named for its issuer and the file, so no other upload can overwrite it. */
+const passportSecret = (passport: Passport, sha256: string) =>
+  `passport.${passport.issuer.toLowerCase()}.${sha256.slice(0, 12)}`;
 
 /** Whether a note was written, or kept as a proposal that may write it. */
 const kept = (result: MutationResult) => result.status === "applied" || result.status === "proposed";
@@ -428,6 +449,7 @@ function confirm(sql: Sql, file: FileRow, kind: string, now: number): { file: Fi
     updated.class,
     file.sha256,
   );
+  followUp(sql, updated, file.class);
   return { file: viewFile(undefined, updated) };
 }
 
@@ -499,5 +521,122 @@ export function takeFileToken(
     if (!row || row.expiresAt <= now) return undefined;
     const file = getFile(sql, row.sha256);
     return file && { file, origin: row.origin };
+  });
+}
+
+const cleared = <F extends Pick<FileRow, "class">>(file: F): file is F & { class: "normal" | "sensitive" } =>
+  file.class === "normal" || file.class === "sensitive";
+
+/**
+ * After a file is recorded or confirmed, in the same transaction: a file whose class changed leaves search at
+ * once, before any job runs, so its chunks never sit in a family it left; and a `file` job extracts one still
+ * waiting for its text or indexes one cleared.
+ */
+function followUp(sql: Sql, file: FileRow, before: FileClass = file.class): void {
+  if (!cleared(file) || file.class !== before) putChunks(sql, fileOwner(file.sha256), file.rev, []);
+  if (needsJob(file)) enqueue(sql, "file", fileOwner(file.sha256), file.rev);
+}
+
+/** Whether a file has work for a `file` job: text to extract with this `PIPELINE`, or pages to index. */
+export const needsJob = (file: Pick<FileRow, "mime" | "class" | "pipelineVersion">): boolean =>
+  (extracts(file.mime) || PLAIN.has(mediaType(file.mime))) &&
+  (file.pipelineVersion < PIPELINE || cleared(file));
+
+/** Whether a file job should embed its pages: it will be cleared if its checks come out clean. */
+export const mayClear = (file: FileRow): boolean =>
+  file.findings === "[]" &&
+  cleared({ class: classOf({ checks: "clean", kind: file.kind, confirmedAt: file.confirmedAt }) });
+
+/** A file's text as a `file` job extracted it: all of it, and by page; `undefined` when it couldn't be read. */
+export interface Extracted {
+  readonly text: string | undefined;
+  readonly pages: readonly string[] | undefined;
+}
+
+/**
+ * Installs a `file` job's result while the file is still at the job's revision: runs the checks over all the text,
+ * writes a passport's MRZ as the uploader would have, and indexes the pages of a file that is cleared, paired with
+ * `vectors` (one per `chunkFile` chunk, made by the job when `mayClear`). The checks only tighten: what one
+ * extraction found stays found, and a page that needs reading keeps the whole file unclassified.
+ */
+export function installFile(
+  sql: Sql,
+  key: Uint8Array,
+  jobId: string,
+  extracted: Extracted,
+  vectors: readonly Uint8Array[],
+  now: number,
+): "installed" | "dropped" {
+  return finishJob(sql, jobId, (job) => {
+    const file = getFile(sql, job.noteId.slice("file:".length));
+    if (!file) return;
+    const { text, pages } = extracted;
+    const passport = text === undefined ? undefined : parsePassport(text, now);
+    const findings = [
+      ...new Set<Finding>([
+        ...(JSON.parse(file.findings) as Finding[]),
+        ...(passport ? (["mrz"] as const) : []),
+        ...(text === undefined ? [] : scan(text)),
+      ]),
+    ];
+    // Plain text is read whole by `readText`; only an extraction's pages can come back short. Pages that aren't cut
+    // from the text the checks read count as unread, so search only ever holds what they read.
+    const unread =
+      text === undefined ||
+      pages === undefined ||
+      !pages.every((page) => text.includes(page)) ||
+      // A blank page among others is read; a PDF with no text at all (every page outlines, say) isn't.
+      (extracts(file.mime) && (pages.some(needsReading) || pages.every((page) => page.trim() === "")));
+    const checks: Checks =
+      findings.length > 0
+        ? "found"
+        : unread
+          ? "unreadable"
+          : file.pipelineVersion < PIPELINE
+            ? "clean"
+            : file.checks;
+    let noteId = file.noteId;
+    const parsed =
+      passport &&
+      sql.all("SELECT 1 FROM secrets WHERE name = ?", passportSecret(passport, file.sha256)).length > 0;
+    if (passport && !parsed && noteId === null && file.uploadedBy !== null) {
+      // As the uploader: a connection's parse waits as a proposal, as it would have at upload. One that is gone
+      // since writes nothing; the person's confirmation doesn't parse again, nor does a later extraction of a
+      // passport already parsed (its proposal may still be waiting).
+      const connection = connectionOf(sql, file.uploadedBy);
+      if (connection || !file.uploadedBy.startsWith("connection:")) {
+        const ctx: Context = { actor: file.uploadedBy, now, ...(connection && { connection }) };
+        noteId = writePassport(sql, key, file.sha256, passport, ctx).noteId;
+      }
+    }
+    const next: FileRow = { ...file, checks, findings: JSON.stringify(findings), noteId };
+    const updated = {
+      ...next,
+      class: classOf(next),
+      pipelineVersion: PIPELINE,
+      pages: pages?.length ?? null,
+    };
+    sql.all(
+      `UPDATE files SET checks = ?, findings = ?, class = ?, noteId = ?, pipelineVersion = ?, pages = ?
+       WHERE sha256 = ?`,
+      updated.checks,
+      updated.findings,
+      updated.class,
+      updated.noteId,
+      updated.pipelineVersion,
+      updated.pages,
+      file.sha256,
+    );
+    const owner = fileOwner(file.sha256);
+    if (!cleared(updated) || pages === undefined) return putChunks(sql, owner, file.rev, []);
+    putChunks(
+      sql,
+      owner,
+      file.rev,
+      chunkFile(file, pages).map((chunk, i) => {
+        const vector = vectors[i];
+        return { ...chunk, family: updated.class, ...(vector && { vector }) };
+      }),
+    );
   });
 }

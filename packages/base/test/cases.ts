@@ -16,12 +16,14 @@ import {
   schemaVersion,
   PERSON,
   search,
+  type Hit,
   type NoteInput,
   type Principal,
   type Sql,
 } from "../src/index.ts";
 import { approvalCases } from "./approval-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
+import { ingestCases } from "./ingest-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
 import { vaultCases } from "./vault-cases.ts";
@@ -29,6 +31,10 @@ import { toolCases } from "./tool-cases.ts";
 
 /** A connection without the sensitive scope, as every connection starts. */
 export const AGENT: Principal = { sensitive: false };
+
+/** What search found: note ids, and a file's sha256 for one of its pages. */
+export const hitIds = (hits: readonly Hit[]) =>
+  hits.map((hit) => ("noteId" in hit ? hit.noteId : hit.fileSha));
 
 export interface Fixture {
   readonly path: string;
@@ -108,6 +114,7 @@ export const cases: Record<string, Case> = {
   ...connectionCases,
   ...privacyCases,
   ...vaultCases,
+  ...ingestCases,
   ...toolCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
@@ -268,20 +275,11 @@ export const cases: Record<string, Case> = {
       { family: "sensitive", header: "[TestScore · IELTS Academic]", text: "Overall 8.0, listening 8.5" },
     ]);
 
-    same(
-      search(sql, AGENT, "okafor letter").map((hit) => hit.noteId),
-      [tum.id],
-    );
+    same(hitIds(search(sql, AGENT, "okafor letter")), [tum.id]);
     same(search(sql, AGENT, "listening"), []);
-    same(
-      search(sql, PERSON, "listening").map((hit) => hit.noteId),
-      [ielts.id],
-    );
+    same(hitIds(search(sql, PERSON, "listening")), [ielts.id]);
     // Diacritics fold, and FTS5 syntax in the query is plain text.
-    same(
-      search(sql, AGENT, "Okáfor").map((hit) => hit.noteId),
-      [tum.id],
-    );
+    same(hitIds(search(sql, AGENT, "Okáfor")), [tum.id]);
     same(search(sql, AGENT, 'letter" OR "listening'), []);
     same(search(sql, AGENT, "   "), []);
 
@@ -298,10 +296,7 @@ export const cases: Record<string, Case> = {
     putNote(sql, { ...role, class: "sensitive", rev: 2, seq: 100 });
     putChunks(sql, role.id, 2, [{ family: "sensitive", header: "[Role]", text: "transit routing intern" }]);
     same(search(sql, AGENT, "transit"), []);
-    same(
-      search(sql, PERSON, "transit").map((hit) => hit.noteId),
-      [role.id],
-    );
+    same(hitIds(search(sql, PERSON, "transit")), [role.id]);
     same(sql.all("SELECT rev, family FROM chunks WHERE noteId = ?", role.id), [
       { rev: 2, family: "sensitive" },
     ]);

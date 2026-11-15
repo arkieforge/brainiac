@@ -27,7 +27,7 @@ import {
   type MutationResult,
   type Sql,
 } from "../src/index.ts";
-import type { Case, Fixture } from "./cases.ts";
+import { hitIds, type Case, type Fixture } from "./cases.ts";
 
 const T0 = Date.UTC(2026, 10, 14);
 const by = (now = T0, runId?: string): Context => ({ actor: "human", now, ...(runId && { runId }) });
@@ -226,7 +226,8 @@ export const mutateCases: Record<string, Case> = {
     ok(old);
     markDispatched(sql, [old.id], T0);
     const input = jobInput(sql, old.id);
-    equal(input?.note.rev, 1);
+    ok(input && "note" in input);
+    equal(input.note.rev, 1);
     // The note moves on while the job runs.
     applied(
       mutate(
@@ -240,7 +241,6 @@ export const mutateCases: Record<string, Case> = {
         by(),
       ),
     );
-    ok(input);
     equal(
       finishJob(sql, old.id, () => putChunks(sql, noteId, 1, chunkNote(input.note))),
       "dropped",
@@ -252,15 +252,12 @@ export const mutateCases: Record<string, Case> = {
     const [fresh] = dueJobs(sql, T0);
     ok(fresh);
     const next = jobInput(sql, fresh.id);
-    ok(next);
+    ok(next && "note" in next);
     equal(
       finishJob(sql, fresh.id, (job) => putChunks(sql, noteId, job.rev, chunkNote(next.note))),
       "installed",
     );
-    same(
-      search(sql, PERSON, "retook").map((hit) => hit.noteId),
-      [noteId],
-    );
+    same(hitIds(search(sql, PERSON, "retook")), [noteId]);
     same(jobs(sql), []);
   },
 
