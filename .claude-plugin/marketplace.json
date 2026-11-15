@@ -1,0 +1,11 @@
+{
+  "name": "brainiac",
+  "owner": { "name": "arkieforge" },
+  "plugins": [
+    {
+      "name": "brainiac",
+      "source": "./apps/cli/plugin",
+      "description": "Work on your Brainiac record through its MCP tools: the skill teaches your agent the record, and the hook keeps it off the vault files."
+    }
+  ]
+}

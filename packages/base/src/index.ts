@@ -94,3 +94,4 @@ export {
   type Uploaded,
 } from "./vault.ts";
 export { callTool, SCAN_LIMIT, TOOLS, type Answer, type ToolName } from "./tools.ts";
+export { PROMPTS } from "./prompts.ts";

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-import { TOOLS } from "@brainiac/base";
+import { PROMPTS, TOOLS } from "@brainiac/base";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Miniflare } from "miniflare";
@@ -949,7 +949,7 @@ describe("MCP clients", () => {
     });
   });
 
-  it("lists every tool with the schema it checks calls against", async () => {
+  it("lists every tool with the schema it checks calls against, and every prompt", async () => {
     const { auth, access } = await fixtureStudent();
     const { message } = await rpc(auth, access, "tools/list", {});
     const listed: { name: string; description: string; inputSchema: Record<string, unknown> }[] =
@@ -962,6 +962,31 @@ describe("MCP clients", () => {
       expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
       expect(tool.description).toBe(def.description);
     }
+    const prompts = (await rpc(auth, access, "prompts/list", {})).message.result.prompts;
+    expect(prompts).toEqual(
+      Object.entries(PROMPTS).map(([name, { title, description }]) =>
+        expect.objectContaining({ name, title, description }),
+      ),
+    );
+    expect(prompts.find((p: { name: string }) => p.name === "missing_for_application").arguments).toEqual([
+      expect.objectContaining({ name: "application", required: true }),
+    ]);
+    const got = await rpc(auth, access, "prompts/get", {
+      name: "missing_for_application",
+      arguments: { application: "TUM MSc Informatics" },
+    });
+    expect(got.message.result.messages).toEqual([
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: PROMPTS.missing_for_application.text({ application: "TUM MSc Informatics" }),
+        },
+      },
+    ]);
+    expect(
+      (await rpc(auth, access, "prompts/get", { name: "missing_for_application" })).message.error,
+    ).toBeDefined();
   });
 
   it("takes arguments as declared: none undeclared, null for an optional one, never for a required one", async () => {
@@ -1095,6 +1120,7 @@ describe("MCP clients", () => {
       };
       expect((await stdio("initialize", init)).result).toEqual((await remote("initialize", init)).result);
       expect((await stdio("tools/list", {})).result).toEqual((await remote("tools/list", {})).result);
+      expect((await stdio("prompts/list", {})).result).toEqual((await remote("prompts/list", {})).result);
       const calls = [
         ["describe", {}],
         ["query", { sort: ["title"], fields: ["title", "kind"] }],
