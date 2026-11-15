@@ -65,6 +65,13 @@ export class TestBase extends Base {
     return super.webSocketMessage(dying, data);
   }
 
+  /** Open proposals' ids, oldest first. */
+  proposals(): string[] {
+    return this.sql
+      .all<{ id: string }>("SELECT id FROM proposals WHERE status = 'open' ORDER BY id")
+      .map((row) => row.id);
+  }
+
   jobs(): Job[] {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
   }

@@ -298,6 +298,16 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   ["CREATE INDEX audit_actor ON audit (actor, id)"],
   // Who uploaded each file, so a passport its extraction parses later is written as them.
   ["ALTER TABLE files ADD COLUMN uploadedBy TEXT"],
+  // The repos the GitHub connector proposed a project for, by GitHub's node id (stable across renames), so a
+  // project the person rejected or deleted is never proposed again; and the latest `synced:` block GitHub gave
+  // for each, which a project accepted after it changed catches up to.
+  [
+    `CREATE TABLE github_repos (
+      repoId TEXT PRIMARY KEY,
+      proposalId TEXT NOT NULL,
+      snapshot TEXT NOT NULL
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 /** The SQL schema version this code writes. */

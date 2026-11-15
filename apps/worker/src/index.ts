@@ -7,7 +7,7 @@ import { Client, Pool } from "pg";
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
-import { accountPage, landing, signInPage, type Activity } from "./auth/pages.ts";
+import { accountPage, landing, signInPage, type Activity, type GithubSection } from "./auth/pages.ts";
 import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
@@ -15,6 +15,17 @@ import { serveDev } from "./dev.ts";
 import { DIGEST_CRON, sendDigests } from "./digest.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
 import { consume } from "./jobs.ts";
+import {
+  githubApp,
+  linked,
+  setup,
+  SWEEP_CRON,
+  sweep,
+  unlink,
+  installUrl,
+  webhook,
+  type Deps,
+} from "./connectors/github.ts";
 import { serveMcp, type Records } from "./mcp/handler.ts";
 import { baseOf } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
@@ -177,6 +188,7 @@ async function account(
   request: Request,
   auth: ReturnType<typeof createAuth>,
   record: (userId: string) => ReturnType<typeof recordOf>,
+  github?: (userId: string) => Promise<GithubSection>,
 ): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
   const session = await auth.api.getSession({
@@ -184,10 +196,11 @@ async function account(
     query: { disableCookieCache: true },
   });
   if (!session) return Response.redirect(new URL("/sign-in", request.url).toString(), 303);
-  const [passkeys, apps, connections] = await Promise.all([
+  const [passkeys, apps, connections, githubSection] = await Promise.all([
     auth.api.listPasskeys({ headers: request.headers }),
     auth.api.listConnectedApps({ headers: request.headers }),
     record(session.user.id).then(async (base): Promise<Activity[]> => (base ? await base.activity() : [])),
+    github?.(session.user.id),
   ]);
   return accountPage(
     session.user.email,
@@ -195,7 +208,69 @@ async function account(
     vouchedUntil(session.session, passkeys),
     apps,
     connections,
+    githubSection,
   );
+}
+
+/** The connector's reach: GitHub, Neon and the records an installation is linked to. */
+const githubDeps = (env: Env, pool: Pool): Deps | undefined => {
+  const app = githubApp(env);
+  return (
+    app && {
+      app,
+      db: pool,
+      record: (baseId) => env.BASE.get(env.BASE.idFromString(baseId)),
+      fetch: (input, init) => fetch(input, init),
+      now: Date.now,
+    }
+  );
+};
+
+/**
+ * The GitHub connector's routes (connectors/github.ts): GitHub's webhooks, and for the signed-in person the
+ * install link, the page GitHub returns them to, and disconnecting. Not found on a stage without the App.
+ */
+async function routeGithub(request: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  if (!githubApp(env)) return new Response("Not found", { status: 404 });
+  if (url.pathname === "/connectors/github/webhook") {
+    // No session and no auth setup: GitHub's signature is the only way in.
+    const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+    try {
+      const deps = githubDeps(env, pool);
+      return deps ? await webhook(request, deps) : new Response("Not found", { status: 404 });
+    } finally {
+      ctx.waitUntil(pool.end());
+    }
+  }
+  return withAuth(request, env, ctx, async (auth, pool) => {
+    const deps = githubDeps(env, pool);
+    if (!deps) return new Response("Not found", { status: 404 });
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session) {
+      const signIn = new URL("/sign-in", url);
+      signIn.searchParams.set("next", url.pathname + url.search);
+      return Response.redirect(signIn.toString(), 303);
+    }
+    const baseId = await baseOf(pool, session.user.id, () => env.BASE.newUniqueId().toString());
+    if (baseId === undefined) return new Response("Not found", { status: 404 });
+    const secret = env.BETTER_AUTH_SECRET;
+    switch (url.pathname) {
+      case "/connectors/github/install":
+        return Response.redirect(await installUrl(deps.app, secret, session.user.id), 302);
+      case "/connectors/github/setup":
+        return setup(url, { userId: session.user.id, baseId }, secret, deps);
+      case "/connectors/github/disconnect": {
+        // JSON only, so another site's form can't post here with the person's cookie.
+        if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")
+          return new Response("Expected JSON", { status: 415 });
+        const { installationId } = (await request.json()) as { installationId?: unknown };
+        if (typeof installationId !== "number") return new Response("installationId", { status: 400 });
+        await unlink(pool, baseId, installationId);
+        return new Response(null, { status: 204 });
+      }
+    }
+    return new Response("Not found", { status: 404 });
+  });
 }
 
 // OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may
@@ -250,10 +325,26 @@ export default {
         }),
       );
     if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
-    if (pathname === "/account")
+    if (pathname.startsWith("/connectors/github/")) return routeGithub(request, env, ctx, url);
+    if (pathname === "/account") {
+      const app = githubApp(env);
       return withAuth(request, env, ctx, (auth, pool) =>
-        account(request, auth, (userId) => recordOf(env, pool, userId)),
+        account(
+          request,
+          auth,
+          (userId) => recordOf(env, pool, userId),
+          app &&
+            (async (userId) => {
+              const baseId = await baseOf(pool, userId, () => env.BASE.newUniqueId().toString());
+              return {
+                slug: app.slug,
+                installations: baseId === undefined ? [] : await linked(pool, baseId),
+                outcome: url.searchParams.get("github"),
+              };
+            }),
+        ),
       );
+    }
     if (pathname === "/sync") return openSync(request, env, signedIn(request, env, ctx));
     if (pathname === "/cli/login") return cliLogin(request, env, signedIn(request, env, ctx, true));
     if (pathname === "/cli/logout") return cliLogout(request, env);
@@ -277,6 +368,16 @@ export default {
   },
   queue: consume,
   async scheduled(controller, env, ctx) {
+    if (controller.cron === SWEEP_CRON) {
+      const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+      try {
+        const deps = githubDeps(env, pool);
+        if (deps) console.log("github sweep", await sweep(deps));
+      } finally {
+        ctx.waitUntil(pool.end());
+      }
+      return;
+    }
     if (controller.cron !== DIGEST_CRON) return;
     // A stage without a sending address or a public origin sends no email: there is nowhere to link to.
     if (!env.EMAIL || !env.EMAIL_FROM || !env.SITE_ORIGIN) return;

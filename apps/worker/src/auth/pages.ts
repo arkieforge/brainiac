@@ -144,6 +144,7 @@ export function accountPage(
   vouchedUntil: number,
   apps: readonly ConnectedApp[],
   connections: readonly Activity[] = [],
+  github?: GithubSection,
   now = new Date(),
 ): Response {
   const step = nextPasskeyStep(passkeys);
@@ -185,12 +186,29 @@ export function accountPage(
       return `<details><summary>${escape(name ?? "An app")} <span class="note">${escape(grants)}</span></summary>${items.length ? `<ul>${items.join("")}</ul>` : '<p class="note">No calls yet.</p>'}</details>`;
     })
     .join("");
+  const githubRows = (github?.installations ?? [])
+    .map((i) => {
+      const state = i.suspended
+        ? "Suspended on GitHub"
+        : i.checkedAt
+          ? `Checked ${i.checkedAt.toUTCString()}`
+          : "Waiting for its first daily check";
+      return `<li><span>${escape(i.account || `Installation ${i.id}`)}<br><span class="note">${state} · <a href="https://github.com/apps/${escape(github?.slug ?? "")}/installations/new">Pick repos on GitHub</a></span></span>
+<button type="button" class="quiet" data-github="${i.id}" data-name="${escape(i.account)}">Disconnect</button></li>`;
+    })
+    .join("");
+  const outcome = github?.outcome ? GITHUB_OUTCOMES[github.outcome] : undefined;
+  const githubSection = github
+    ? `<section><h2>GitHub</h2>${outcome ? `<p role="status">${outcome}</p>` : ""}${githubRows ? `<ul>${githubRows}</ul>` : ""}<a href="/connectors/github/install">${githubRows ? "Connect more repos" : "Connect GitHub repos"}</a>
+<p class="note">You pick the repos on GitHub. Each one becomes a project for you to accept, private repos as sensitive notes. Stars, language and archived status stay up to date; everything else on a project is yours.</p></section>`
+    : "";
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
 ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" id="add">Add a passkey</button></section>`}
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
+${githubSection}
 ${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, and when it used your approval.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `// Changing passkeys asks for one that can approve first (the proof lasts 10 minutes, and a security key can
@@ -228,6 +246,14 @@ for (const button of document.querySelectorAll("[data-disconnect]")) {
     location.reload();
   });
 }
+for (const button of document.querySelectorAll("[data-github]")) {
+  button.onclick = run(async () => {
+    if (!confirm("Stop reading " + button.dataset.name + "'s repos? Your projects stay as they are. To remove the app from GitHub too, do it on GitHub.")) return;
+    const res = await fetch("/connectors/github/disconnect", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ installationId: Number(button.dataset.github) }) });
+    if (!res.ok) throw new Error("Couldn't disconnect. Try again.");
+    location.reload();
+  });
+}
 document.getElementById("sign-out").onclick = run(async () => {
   await api("/sign-out", { method: "POST", body: "{}" });
   // The site's copy of the record (apps/web/src/record.ts) leaves with the session. Every open tab of the site
@@ -244,6 +270,30 @@ document.getElementById("sign-out").onclick = run(async () => {
   location.href = "/sign-in";
 });`,
   );
+}
+
+const GITHUB_OUTCOMES: Readonly<Record<string, string>> = {
+  connected: "GitHub is connected. Its repos wait for you as projects to accept.",
+  requested:
+    "Your organization's owner has to approve the app on GitHub first. Connect again once they have.",
+  organization:
+    "Brainiac reads repos from your own GitHub account for now. Install the app on your account rather than an organization.",
+  failed:
+    "That didn't connect. Start again from Connect GitHub repos, signed in to GitHub as the account that has the repos.",
+};
+
+/** The account page's GitHub section: shown only on a stage with the GitHub App set up. */
+export interface GithubSection {
+  /** The App's URL name, for GitHub's page where an installation's repos are picked (personal or organization). */
+  readonly slug: string;
+  /** How connecting just went, from the setup route's redirect (`?github=`). */
+  readonly outcome?: string | null;
+  readonly installations: readonly {
+    readonly id: number;
+    readonly account: string;
+    readonly checkedAt: Date | null;
+    readonly suspended: boolean;
+  }[];
 }
 
 /** A connection and its most recent calls, from the record's audit log. */

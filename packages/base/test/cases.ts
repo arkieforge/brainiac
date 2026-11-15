@@ -23,6 +23,7 @@ import {
 } from "../src/index.ts";
 import { approvalCases } from "./approval-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
+import { githubCases } from "./github-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
@@ -65,6 +66,7 @@ const ALL_TABLES = [
   "edges",
   "file_tokens",
   "files",
+  "github_repos",
   "inbox_leases",
   "jobs",
   "landed",
@@ -116,6 +118,7 @@ export const cases: Record<string, Case> = {
   ...vaultCases,
   ...ingestCases,
   ...toolCases,
+  ...githubCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);

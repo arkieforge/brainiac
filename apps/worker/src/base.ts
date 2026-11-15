@@ -9,6 +9,10 @@ import {
   getFile,
   installFile,
   kindHash,
+  repoDeleted,
+  syncRepos,
+  type Repo,
+  type Synced,
   listFiles,
   manifestOf,
   mintFileToken,
@@ -244,6 +248,24 @@ export class Base extends DurableObject<Env> {
   questionEmails(on?: boolean): boolean {
     if (on !== undefined) setQuestionEmails(this.sql, on);
     return questionEmails(this.sql);
+  }
+
+  // The GitHub connector (connectors/github.ts reads GitHub; packages/base/src/github.ts decides). The Worker calls
+  // these for an installation the record's owner linked, never from a request that names the record.
+
+  /** What GitHub says about some repos: projects' `synced:` blocks refresh, new repos become proposals. */
+  githubRepos(repos: readonly Repo[]): Synced {
+    const before = currentSeq(this.sql);
+    const result = syncRepos(this.sql, repos, Date.now());
+    this.changed(before);
+    return result;
+  }
+
+  /** A repo deleted on GitHub: its project keeps its snapshot, marked archived. */
+  githubRepoDeleted(repoId: string): void {
+    const before = currentSeq(this.sql);
+    repoDeleted(this.sql, repoId, Date.now());
+    this.changed(before);
   }
 
   /** Keyword search over the families the caller may see: note ids, and `<sha256>#p<page>` for a file's page. */
