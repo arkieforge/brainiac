@@ -1604,6 +1604,22 @@ for (const [name, save] of Object.entries(SAVES)) {
 
 export { cases };
 
+/**
+ * Cases Windows can't set up, because it refuses the step that makes them: chmod can't make a file unreadable
+ * there, and a folder holding a running daemon's open files can't be renamed or deleted. The daemon's handling
+ * of what those steps lead to is proved on macOS and Linux.
+ */
+export const NOT_ON_WINDOWS = new Set([
+  "a displaced file the daemon can't read stays for the next start",
+  "a kept file that can't be read yet is kept until it can",
+  "withholding keeps an unreadable kept file until its late save can be sent",
+  "a .brainiac folder swapped for a symlink while running never leads kept files out",
+  "repair refuses a .brainiac folder swapped for a symlink",
+  "a vault folder deleted while a batch waits pauses instead of crashing",
+  "a vault folder deleted and made again pauses instead of syncing deletes",
+  "deleting the vault folder pauses instead of syncing deletes, and repair brings it back",
+]);
+
 export async function runCase(name: string): Promise<CaseResult> {
   try {
     await cases[name]!();
