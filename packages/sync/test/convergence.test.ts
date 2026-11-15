@@ -96,9 +96,15 @@ function run(steps: readonly Record<string, number | string>[], synced: boolean)
 }
 
 describe("three devices, random edits, disconnects and offline periods", () => {
-  it("always converge with nothing lost", () => {
+  // 200 runs in all, each 30 to 200 steps over three notes and three devices (up to five with copies), split by
+  // how the devices start so each half stays well inside the test timeout on a loaded CI runner. Don't cut the
+  // runs: a planted bug (taking a stale snapshot) first failed at run 109 of 200.
+  it.each([
+    ["starting in sync", true],
+    ["starting mid-handshake", false],
+  ])("always converge with nothing lost, %s", (_, synced) => {
     fc.assert(
-      fc.property(fc.array(step, { minLength: 30, maxLength: 200 }), fc.boolean(), (steps, synced) => {
+      fc.property(fc.array(step, { minLength: 30, maxLength: 200 }), (steps) => {
         const { world, devices, written } = run(steps, synced);
         const live = world.live();
         for (const d of devices) {
@@ -121,7 +127,7 @@ describe("three devices, random edits, disconnects and offline periods", () => {
           expect.fail(`${noteId} ${field} went back to ${value}`);
         }
       }),
-      { numRuns: 200 },
+      { numRuns: 100 },
     );
   });
 });
