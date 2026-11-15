@@ -483,6 +483,20 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  async "a save that matches what the record has still lets the record's move follow"() {
+    const v = await vault();
+    const text = v.read("notes/a.md")!;
+    // The person saves the very text the site just gave the note, which the record has moved; the move arrives
+    // before the watcher takes the save, so it waits for it.
+    const edited = text.replace("start", "the same words");
+    v.write("notes/a.md", edited);
+    feed(v, { noteId: A, seq: 9, deleted: false, rev: 3, path: "filed/a.md", raw: edited, class: "normal" });
+    await v.until(() => v.read("filed/a.md") !== undefined && v.read("notes/a.md") === undefined, "the move");
+    equal(v.read("filed/a.md"), edited);
+    equal(v.record.liveCount(), 3, "no second note");
+    v.daemon.stop();
+  },
+
   async "renaming a note to another case keeps one note and its id"() {
     const v = await vault();
     const before = v.read("notes/a.md")!;

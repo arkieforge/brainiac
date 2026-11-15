@@ -504,7 +504,12 @@ export class Daemon {
         this.#client.edit(id, raw, known.text);
       }
       if (this.#withheld(id)) return this.#withhold(id); // the save is sent; the file still leaves the device
-      return this.#indexFile(path, id, raw);
+      this.#indexFile(path, id, raw);
+      // A move the record made waited for this save (`#follow`): it follows now, since a save that matches the
+      // record sends nothing, and no answer would come back to bring it.
+      const remote = state.remote.get(id);
+      if (remote && remote.path !== path && this.#recordPaths.get(id) === path) this.#reflect([id]);
+      return;
     }
     let id = idOf(text);
     if (id instanceof Error) return void this.held.set(path, id.message);

@@ -771,7 +771,7 @@ function undoing(
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
-  return judged(sql, undo, "undo", action, released, (started): UndoResult | Forbidden => {
+  return judged(sql, undo, "undo", action, released, (started): UndoResult | Forbidden | Invalid => {
     // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
     // part; keep whole runs if people undo month-old runs.
     const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
