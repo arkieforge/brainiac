@@ -112,13 +112,13 @@ function apply(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
   return sql.transaction((): Decided => {
     const action: Action = JSON.parse(proposal.action ?? "null");
     const run: Context = { ...ctx, ...(proposal.runId !== null && { runId: proposal.runId }) };
+    const items: PlanItem[] = JSON.parse(proposal.patch);
     let result: Decided;
-    if (action.op === "undo") result = releaseUndo(sql, action, run);
+    if (action.op === "undo") result = releaseUndo(sql, action, items, run);
     else {
       let mutation = action;
       const note = mutation.op === "create" ? undefined : getNote(sql, mutation.noteId);
       if (note && mutation.op !== "create" && note.rev !== mutation.baseRev) {
-        const items: PlanItem[] = JSON.parse(proposal.patch);
         const d = items.find((item) => item.noteId === note.id)?.patch ?? { fields: {} };
         if (mutation.op === "patch" && rebases(note, mutation.ops, d))
           mutation = { ...mutation, baseRev: note.rev };
@@ -131,7 +131,7 @@ function apply(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
           return { status: "conflict", noteId: note.id, rev: note.rev };
         }
       }
-      result = release(sql, mutation, run);
+      result = release(sql, mutation, items, run);
     }
     if (result.status === "applied")
       sql.all("UPDATE proposals SET status = 'applied', autoApplyAt = NULL WHERE id = ?", proposal.id);

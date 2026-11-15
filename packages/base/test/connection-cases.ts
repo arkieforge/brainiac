@@ -3,7 +3,7 @@
 // (apps/worker/test/connections.test.ts checks real ones).
 import { deepStrictEqual as same, equal, match, ok } from "node:assert/strict";
 
-import { parseNote, ulid, type PatchOp, type YamlValue } from "@brainiac/core";
+import { parseNote, splitNote, ulid, type PatchOp, type YamlValue } from "@brainiac/core";
 
 import {
   authenticate,
@@ -202,6 +202,18 @@ export const connectionCases: Record<string, Case> = {
       },
       via(writer),
     );
+    // Nor does bringing back a deleted note whose path a sensitive note took since.
+    const tum = getNote(sql, String(parseNote(raw(fixtures, TUM)).data["id"]));
+    ok(tum);
+    applied(mutate(sql, { op: "delete", noteId: tum.id, baseRev: tum.rev }, human()));
+    const squatter = raw(fixtures, ROLE).replace(/^id: .*$/m, `id: ${ulid(T0 + 1)}`);
+    applied(
+      mutate(sql, { op: "create", path: TUM.toUpperCase(), raw: squatter, class: "sensitive" }, human()),
+    );
+    same(mutate(sql, { op: "put", noteId: tum.id, baseRev: tum.rev + 1, raw: tum.raw }, via(writer)), {
+      status: "invalid",
+      issues: [{ field: "path", message: `${TUM} is taken since this note was deleted.` }],
+    });
     same(taken, {
       status: "invalid",
       issues: [{ field: "path", message: `${IELTS_OLD.toUpperCase()} is taken.` }],
@@ -438,6 +450,46 @@ export const connectionCases: Record<string, Case> = {
     );
     // Text added after the body is a new value.
     applied(mutate(sql, patchOf(sql, role, [section("Next", "A second internship.\n")]), via(writer)));
+
+    // Run onto a last line with no newline, it changes what that line says.
+    const head = (getNote(sql, role)?.raw ?? "").slice(0, splitNote(getNote(sql, role)?.raw ?? "").bodyStart);
+    const rev = () => getNote(sql, role)?.rev ?? 0;
+    applied(mutate(sql, { op: "put", noteId: role, baseRev: rev(), raw: `${head}Led a team of 5` }, human()));
+    for (const body of ["Led a team of 50", "Led a team of 5 (declined)"])
+      proposed(mutate(sql, { op: "put", noteId: role, baseRev: rev(), raw: head + body }, via(writer)));
+    applied(
+      mutate(
+        sql,
+        { op: "put", noteId: role, baseRev: rev(), raw: `${head}Led a team of 5\nThen more.` },
+        via(writer),
+      ),
+    );
+  },
+
+  "a released change applies only as it was held": (sql, fixtures) => {
+    const { role } = record(sql, fixtures);
+    const writer = granted(sql, { level: "write" });
+    const run = { ...human(), runId: "run-2" };
+    applied(mutate(sql, patchOf(sql, role, [set("title_short", "SWE"), set("team", "fleet")]), run));
+    applied(mutate(sql, patchOf(sql, role, [set("title_short", "Intern")]), human()));
+    // Held: removing `team` (title_short was edited since, so undoing it would be a conflict).
+    const held = proposed(undoRun(sql, "run-2", via(writer)));
+    // Back where the run left it: undoing now would also revert title_short, which the hold never showed.
+    applied(mutate(sql, patchOf(sql, role, [set("title_short", "SWE")]), human()));
+    releaseDue(sql, held.autoApplyAt ?? 0);
+    same([field(sql, role, "title_short"), field(sql, role, "team")], ["SWE", "fleet"]);
+    same(proposal(sql, held.proposalId), { status: "open", kind: "change", autoApplyAt: null });
+    equal(decide(sql, held.proposalId, "accept", human()).status, "invalid");
+  },
+
+  "a longer hold pushes back what is already waiting": (sql, fixtures) => {
+    const { role } = record(sql, fixtures);
+    const writer = granted(sql, { level: "write" });
+    const held = proposed(mutate(sql, patchOf(sql, role, [set("end", "2025-10-31")]), via(writer)));
+    ok("connection" in restrict(sql, writer.id, { holdDays: 10 }));
+    releaseDue(sql, held.autoApplyAt ?? 0);
+    equal(field(sql, role, "end"), "2025-09-30");
+    equal(proposal(sql, held.proposalId)?.autoApplyAt, T0 + 10 * DAY_MS);
   },
 
   "a held undo undoes only what the run had done when it was held": (sql, fixtures) => {

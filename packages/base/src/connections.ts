@@ -6,6 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ulid } from "@brainiac/core";
 
 import { advance, canonical, type Signature } from "./approvals.ts";
+import { DAY_MS } from "./hold.ts";
 import type { NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
@@ -221,6 +222,13 @@ export function restrict(
       (next.sensitive && !connection.sensitive) ||
       next.holdDays < connection.holdDays;
     if (looser) return { error: "Loosening a connection needs your passkey." };
+    // A longer hold applies to what is already waiting, too.
+    sql.all(
+      `UPDATE proposals SET autoApplyAt = autoApplyAt + ?
+       WHERE actor = ? AND status = 'open' AND autoApplyAt IS NOT NULL`,
+      (next.holdDays - connection.holdDays) * DAY_MS,
+      `connection:${id}`,
+    );
     return { connection: setGrants(sql, id, next) };
   });
 }

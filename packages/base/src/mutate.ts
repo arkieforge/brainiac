@@ -17,6 +17,7 @@ import {
   type Diff,
   type Issue,
   type PatchOp,
+  type PlanItem,
   type YamlValue,
 } from "@brainiac/core";
 
@@ -25,7 +26,7 @@ import { canSee, type Connection } from "./connections.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
 import { DAY_MS, holds, manifestOf, recordHeld, type Action, type Proposed } from "./hold.ts";
 import { enqueue } from "./jobs.ts";
-import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
+import { getNote, getNoteByPath, putNote, type NoteClass, type NoteRow } from "./notes.ts";
 import { putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
@@ -93,9 +94,22 @@ interface Change<T> {
 /** The notes one transaction wrote, each as it started, for judging the transaction's effect at its end. */
 type Started = Map<string, NoteRow | undefined>;
 
+type Invalid = Extract<MutationResult, { readonly status: "invalid" }>;
+
+/** What a plan does, whatever revision it started from: a rebased release starts from a later one. */
+const effectOf = (items: readonly PlanItem[]) =>
+  JSON.parse(
+    JSON.stringify(
+      items.map((item) => ({ noteId: item.noteId, path: item.path, class: item.class, patch: item.patch })),
+    ),
+  );
+
 /** Thrown to roll back a transaction whose effect needs an approval it doesn't have, or waits as a proposal. */
 class Held extends Error {
-  readonly verdict: NeedsApproval | { readonly autoApplyAt: number | null; readonly effects: Effect[] };
+  readonly verdict:
+    | NeedsApproval
+    | Invalid
+    | { readonly autoApplyAt: number | null; readonly effects: Effect[] };
   constructor(verdict: Held["verdict"]) {
     super("held");
     this.verdict = verdict;
@@ -106,16 +120,17 @@ class Held extends Error {
  * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
  * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
  * A connection's change then waits as a proposal if its level or the hold window says so: rolled back too, and
- * recorded with the `action` that applies it once released. `released` is a proposal being applied.
+ * recorded with the `action` that applies it once released. `released` is the plan of a proposal being applied:
+ * the release applies exactly that, or nothing.
  */
 function judged<T extends { readonly status: string }>(
   sql: Sql,
   ctx: Context,
   scope: "change" | "undo",
   action: Action,
-  released: boolean,
+  released: readonly PlanItem[] | undefined,
   fn: (started: Started) => T,
-): T | NeedsApproval | Proposed | Forbidden {
+): T | NeedsApproval | Proposed | Forbidden | Invalid {
   const { connection } = ctx;
   if (connection?.level === "read") return { status: "forbidden", reason: "This connection can only read." };
   // The proposal is recorded in the same transaction the change rolled back in, so a crash keeps neither or both.
@@ -128,6 +143,15 @@ function judged<T extends { readonly status: string }>(
           const after = getNote(sql, id);
           return after ? [{ before, after }] : [];
         });
+        // The record moved under a held change so that it would now do something else (an undo with fewer
+        // conflicts than it had): the person looks again rather than the release doing what nobody saw.
+        if (released && !deepEqual(effectOf(planOf(effects)), effectOf(released)))
+          throw new Held({
+            status: "invalid",
+            issues: [
+              { field: "proposal", message: "The record changed since this was held. Look at it again." },
+            ],
+          });
         const verdict = settle(sql, effects, ctx, scope);
         if (verdict === "signed" || !connection || released || effects.length === 0) {
           if (typeof verdict === "object") throw new Held(verdict);
@@ -246,12 +270,17 @@ function write(
  * caller's transaction (the sync handler records the client's result in it too) it is a savepoint.
  */
 export function mutate(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
-  return judged(sql, ctx, "change", mutation, false, (started) => applyOne(sql, started, mutation, ctx));
+  return judged(sql, ctx, "change", mutation, undefined, (started) => applyOne(sql, started, mutation, ctx));
 }
 
-/** Applies a released proposal's mutation: the hold has run its course, the approval list still binds. */
-export function release(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
-  return judged(sql, ctx, "change", mutation, true, (started) => applyOne(sql, started, mutation, ctx));
+/** Applies a released proposal's mutation, if it still does exactly what was held. The approval list still binds. */
+export function release(
+  sql: Sql,
+  mutation: Mutation,
+  plan: readonly PlanItem[],
+  ctx: Context,
+): MutationResult {
+  return judged(sql, ctx, "change", mutation, plan, (started) => applyOne(sql, started, mutation, ctx));
 }
 
 function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context): MutationResult {
@@ -312,8 +341,12 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
   const data = check(sql, raw, note.id);
   if (Array.isArray(data)) return { status: "invalid", issues: data };
   const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
-  if (taken !== undefined)
-    return invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
+  if (taken !== undefined) {
+    const holder = getNoteByPath(sql, taken);
+    return holder && !canSee(ctx.connection, holder)
+      ? invalid("path", `${note.path} is taken since this note was deleted.`)
+      : invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
+  }
   return write(
     sql,
     started,
@@ -387,21 +420,25 @@ export function undoRun(
   sql: Sql,
   runId: string,
   ctx: Context,
-): UndoResult | NeedsApproval | Proposed | Forbidden {
+): UndoResult | NeedsApproval | Proposed | Forbidden | Invalid {
   const [seq] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seq'");
-  return undoing(sql, { op: "undo", runId, upTo: Number(seq?.value ?? 0) }, ctx, false);
+  return undoing(sql, { op: "undo", runId, upTo: Number(seq?.value ?? 0) }, ctx, undefined);
 }
 
-/** Applies a released proposal's undo: only the part of the run that was held. */
-export const releaseUndo = (sql: Sql, action: Extract<Action, { op: "undo" }>, ctx: Context) =>
-  undoing(sql, action, ctx, true);
+/** Applies a released proposal's undo: only the part of the run that was held, and only as it was held. */
+export const releaseUndo = (
+  sql: Sql,
+  action: Extract<Action, { op: "undo" }>,
+  plan: readonly PlanItem[],
+  ctx: Context,
+) => undoing(sql, action, ctx, plan);
 
 function undoing(
   sql: Sql,
   action: Extract<Action, { op: "undo" }>,
   ctx: Context,
-  released: boolean,
-): UndoResult | NeedsApproval | Proposed | Forbidden {
+  released: readonly PlanItem[] | undefined,
+): UndoResult | NeedsApproval | Proposed | Forbidden | Invalid {
   const { runId, upTo } = action;
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);

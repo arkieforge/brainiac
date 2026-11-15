@@ -73,6 +73,9 @@ function heldOf(manifest: Manifest | undefined) {
 
 const body = (note: NoteRow) => splitNote(note.raw).body;
 
+const appended = (was: string, is: string) =>
+  is.startsWith(was) && (was === "" || was.endsWith("\n") || is.startsWith("\n", was.length));
+
 /** Whether a write-level change with this effect waits out the hold. */
 export function holds(sql: Sql, manifest: Manifest | undefined, { before, after }: Effect): boolean {
   const held = heldOf(manifest);
@@ -93,10 +96,10 @@ export function holds(sql: Sql, manifest: Manifest | undefined, { before, after 
   if (before.path !== after.path && (held.area(before.path) || held.type(prior))) return true;
   if (!held.type(prior)) return false;
   if (!is) return was !== undefined;
-  // An existing value changed or removed, or existing text in the body rewritten. A new field, or text added
-  // after the body, is a new value, not a change to one.
+  // An existing value changed or removed, or existing text in the body rewritten. A new field, or new lines after
+  // the body, is a new value, not a change to one; text run onto the last line ("a team of 5" to "50") isn't.
   return (
-    !body(after).startsWith(body(before)) ||
+    !appended(body(before), body(after)) ||
     Object.keys(prior).some((key) => !Object.hasOwn(is, key) || !deepEqual(prior[key], is[key]))
   );
 }
