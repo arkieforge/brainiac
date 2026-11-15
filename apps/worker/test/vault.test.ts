@@ -104,6 +104,43 @@ describe("vault", () => {
     });
   });
 
+  it("reads a PDF through the queue, and once the checks clear it, its pages are searched", async () => {
+    const base = await record("ingest");
+    // A text-layer PDF as the harness's stand-in for toMarkdown reads it: pages split by form feeds.
+    const pdf = new TextEncoder().encode("%PDF-Northvale University transcript\fThesis on transit apps\n");
+    const { sha256 } = fileOf(await base.upload(pdf, { mime: "application/pdf", kind: "transcript" }, human));
+    expect(await base.file(sha256, human)).toMatchObject({ class: "unclassified", checks: "unreadable" });
+    expect(await base.search("transit", human)).toEqual([]);
+
+    const installed = base.nextInstall();
+    await base.dispatch();
+    expect(await installed).toBe("installed");
+    expect(await base.file(sha256, human)).toMatchObject({ class: "sensitive", checks: "clean" });
+    expect(await base.search("transit", human)).toEqual([`${sha256}#p2`]);
+    expect(await base.vectorModels()).toEqual(["@cf/baai/bge-m3", "@cf/baai/bge-m3"]);
+    // A cleared file is sensitive: a connection without the scope finds nothing.
+    const agent = await base.addConnection({ kind: "cli" });
+    expect(await base.search("transit", { actor: "agent", connectionId: agent.id })).toEqual([]);
+  });
+
+  it("a PDF the person names after it was read is indexed by a job the confirmation dispatches", async () => {
+    const base = await record("named-later");
+    const pdf = new TextEncoder().encode("%PDF-Northvale University transcript\fThesis on transit apps\n");
+    const { sha256 } = fileOf(await base.upload(pdf, { mime: "application/pdf" }, human));
+    const read = base.nextInstall();
+    await base.dispatch();
+    expect(await read).toBe("installed");
+    expect(await base.file(sha256, human)).toMatchObject({ class: "unclassified", checks: "clean" });
+    // The confirmation arms the alarm for the job it enqueued.
+    const armed = base.nextAlarm();
+    expect(fileOf(await base.classifyFile(sha256, "transcript", human)).class).toBe("sensitive");
+    await armed;
+    const indexed = base.nextInstall();
+    await base.dispatch();
+    expect(await indexed).toBe("installed");
+    expect(await base.search("transit", human)).toEqual([`${sha256}#p2`]);
+  });
+
   it("stores nothing for an upload it refuses", async () => {
     const base = await record("refused");
     const reader = await base.addConnection({ kind: "cli" });

@@ -143,6 +143,8 @@ export default Alchemy.Stack(
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),
           BLOBS: blobs,
+          // Document-to-text and embeddings for search, in the jobs consumer.
+          AI: Cloudflare.Workers.AI(),
           VAULT_KEY: vaultKey,
           JOBS: jobs,
           HYPERDRIVE: hyperdrive,

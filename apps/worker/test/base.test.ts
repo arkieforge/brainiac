@@ -70,7 +70,7 @@ describe("Base DO", () => {
     const [job] = await base.jobs();
     if (!job) throw new Error("no job");
     const old = await base.jobInput(job.id);
-    expect(old?.rev).toBe(1);
+    expect(old?.kind === "index" && old.note.rev).toBe(1);
 
     await base.mutate(
       {

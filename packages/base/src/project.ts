@@ -20,7 +20,8 @@ export const PERSON: Principal = { sensitive: true };
  * may see it, or `undefined` when it may not see it at all. The sync feed, search and `canSee` use it, and every
  * tool, resource, file URL, cache and proposal (which holds its note's values) must; `getNote` and `listNotes` don't, so whatever answers a reader with
  * their rows passes each one through here.
- * shortcut: a note is seen whole or not at all; #20's per-field chunk families make it field by field.
+ * shortcut: a note is seen whole or not at all, since the manifest marks no field sensitive on its own; a field
+ * class there would need chunk families per field too.
  */
 export function project<N extends Pick<NoteRow, "class" | "type">>(
   note: N | undefined,

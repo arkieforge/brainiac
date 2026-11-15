@@ -14,7 +14,15 @@ export {
   type Result,
   type ServerMessage,
 } from "./protocol.ts";
-export { NoteParseError, parseFrontMatter, parseNote, splitNote, type Note, type NoteParts } from "./note.ts";
+export {
+  fieldsText,
+  NoteParseError,
+  parseFrontMatter,
+  parseNote,
+  splitNote,
+  type Note,
+  type NoteParts,
+} from "./note.ts";
 export { deepEqual, patch, PatchError, type Path, type PatchOp, type YamlValue } from "./patch.ts";
 export {
   findClash,

@@ -181,7 +181,10 @@ export class Daemon {
     // The other machine's kept files: their text is in the history rows already, and they must not replay here.
     if (copied) daemon.#dropKept();
     await daemon.#attach();
-    if (fresh) daemon.#reindex();
+    if (fresh) {
+      daemon.#reindex();
+      index.built();
+    }
     daemon.#watch();
     if (!repairing) {
       daemon.#salvage();

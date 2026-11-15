@@ -7,10 +7,12 @@ import {
   classifyFile,
   dataKey,
   getFile,
+  installFile,
   kindHash,
   listFiles,
   manifestOf,
   mintFileToken,
+  mayClear,
   readText,
   recordUpload,
   refuseUpload,
@@ -20,6 +22,7 @@ import {
   viewFile,
   type Classified,
   type FileToken,
+  type Extracted,
   type FileView,
   type Uploaded,
   connect,
@@ -54,6 +57,7 @@ import {
   nextWake,
   purge,
   putChunks,
+  reindex,
   schemaVersion,
   serve,
   undoRun,
@@ -97,6 +101,19 @@ interface Socket {
   readonly clientId: string | null;
 }
 
+/** What a job works on, for the jobs consumer: a note to index, or a file to extract (and index once cleared). */
+export type JobWork =
+  | { readonly kind: "index"; readonly note: NoteRow }
+  | {
+      readonly kind: "file";
+      readonly sha256: string;
+      readonly mime: string;
+      readonly fileKind: string | null;
+      readonly bytes: Uint8Array;
+      /** Whether to embed its pages: it is cleared if the checks come out clean. */
+      readonly embed: boolean;
+    };
+
 /** What the outbox puts on the jobs queue: the record (this DO's own id, never from a request) and the job. */
 export interface JobMessage {
   readonly base: string;
@@ -133,8 +150,10 @@ export class Base extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = doSql(ctx.storage);
-    // Every wake: a record migrates the first time it is used after a deploy.
+    // Every wake: a record migrates the first time it is used after a deploy, and re-indexes in the background
+    // when chunking or the embedding model changed.
     migrate(this.sql);
+    if (reindex(this.sql)) this.wake();
   }
 
   schemaVersion(): number {
@@ -209,11 +228,13 @@ export class Base extends DurableObject<Env> {
     return manifestOf(this.sql) ?? null;
   }
 
-  /** Keyword search over the families the caller may see. */
+  /** Keyword search over the families the caller may see: note ids, and `<sha256>#p<page>` for a file's page. */
   search(text: string, caller: Caller): string[] | Forbidden {
     const ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    return search(this.sql, principalOf(ctx.connection), text).map((hit) => hit.noteId);
+    return search(this.sql, principalOf(ctx.connection), text).map((hit) =>
+      "noteId" in hit ? hit.noteId : `${hit.fileSha}#p${hit.page}`,
+    );
   }
 
   // Proposals. A connection may withdraw its own; only the site's session route may decide one.
@@ -405,7 +426,12 @@ export class Base extends DurableObject<Env> {
   ): Promise<Classified> {
     let ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    if (!signed) return classifyFile(this.sql, sha256, kind, ctx);
+    if (!signed) {
+      const result = classifyFile(this.sql, sha256, kind, ctx);
+      // A confirmation can enqueue a file job: the alarm dispatches it.
+      this.wake();
+      return result;
+    }
     const file = getFile(this.sql, sha256);
     if (!file) return { error: "No such file." };
     const challenge = kindHash(file, kind);
@@ -414,7 +440,9 @@ export class Base extends DurableObject<Env> {
     // The check awaited: a confirmation meanwhile bumped the file's rev, which the challenge names.
     ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    return classifyFile(this.sql, sha256, kind, ctx, { challenge, signature });
+    const result = classifyFile(this.sql, sha256, kind, ctx, { challenge, signature });
+    this.wake();
+    return result;
   }
 
   /** Every file, as the caller may know it. */
@@ -537,16 +565,55 @@ export class Base extends DurableObject<Env> {
   }
 
   /**
-   * The note a job works on, or `null` when the job is done or stale (its note has moved on). For the jobs
-   * consumer only: it returns sensitive text with no connection check, so no transport may expose it.
+   * What a job works on, or `null` when the job is done or stale (its note or file has moved on): a note, or a
+   * file's opened bytes. For the jobs consumer only: it returns sensitive text and unclassified files with no
+   * connection check, so no transport may expose it.
    */
-  jobInput(jobId: string): NoteRow | null {
-    return jobInput(this.sql, jobId)?.note ?? null;
+  async jobInput(jobId: string): Promise<JobWork | null> {
+    const input = jobInput(this.sql, jobId);
+    if (!input) {
+      // A stale job was dropped, which makes room on the queue like an install does.
+      this.wake();
+      return null;
+    }
+    if ("note" in input) return { kind: "index", note: input.note };
+    const { file } = input;
+    const object = await this.env.BLOBS.get(file.r2Key);
+    // Gone from R2 is a bug, not a state: fail the job loudly rather than mark the file read.
+    if (!object) throw new Error(`file ${file.sha256} is missing from R2`);
+    const sealed = new Uint8Array(await object.arrayBuffer());
+    return {
+      kind: "file",
+      sha256: file.sha256,
+      mime: file.mime,
+      fileKind: file.kind,
+      bytes: unseal(await this.dataKey(), sealed, `file:${file.sha256}`),
+      embed: mayClear(file),
+    };
   }
 
   /** Installs an index job's chunks, only while the note is still at the job's revision. */
   installIndex(jobId: string, chunks: readonly ChunkInput[]): "installed" | "dropped" {
-    return finishJob(this.sql, jobId, (job) => putChunks(this.sql, job.noteId, job.rev, chunks));
+    const result = finishJob(this.sql, jobId, (job) => putChunks(this.sql, job.noteId, job.rev, chunks));
+    // The job made room on the queue for the next one.
+    this.wake();
+    return result;
+  }
+
+  /**
+   * Installs a file job's extraction while the file is still at the job's revision: the checks run over it, a
+   * passport's MRZ is written, and a cleared file's pages are indexed with `vectors` (vault.ts `installFile`).
+   */
+  async installFile(
+    jobId: string,
+    extracted: Extracted,
+    vectors: readonly Uint8Array[],
+  ): Promise<"installed" | "dropped"> {
+    const key = await this.dataKey();
+    const before = currentSeq(this.sql);
+    const result = installFile(this.sql, key, jobId, extracted, vectors, Date.now());
+    this.changed(before);
+    return result;
   }
 
   /**

@@ -296,6 +296,8 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   ],
   // The account page reads each connection's calls, newest first.
   ["CREATE INDEX audit_actor ON audit (actor, id)"],
+  // Who uploaded each file, so a passport its extraction parses later is written as them.
+  ["ALTER TABLE files ADD COLUMN uploadedBy TEXT"],
 ];
 
 /** The SQL schema version this code writes. */

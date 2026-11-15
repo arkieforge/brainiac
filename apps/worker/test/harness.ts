@@ -15,10 +15,10 @@ import {
   type Principal,
 } from "@brainiac/base";
 
-import { Base } from "../src/base.ts";
+import { Base, type JobMessage } from "../src/base.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts";
 import type { Env } from "../src/env.ts";
-import { consume } from "../src/jobs.ts";
+import { consume, type Models } from "../src/jobs.ts";
 import { routeSite, type Session } from "../src/site.ts";
 
 export class TestBase extends Base {
@@ -69,7 +69,7 @@ export class TestBase extends Base {
   }
 
   find(principal: Principal, text: string): string[] {
-    return search(this.sql, principal, text).map((hit) => hit.noteId);
+    return search(this.sql, principal, text).map((hit) => ("noteId" in hit ? hit.noteId : hit.fileSha));
   }
 
   rev(noteId: string): number | null {
@@ -153,6 +153,19 @@ export class TestBase extends Base {
     return result;
   }
 
+  override async installFile(...args: Parameters<Base["installFile"]>): Promise<"installed" | "dropped"> {
+    const result = await super.installFile(...args);
+    for (const resolve of this.#waiting.splice(0)) resolve(result);
+    return result;
+  }
+
+  /** The model each stored vector was made with, one per chunk that has one. */
+  vectorModels(): string[] {
+    return this.sql
+      .all<{ model: string }>("SELECT model FROM vectors ORDER BY chunkId")
+      .map((row) => row.model);
+  }
+
   /** Resolves when the queue consumer next hands a job's result back. Call it before dispatching. */
   nextInstall(): Promise<"installed" | "dropped"> {
     return new Promise((resolve) => this.#waiting.push(resolve));
@@ -190,8 +203,26 @@ const fakeSiteSession =
     };
   };
 
+/**
+ * Stands in for Workers AI. `toMarkdown` reads a test "PDF" (`%PDF-` then pages split by form feeds) as the real
+ * one prints a text layer, and embeddings are a few numbers from the text, the same for the same text.
+ */
+const models = {
+  async toMarkdown(file: MarkdownDocument): Promise<ConversionResponse> {
+    const text = new TextDecoder().decode(await file.blob.arrayBuffer());
+    const pages = text.slice("%PDF-".length).split("\f");
+    const data = `# ${file.name}\n## Contents\n${pages.map((p, i) => `### Page ${i + 1}\n${p}\n\n`).join("")}`;
+    return { id: "1", name: file.name, mimeType: "application/pdf", format: "markdown", tokens: 1, data };
+  },
+  async run(_model: string, inputs: { text: string[] }) {
+    return {
+      data: inputs.text.map((t) => [t.length, (t.codePointAt(0) ?? 0) - 100, -t.split(" ").length, 1]),
+    };
+  },
+} satisfies Models;
+
 export default {
-  queue: consume,
+  queue: (batch: MessageBatch<JobMessage>, env: Env) => consume(batch, { ...env, AI: models }),
   fetch: (request: Request, env: Env) => {
     const site = routeSite(request, env, fakeSiteSession(request, env));
     if (site) return site;

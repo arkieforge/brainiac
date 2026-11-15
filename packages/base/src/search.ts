@@ -1,4 +1,4 @@
-import { splitNote } from "@brainiac/core";
+import { fieldsText, splitNote } from "@brainiac/core";
 
 import type { NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
@@ -12,29 +12,44 @@ const FTS = { normal: "chunks_fts_normal", sensitive: "chunks_fts_sensitive" } a
   string
 >;
 
+/** How notes and files are cut into chunks (`chunkNote`, `chunkFile`). Bump it when that changes, to re-index. */
+export const CHUNKS = "chunks-1";
+
+/** The embedding model (Workers AI). Every vector is stored with it, so a model change can re-embed. */
+export const EMBED_MODEL = "@cf/baai/bge-m3";
+
 export interface ChunkInput {
   readonly family: Family;
   readonly header: string;
   readonly text: string;
   readonly fileSha?: string;
   readonly page?: number;
+  /** The chunk's embedding as int8 (`quantize`), made with `EMBED_MODEL`. */
+  readonly vector?: Uint8Array;
 }
 
 /**
- * Replaces every chunk of a note, in both families, with `chunks` for revision `rev`; the old chunks'
- * vectors go with them. Removing the old ones from both families is what makes a note that turned sensitive leave the normal index at once.
+ * Who a chunk or job belongs to: a note's id, or `file:<sha256>` for a cleared file's own pages.
+ * shortcut: files own their chunks until every file has a sidecar note (#100); then the note owns them.
  */
-export function putChunks(sql: Sql, noteId: string, rev: number, chunks: readonly ChunkInput[]): void {
-  sql.all("DELETE FROM vectors WHERE chunkId IN (SELECT id FROM chunks WHERE noteId = ?)", noteId);
+export const fileOwner = (sha256: string) => `file:${sha256}`;
+
+/**
+ * Replaces every chunk of an owner (a note, or a file's `fileOwner`), in both families, with `chunks` for
+ * revision `rev`; the old chunks' vectors go with them. Removing the old ones from both families is what makes a
+ * note that turned sensitive leave the normal index at once.
+ */
+export function putChunks(sql: Sql, owner: string, rev: number, chunks: readonly ChunkInput[]): void {
+  sql.all("DELETE FROM vectors WHERE chunkId IN (SELECT id FROM chunks WHERE noteId = ?)", owner);
   for (const table of Object.values(FTS)) {
-    sql.all(`DELETE FROM ${table} WHERE rowid IN (SELECT id FROM chunks WHERE noteId = ?)`, noteId);
+    sql.all(`DELETE FROM ${table} WHERE rowid IN (SELECT id FROM chunks WHERE noteId = ?)`, owner);
   }
-  sql.all("DELETE FROM chunks WHERE noteId = ?", noteId);
+  sql.all("DELETE FROM chunks WHERE noteId = ?", owner);
   for (const chunk of chunks) {
     const [row] = sql.all<{ id: number }>(
       `INSERT INTO chunks (noteId, rev, family, fileSha, page, header, text) VALUES (?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
-      noteId,
+      owner,
       rev,
       chunk.family,
       chunk.fileSha ?? null,
@@ -49,20 +64,34 @@ export function putChunks(sql: Sql, noteId: string, rev: number, chunks: readonl
       chunk.header,
       chunk.text,
     );
+    if (chunk.vector) {
+      sql.all("INSERT INTO vectors (chunkId, model, q) VALUES (?, ?, ?)", row.id, EMBED_MODEL, chunk.vector);
+    }
   }
 }
 
-export interface Hit {
-  readonly noteId: string;
+export type Hit = { readonly chunkId: number; readonly rank: number } & (
+  | { readonly noteId: string }
+  | { readonly fileSha: string; readonly page: number }
+);
+
+interface Row {
+  readonly owner: string;
+  readonly fileSha: string | null;
+  readonly page: number | null;
   readonly chunkId: number;
   /** BM25: lower is better. */
   readonly rank: number;
+  /** The note's class, or a cleared file's; the SQL matched it to the family. */
+  readonly class: Family;
+  readonly type: string | null;
 }
 
 /**
- * Keyword search over the families `principal` may see, best first. Returns candidates only, never chunk
- * text: a chunk can be from an older revision until it is re-indexed, and snippets must come from the note's
- * current text. Every word must match; the text is quoted, so FTS5 syntax in it (`AND`, `*`, `"`) is just text.
+ * Keyword search over the families `principal` may see, best first: notes, and the pages of cleared files.
+ * Returns candidates only, never chunk text: a chunk can be from an older revision until it is re-indexed, and
+ * snippets must come from the current text. Every word must match; the text is quoted, so FTS5 syntax in it
+ * (`AND`, `*`, `"`) is just text.
  */
 export function search(sql: Sql, principal: Principal, text: string, limit = 20): Hit[] {
   const words = text.split(/\s+/).filter(Boolean);
@@ -71,19 +100,22 @@ export function search(sql: Sql, principal: Principal, text: string, limit = 20)
   const families: readonly Family[] = principal.sensitive ? ["normal", "sensitive"] : ["normal"];
   const types = principal.types ? JSON.stringify(principal.types) : null;
   // The class and the type scope are checked in SQL, before ranking and the limit, and each hit again by
-  // `project`, so a leak needs two bugs, not one.
+  // `project`, so a leak needs two bugs, not one. A file's class is the vault's (`viewFile`): only a cleared
+  // file is in a family, and a file has no type, so a type-scoped principal sees none.
   return (
     families
       .flatMap((family) =>
-        sql.all<Hit & Pick<NoteRow, "class" | "type">>(
-          `SELECT chunks.noteId AS noteId, chunks.id AS chunkId, bm25(${FTS[family]}) AS rank,
-           notes.class AS class, notes.type AS type
-         FROM ${FTS[family]}
-         JOIN chunks ON chunks.id = ${FTS[family]}.rowid
-         JOIN notes ON notes.id = chunks.noteId AND notes.deletedAt IS NULL
-         WHERE ${FTS[family]} MATCH ? AND notes.class = ?
-           AND (? IS NULL OR notes.type IN (SELECT value FROM json_each(?)))
-         ORDER BY rank LIMIT ?`,
+        sql.all<Row>(
+          `SELECT chunks.noteId AS owner, chunks.fileSha AS fileSha, chunks.page AS page,
+             chunks.id AS chunkId, bm25(${FTS[family]}) AS rank,
+             coalesce(notes.class, files.class) AS class, notes.type AS type
+           FROM ${FTS[family]}
+           JOIN chunks ON chunks.id = ${FTS[family]}.rowid
+           LEFT JOIN notes ON notes.id = chunks.noteId AND notes.deletedAt IS NULL
+           LEFT JOIN files ON files.sha256 = chunks.fileSha AND chunks.noteId = 'file:' || chunks.fileSha
+           WHERE ${FTS[family]} MATCH ? AND coalesce(notes.class, files.class) = ?
+             AND (? IS NULL OR notes.type IN (SELECT value FROM json_each(?)))
+           ORDER BY rank LIMIT ?`,
           query,
           family,
           types,
@@ -96,20 +128,80 @@ export function search(sql: Sql, principal: Principal, text: string, limit = 20)
       // fusion ranks them properly.
       .toSorted((a, b) => a.rank - b.rank)
       .slice(0, limit)
-      .map(({ noteId, chunkId, rank }) => ({ noteId, chunkId, rank }))
+      .map(({ owner, fileSha, page, chunkId, rank }): Hit =>
+        fileSha !== null && owner === fileOwner(fileSha)
+          ? { fileSha, page: page ?? 1, chunkId, rank }
+          : { noteId: owner, chunkId, rank },
+      )
+  );
+}
+
+/** A body up to this long is one chunk with the fields; a longer one is cut at its H2 headings. */
+export const LONG_BODY = 2_000;
+
+/**
+ * The chunks an `index` job installs for a note, all in the family of its class: one chunk for a short note
+ * (its fields as text, then its body), or for a long one the fields and any text before the first H2, then one
+ * chunk per H2 section. Each starts with a template header naming the type and title, with no model call:
+ * `[TestScore · IELTS Academic, November 2026]`, and `› <heading>` for a section.
+ */
+export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title" | "path">): ChunkInput[] {
+  const header = `[${note.type ?? "Note"} · ${note.title ?? note.path}]`;
+  const { yaml, body } = splitNote(note.raw);
+  const fields = fieldsText(yaml);
+  const chunk = (text: string, heading?: string): ChunkInput => ({
+    family: note.class,
+    header: heading === undefined ? header : `${header.slice(0, -1)} › ${heading}]`,
+    text,
+  });
+  if (body.length <= LONG_BODY) return [chunk([fields, body.trim()].filter(Boolean).join("\n\n"))];
+  // A heading inside a code fence is text, not a section.
+  const sections: { heading?: string; lines: string[] }[] = [{ lines: [] }];
+  let fenced = false;
+  for (const line of body.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    const h2 = fenced ? null : /^## +(.+?)\s*#*\s*$/.exec(line);
+    if (h2?.[1]) sections.push({ heading: h2[1], lines: [] });
+    else sections.at(-1)?.lines.push(line);
+  }
+  const [lead, ...rest] = sections.map((s) => ({ heading: s.heading, text: s.lines.join("\n").trim() }));
+  return [
+    chunk([fields, lead?.text].filter(Boolean).join("\n\n")),
+    ...rest.map((s) => chunk(s.text, s.heading)),
+  ].filter((c) => c.text.length > 0 || c.header !== header);
+}
+
+/**
+ * The chunks a cleared file installs, before the record gives them its class's family: one per page with text,
+ * under a header naming the file's kind and page (`[transcript · page 2]`). The jobs consumer embeds the same
+ * list, so its vectors pair with these by position.
+ */
+export function chunkFile(
+  file: { readonly sha256: string; readonly kind: string | null },
+  pages: readonly string[],
+): Omit<ChunkInput, "family">[] {
+  return pages.flatMap((page, i) =>
+    page.trim()
+      ? [
+          {
+            header: `[${file.kind ?? "document"} · page ${i + 1}]`,
+            text: page.trim(),
+            fileSha: file.sha256,
+            page: i + 1,
+          },
+        ]
+      : [],
   );
 }
 
 /**
- * The chunks an `index` job installs for a note, in the family of its class.
- * shortcut: one chunk per note, header plus body; #20 replaces it with per-field families and one chunk per H2.
+ * An embedding as int8, scaled so its largest component is ±127. Cosine similarity ignores scale, so the scale
+ * isn't kept; bge-m3's unit vectors keep a cosine above 0.999 against the original.
  */
-export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title" | "path">): ChunkInput[] {
-  return [
-    {
-      family: note.class,
-      header: `[${note.type ?? "Note"} · ${note.title ?? note.path}]`,
-      text: splitNote(note.raw).body,
-    },
-  ];
+export function quantize(vector: readonly number[]): Uint8Array {
+  const max = Math.max(...vector.map(Math.abs)) || 1;
+  return new Uint8Array(Int8Array.from(vector, (x) => Math.round((x / max) * 127)).buffer);
 }
+
+/** A stored vector's components (a BLOB comes back as an ArrayBuffer from the DO, a Uint8Array from Bun). */
+export const dequantize = (q: ArrayBuffer | Uint8Array): Int8Array => new Int8Array(new Uint8Array(q).buffer);

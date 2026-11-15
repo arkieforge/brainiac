@@ -1,5 +1,6 @@
-// Blobs are left out until a table that stores them gets queries: the DO returns ArrayBuffer, Bun Uint8Array.
-export type SqlValue = string | number | null;
+// A BLOB binds as a Uint8Array on both engines, but reads back as an ArrayBuffer from the DO and a Uint8Array
+// from Bun, so a row type that selects one says `ArrayBuffer | Uint8Array`.
+export type SqlValue = string | number | null | Uint8Array;
 
 /**
  * The one way this package touches SQLite, so the DO and the CLI run the same statements.

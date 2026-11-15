@@ -35,12 +35,12 @@ connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sen
 inbox_leases { itemId, agent, expiresAt }                            // one filer per item
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }
-jobs         { id, kind, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed
+jobs         { id, kind: index | file, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed; a file job's noteId is file:<sha256> and its rev the file's
 files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion,
-               checks: clean | found | unreadable, findings JSON, kind?, confirmedAt?, noteId?, rev }   // sha256: an HMAC of the bytes under the data key; kind counts only once the person confirms it; rev: bumped by each confirmation
-chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }
+               checks: clean | found | unreadable, findings JSON, kind?, confirmedAt?, noteId?, rev, uploadedBy? }   // sha256: an HMAC of the bytes under the data key; kind counts only once the person confirms it; rev: bumped by each confirmation; pipelineVersion: the extraction that produced checks (0 while a PDF waits for its first)
+chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }   // a cleared file's pages: noteId file:<sha256>, until files get sidecar notes (#100)
 chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
-vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory
+vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory; meta.index names the chunking and model the index was built with
 edges        { fromId, toId, rel }
 schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
 file_tokens  { hash PK, sha256, origin, expiresAt }                  // single-use, one minute: opens one file's original on usercontent.<domain> for the site origin that asked; brf_<base id>_<secret>, stored as a hash

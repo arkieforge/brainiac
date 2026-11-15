@@ -30,7 +30,7 @@ import {
   type Signature,
   type Sql,
 } from "../src/index.ts";
-import { AGENT, type Case, type Fixture } from "./cases.ts";
+import { AGENT, hitIds, type Case, type Fixture } from "./cases.ts";
 
 const T0 = Date.UTC(2026, 10, 14);
 const ctx = { actor: "connection:agent", now: T0 };
@@ -230,10 +230,7 @@ export const privacyCases: Record<string, Case> = {
     const { ids } = record(sql, fixtures);
     const role = ids[ROLE];
     ok(role);
-    same(
-      search(sql, AGENT, "telemetry").map((hit) => hit.noteId),
-      [role],
-    );
+    same(hitIds(search(sql, AGENT, "telemetry")), [role]);
     const cursor = currentSeq(sql);
 
     const made = mutate(sql, { op: "classify", noteId: role, baseRev: 1, class: "sensitive" }, ctx);
@@ -256,10 +253,7 @@ export const privacyCases: Record<string, Case> = {
 
     // Re-indexed by its job, it is found again, in the sensitive family only.
     install(sql);
-    same(
-      search(sql, PERSON, "telemetry").map((hit) => hit.noteId),
-      [role],
-    );
+    same(hitIds(search(sql, PERSON, "telemetry")), [role]);
     same(search(sql, AGENT, "telemetry"), []);
 
     // Making it normal again loosens privacy: only a passkey signature over that exact change lets it land.
@@ -294,10 +288,7 @@ export const privacyCases: Record<string, Case> = {
     equal(getNote(sql, role)?.class, "normal");
     same(search(sql, PERSON, "telemetry"), []);
     install(sql);
-    same(
-      search(sql, AGENT, "telemetry").map((hit) => hit.noteId),
-      [role],
-    );
+    same(hitIds(search(sql, AGENT, "telemetry")), [role]);
   },
 
   "a token scoped to some types sees only notes of those types": (sql, fixtures) => {
@@ -311,10 +302,7 @@ export const privacyCases: Record<string, Case> = {
     );
     ok(snapshot.notes.every((note) => !note.deleted || note.withheld));
     same(search(sql, roles, "okafor"), []);
-    same(
-      search(sql, roles, "telemetry").map((hit) => hit.noteId),
-      [ids[ROLE]],
-    );
+    same(hitIds(search(sql, roles, "telemetry")), [ids[ROLE]]);
     equal(getNoteByPath(sql, OKAFOR)?.class, "sensitive");
   },
 
