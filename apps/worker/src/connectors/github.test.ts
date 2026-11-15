@@ -65,6 +65,11 @@ class FakeGithub {
   limited = new Set<number>();
   /** Installations on an organization rather than the user's own account. */
   organizations = new Set<number>();
+  /** Repos on the installation that the signed-in GitHub user can't see. */
+  hidden = new Set<string>();
+  /** GitHub takes only `refresh-<this>` now; each sign-in or use issues the next. */
+  refresh = 0;
+  refreshes: string[] = [];
   requests: { url: string; headers: Headers }[] = [];
   jwts: string[] = [];
 
@@ -81,10 +86,16 @@ class FakeGithub {
       this.jwts.push(auth.replace("Bearer ", ""));
       return Response.json({ token: `inst-${tokenFor[1]}` });
     }
-    if (url.pathname === "/login/oauth/access_token")
-      return Response.json(
-        JSON.parse(String(init?.body)).code === "good-code" ? { access_token: "user-token" } : {},
-      );
+    if (url.pathname === "/login/oauth/access_token") {
+      const body = JSON.parse(String(init?.body)) as { code?: string; refresh_token?: string };
+      if (body.refresh_token !== undefined) {
+        this.refreshes.push(body.refresh_token);
+        if (body.refresh_token !== `refresh-${this.refresh}`)
+          return Response.json({ error: "bad_refresh_token" });
+      } else if (body.code !== "good-code") return Response.json({ error: "bad_verification_code" });
+      this.refresh++;
+      return Response.json({ access_token: "user-token", refresh_token: `refresh-${this.refresh}` });
+    }
     if (url.pathname === "/user") return Response.json({ id: 1001, login: "nadia-karim" });
     if (url.pathname === "/user/installations")
       return Response.json({
@@ -92,10 +103,16 @@ class FakeGithub {
         installations: this.reachable.map((id) => ({
           id,
           account: this.organizations.has(id)
-            ? { id: 2002, login: "seat-team" }
+            ? { id: 2002, login: "seat-lab" }
             : { id: 1001, login: "nadia-karim" },
         })),
       });
+    if (url.pathname === `/user/installations/${INSTALLATION}/repositories`) {
+      if (auth !== "Bearer user-token" || !this.reachable.includes(INSTALLATION))
+        return new Response("not found", { status: 404 });
+      const visible = this.repos.filter((repo) => !this.hidden.has((repo as { node_id: string }).node_id));
+      return Response.json({ total_count: visible.length, repositories: visible });
+    }
     if (url.pathname === "/installation/repositories") {
       const installation = Number(auth.replace("Bearer inst-", ""));
       if (this.limited.has(installation))
@@ -149,7 +166,7 @@ beforeEach(async () => {
   ]);
   gh = new FakeGithub();
   records = new FakeRecords();
-  deps = { app, db, record: records.record, fetch: gh.fetch, now: () => T0 };
+  deps = { app, db, record: records.record, fetch: gh.fetch, now: () => T0, secret: SECRET };
 });
 
 async function link(installationId = INSTALLATION, baseId = BASE) {
@@ -174,7 +191,7 @@ describe("linking an installation", () => {
     const state = await installState(SECRET, NADIA);
     const person = { userId: NADIA, baseId: BASE };
     const go = async (params: Record<string, string>) =>
-      (await setup(await setupUrl(params), person, SECRET, deps)).headers.get("location");
+      (await setup(await setupUrl(params), person, deps)).headers.get("location");
 
     // Someone else's install link: its state is theirs.
     const theirs = await installState(SECRET, "user-other");
@@ -189,15 +206,7 @@ describe("linking an installation", () => {
     expect(await linked(db, BASE)).toEqual([]);
     expect(records.told.size).toBe(0);
 
-    // An organization's installation the user can reach: some of its repos may be hidden from them.
     gh.reachable = [INSTALLATION];
-    gh.organizations.add(INSTALLATION);
-    expect(await go({ installation_id: `${INSTALLATION}`, code: "good-code", state })).toContain(
-      "github=organization",
-    );
-    expect(await linked(db, BASE)).toEqual([]);
-    gh.organizations.clear();
-
     expect(await go({ installation_id: `${INSTALLATION}`, code: "good-code", state })).toContain(
       "github=connected",
     );
@@ -370,6 +379,136 @@ describe("webhooks", () => {
     expect((await linked(db, BASE))[0]?.suspended).toBe(true);
     await deliver("installation", { action: "unsuspend", installation });
     expect((await linked(db, BASE))[0]?.suspended).toBe(false);
+  });
+});
+
+/** What a record was told, by repo name. */
+const names = (base = BASE) => records.told.get(base)?.map((r) => ("name" in r ? r.name : r)) ?? [];
+
+describe("an organization's installation", () => {
+  // The fixture student's lab group (fictional): one repo she works on, one she was never given.
+  const team = apiRepo("seat-sensor-firmware", 12, {
+    private: true,
+    full_name: "seat-lab/seat-sensor-firmware",
+  });
+  const secret = apiRepo("grant-budget", 0, { private: true, full_name: "seat-lab/grant-budget" });
+  const installation = { id: INSTALLATION };
+
+  async function connect() {
+    const url = await setupUrl({
+      installation_id: `${INSTALLATION}`,
+      code: "good-code",
+      state: await installState(SECRET, NADIA),
+    });
+    return (await setup(url, { userId: NADIA, baseId: BASE }, deps)).headers.get("location");
+  }
+
+  beforeEach(() => {
+    gh.organizations.add(INSTALLATION);
+    gh.repos = [team, secret];
+    gh.hidden.add(secret.node_id);
+  });
+
+  it("links, and reads in only the repos the person can see there, by sweep or webhook", async () => {
+    expect(await connect()).toContain("github=connected");
+    expect(names()).toEqual(["seat-lab/seat-sensor-firmware"]);
+    expect(await linked(db, BASE)).toEqual([
+      {
+        id: INSTALLATION,
+        account: "seat-lab",
+        checkedAt: new Date(T0),
+        suspended: false,
+        member: { repos: ["seat-lab/seat-sensor-firmware"], lapsed: false },
+      },
+    ]);
+    // Her sign-in is kept sealed, never as GitHub's token.
+    const { rows } = await db.query<{ grant: string }>(`select "grant" from "github_links"`);
+    expect(rows[0]?.grant).not.toContain("refresh-");
+
+    // Webhooks and sweeps alike: the hidden repo never reaches her record.
+    await deliver("star", {
+      action: "created",
+      installation,
+      repository: { ...secret, stargazers_count: 3 },
+    });
+    await deliver("repository", { action: "deleted", installation, repository: secret });
+    await deliver("installation_repositories", { action: "added", installation, repositories_added: [] });
+    expect(await sweep(deps)).toEqual({ swept: 1, failed: 0 });
+    expect(names()).toEqual(["seat-lab/seat-sensor-firmware"]);
+    // Nothing changed for her, so the record wasn't called; the installation's own list wasn't asked for.
+    expect(gh.listings()).toEqual([]);
+
+    // A star on her repo reaches her.
+    await deliver("star", { action: "created", installation, repository: { ...team, stargazers_count: 13 } });
+    expect(records.told.get(BASE)?.at(-1)).toMatchObject({ stars: 13 });
+
+    // Once she is given the other repo on GitHub, the next sweep reads it in, and only it.
+    gh.hidden.clear();
+    await sweep(deps);
+    expect(names().at(-1)).toBe("seat-lab/grant-budget");
+    expect((await linked(db, BASE))[0]?.member?.repos).toEqual([
+      "seat-lab/grant-budget",
+      "seat-lab/seat-sensor-firmware",
+    ]);
+  });
+
+  it("stops reading a repo she lost access to", async () => {
+    gh.hidden.clear();
+    await connect();
+    expect(names()).toHaveLength(2);
+    gh.hidden.add(secret.node_id);
+    await sweep(deps);
+    await deliver("star", {
+      action: "created",
+      installation,
+      repository: { ...secret, stargazers_count: 9 },
+    });
+    gh.repos = [team, { ...secret, stargazers_count: 10 }];
+    await sweep(deps);
+    expect(names()).toHaveLength(2);
+    expect((await linked(db, BASE))[0]?.member?.repos).toEqual(["seat-lab/seat-sensor-firmware"]);
+  });
+
+  it("renews her sign-in each sweep, and reads nothing once GitHub refuses it, until she connects again", async () => {
+    await connect();
+    await sweep(deps);
+    await sweep(deps);
+    // Each refresh token is used once, and the next one kept.
+    expect(gh.refreshes).toEqual(["refresh-1", "refresh-2"]);
+
+    // She revoked the app on GitHub, or six months passed.
+    gh.refresh = 99;
+    expect(await sweep(deps)).toEqual({ swept: 1, failed: 0 });
+    expect((await linked(db, BASE))[0]?.member).toEqual({ repos: [], lapsed: true });
+    await deliver("star", { action: "created", installation, repository: { ...team, stargazers_count: 50 } });
+    const before = gh.requests.length;
+    expect(await sweep(deps)).toEqual({ swept: 0, failed: 0 });
+    expect(gh.requests).toHaveLength(before);
+    expect(records.told.get(BASE)?.some((r) => "stars" in r && r.stars === 50)).toBe(false);
+
+    expect(await connect()).toContain("github=connected");
+    expect((await linked(db, BASE))[0]?.member?.lapsed).toBe(false);
+  });
+
+  it("reads nothing once she can't reach the installation at all", async () => {
+    await connect();
+    gh.reachable = [];
+    await sweep(deps);
+    expect((await linked(db, BASE))[0]?.member?.repos).toEqual([]);
+    await deliver("star", { action: "created", installation, repository: { ...team, stargazers_count: 40 } });
+    expect(names()).toEqual(["seat-lab/seat-sensor-firmware"]);
+  });
+
+  it("keeps a member's link and the owner's whole link apart on one installation", async () => {
+    await connect();
+    await link(INSTALLATION, OTHER_BASE);
+    await deliver("star", {
+      action: "created",
+      installation,
+      repository: { ...secret, stargazers_count: 4 },
+    });
+    expect(names(OTHER_BASE)).toEqual(["seat-lab/grant-budget"]);
+    expect(names()).toEqual(["seat-lab/seat-sensor-firmware"]);
   });
 });
 

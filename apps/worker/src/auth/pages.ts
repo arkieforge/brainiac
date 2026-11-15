@@ -190,17 +190,27 @@ export function accountPage(
     .map((i) => {
       const state = i.suspended
         ? "Suspended on GitHub"
-        : i.checkedAt
-          ? `Checked ${i.checkedAt.toUTCString()}`
-          : "Waiting for its first daily check";
-      return `<li><span>${escape(i.account || `Installation ${i.id}`)}<br><span class="note">${state} · <a href="https://github.com/apps/${escape(github?.slug ?? "")}/installations/new">Pick repos on GitHub</a></span></span>
+        : i.member?.lapsed
+          ? 'Your GitHub sign-in ran out, so nothing is read. <a href="/connectors/github/install">Connect again</a>'
+          : i.checkedAt
+            ? `Checked ${i.checkedAt.toUTCString()}`
+            : "Waiting for its first daily check";
+      // An organization's installation reads only what the person can see there, so say which.
+      const repos = i.member?.lapsed
+        ? ""
+        : i.member?.repos.length
+          ? `<br><span class="note">Reads the repos you can see: ${i.member.repos.map(escape).join(", ")}</span>`
+          : i.member
+            ? '<br><span class="note">You can see none of its repos on GitHub, so nothing is read.</span>'
+            : "";
+      return `<li><span>${escape(i.account || `Installation ${i.id}`)}<br><span class="note">${state} · <a href="https://github.com/apps/${escape(github?.slug ?? "")}/installations/new">Pick repos on GitHub</a></span>${repos}</span>
 <button type="button" class="quiet" data-github="${i.id}" data-name="${escape(i.account)}">Disconnect</button></li>`;
     })
     .join("");
   const outcome = github?.outcome ? GITHUB_OUTCOMES[github.outcome] : undefined;
   const githubSection = github
     ? `<section><h2>GitHub</h2>${outcome ? `<p role="status">${outcome}</p>` : ""}${githubRows ? `<ul>${githubRows}</ul>` : ""}<a href="/connectors/github/install">${githubRows ? "Connect more repos" : "Connect GitHub repos"}</a>
-<p class="note">You pick the repos on GitHub. Each one becomes a project for you to accept, private repos as sensitive notes. Stars, language and archived status stay up to date; everything else on a project is yours.</p></section>`
+<p class="note">You pick the repos on GitHub. Each one becomes a project for you to accept, private repos as sensitive notes. Stars, language and archived status stay up to date; everything else on a project is yours. On an organization, only the repos you can see there are read, checked again each day.</p></section>`
     : "";
   return page(
     "Your account",
@@ -283,8 +293,6 @@ const GITHUB_OUTCOMES: Readonly<Record<string, string>> = {
   connected: "GitHub is connected. Its repos wait for you as projects to accept.",
   requested:
     "Your organization's owner has to approve the app on GitHub first. Connect again once they have.",
-  organization:
-    "Brainiac reads repos from your own GitHub account for now. Install the app on your account rather than an organization.",
   failed:
     "That didn't connect. Start again from Connect GitHub repos, signed in to GitHub as the account that has the repos.",
 };
@@ -300,6 +308,7 @@ export interface GithubSection {
     readonly account: string;
     readonly checkedAt: Date | null;
     readonly suspended: boolean;
+    readonly member?: { readonly repos: readonly string[]; readonly lapsed: boolean };
   }[];
 }
 

@@ -240,6 +240,7 @@ const githubDeps = (env: Env, pool: Pool): Deps | undefined => {
       record: (baseId) => env.BASE.get(env.BASE.idFromString(baseId)),
       fetch: (input, init) => fetch(input, init),
       now: Date.now,
+      secret: env.BETTER_AUTH_SECRET,
     }
   );
 };
@@ -271,12 +272,11 @@ async function routeGithub(request: Request, env: Env, ctx: ExecutionContext, ur
     }
     const baseId = await baseOf(pool, session.user.id, () => env.BASE.newUniqueId().toString());
     if (baseId === undefined) return new Response("Not found", { status: 404 });
-    const secret = env.BETTER_AUTH_SECRET;
     switch (url.pathname) {
       case "/connectors/github/install":
-        return Response.redirect(await installUrl(deps.app, secret, session.user.id), 302);
+        return Response.redirect(await installUrl(deps.app, deps.secret, session.user.id), 302);
       case "/connectors/github/setup":
-        return setup(url, { userId: session.user.id, baseId }, secret, deps);
+        return setup(url, { userId: session.user.id, baseId }, deps);
       case "/connectors/github/disconnect": {
         // JSON only, so another site's form can't post here with the person's cookie.
         if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")

@@ -21,8 +21,12 @@ synced: {repo_id: R_kgDOJx..., repo: nadia-karim/library-seat-finder, url: "http
 
 - **GitHub** (`apps/worker/src/connectors/github.ts` reads GitHub; `packages/base/src/github.ts` decides): you
   install the App from the account page and pick repos on GitHub's own page. The installation is linked to your
-  record only after your GitHub sign-in shows it is on your own account (organization installations wait for a
-  per-repo check of what you can see there). Each repo is proposed once as a `Project` (the
+  record only after your GitHub sign-in shows you can reach it. One on your own account reads in whole. On an
+  organization's, a member may not see every repo, so your link reads only the repos GitHub says your sign-in can
+  see there; the sweep renews that sign-in and checks again each day, so a repo you're given arrives the next day
+  and one you lose stops updating. If GitHub refuses the sign-in (you revoked the App, or six months unused), the
+  link reads nothing and the account page asks you to connect again; it also lists the organization repos read
+  in. Each repo is proposed once as a `Project` (the
   built-in type, unless your manifest has its own); a private repo's project is **sensitive**, so agents see it
   only with the sensitive scope. If the repo turns private later, the block stops updating and a proposal asks to make the project sensitive. Once you accept, the connector keeps `synced:` current from Repository and Star
   webhooks and a daily sweep (03:00 UTC) that sends each page's ETag, so an unchanged installation costs no rate
