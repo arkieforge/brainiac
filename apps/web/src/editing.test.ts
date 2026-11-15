@@ -56,12 +56,12 @@ function tab(cls: "normal" | "sensitive") {
     appVersion: "test",
   });
   client.receive({ type: "welcome", clientId: "tab", highWater: 0, ackedUpTo: 0 });
-  const push = (raw: string) =>
+  const push = (raw: string, rev = 4) =>
     client.receive({
       type: "changes",
       from: 10,
       to: 11,
-      items: [{ noteId: ID, seq: 11, deleted: false, rev: 4, path: PATH, raw, class: cls }],
+      items: [{ noteId: ID, seq: 11, deleted: false, rev, path: PATH, raw, class: cls }],
     });
   return { client, sent, push };
 }
@@ -113,6 +113,33 @@ describe("body draft", () => {
     expect(draft.body).toBe("Line one.\nMine below.\n");
     // Taking the record's version shows the other tab's text.
     expect(draft.takeRecord()).toBe(bodyOf(THEIRS));
+  });
+
+  it("catches up with a push that came while a sensitive save was on its way, whichever arrived first", async () => {
+    const { client, push } = tab("sensitive");
+    const answer = Promise.withResolvers<Base>();
+    const shown: (string | undefined)[] = [];
+    const settled = Promise.withResolvers<void>();
+    const draft = new BodyDraft(
+      client,
+      ID,
+      () => answer.promise,
+      (body) => {
+        shown.push(body);
+        settled.resolve();
+      },
+    );
+    const mine = withBody(R3, "Line one.\nMine below.\n");
+    draft.type(bodyOf(mine));
+    draft.flush(); // the save is on its way and will land as rev 4
+    // Another tab edits on top of it (rev 5), and that push reaches this tab before the save's own answer.
+    const rev5 = withBody(mine, "Theirs on top.\nLine one.\nMine below.\n");
+    push(rev5, 5);
+    expect(draft.fromRecord()).toBeUndefined(); // held back while the save is on its way
+    answer.resolve({ rev: 4, raw: mine });
+    await settled.promise;
+    expect(shown).toEqual([bodyOf(rev5)]);
+    expect(draft.body).toBe(bodyOf(rev5));
   });
 
   it("lets a sensitive note's typing through when only its front-matter moved meanwhile", async () => {

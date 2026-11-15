@@ -47,7 +47,8 @@ export class BodyDraft {
   readonly #client: SyncClient;
   readonly #noteId: string;
   readonly #save: SaveFrom;
-  readonly #changed: () => void;
+  /** After a save's answer: the body to show, when the record moved on meanwhile, and the conflict state. */
+  readonly #changed: (body: string | undefined) => void;
   #base: Base;
   #body: string;
   /** Typed and not sent yet. */
@@ -56,7 +57,12 @@ export class BodyDraft {
   #saving = false;
   #conflict: string | undefined;
 
-  constructor(client: SyncClient, noteId: string, save: SaveFrom, changed: () => void) {
+  constructor(
+    client: SyncClient,
+    noteId: string,
+    save: SaveFrom,
+    changed: (body: string | undefined) => void,
+  ) {
     this.#client = client;
     this.#noteId = noteId;
     this.#save = save;
@@ -108,8 +114,9 @@ export class BodyDraft {
         this.#conflict = saved.error;
         this.#dirty = true;
       } else if (saved) this.#base = saved;
-      this.flush();
-      this.#changed();
+      // A push that came while the save was on its way was held back; catch up with whichever is newer now,
+      // after sending anything typed meanwhile on what this save wrote.
+      this.#changed(this.fromRecord());
     });
   }
 
@@ -123,7 +130,7 @@ export class BodyDraft {
       if (!record || this.#saving || this.#conflict !== undefined) return undefined;
       if (this.#dirty) {
         // Only the front-matter moved (a field edit): the typing still applies, on the record's new text.
-        if (bodyOf(record.raw) === bodyOf(this.#base.raw)) this.#base = record;
+        if (record.rev > this.#base.rev && bodyOf(record.raw) === bodyOf(this.#base.raw)) this.#base = record;
         this.flush();
         return undefined;
       }

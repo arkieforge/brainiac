@@ -41,7 +41,7 @@ export function BodyEditor({
       client,
       noteId,
       (id, base, raw) => saveOnline(id, () => raw, base),
-      () => setConflict(draft.conflict),
+      (body) => show(body),
     );
     const flush = () => {
       clearTimeout(timer);
