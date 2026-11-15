@@ -9,9 +9,9 @@ import { DatabaseSync } from "node:sqlite";
 import { callTool, connect, listNotes, migrate, mutate } from "@brainiac/base";
 import { nodeSql } from "@brainiac/base/node";
 import JSZip from "jszip";
-import { afterAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { importSources, readSource, scanReport } from "../src/imports.ts";
+import { importSources, readSource, scanReport, type Source } from "../src/imports.ts";
 
 const FIXTURES = join(import.meta.dirname, "../../../fixtures");
 const EXPORT = join(FIXTURES, "imports/linkedin-export");
@@ -20,6 +20,12 @@ const NADIA = join(FIXTURES, "nadia");
 
 const scratch = mkdtempSync(join(tmpdir(), "brainiac-import-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+// Read once for every test: the first PDF a process reads loads pdf.js, which took 6 s on CI's Windows runner.
+let cv: Source;
+beforeAll(async () => {
+  cv = await readSource(CV);
+});
 
 /** The export as LinkedIn sends it: a zip of its CSVs. */
 async function zipped(): Promise<string> {
@@ -60,7 +66,6 @@ describe("brainiac scan", () => {
     const zip = await readSource(await zipped());
     const folder = await readSource(EXPORT);
     expect(zip.plan).toEqual(folder.plan);
-    const cv = await readSource(CV);
     expect(cv.as).toBe("a CV");
     expect(cv.plan.inbox[0]?.text).toContain(
       "Experience\nTeaching Assistant, Compilers, Northvale University, Sep 2025 to present\n",
@@ -84,7 +89,7 @@ describe("brainiac scan", () => {
 describe("brainiac import", () => {
   it("proposes the export's new role, leaves out what the record has, and puts the CV in the inbox; again, it does nothing", async () => {
     const { sql, call } = record();
-    const sources = [await readSource(await zipped()), await readSource(CV)];
+    const sources = [await readSource(await zipped()), cv];
     expect((await importSources(sources, call)).lines).toEqual([
       "Proposed 1 note: each waits for you to accept or reject it.",
       'Added 3 inbox items: say "file my inbox" to your Claude, or run brainiac filing now.',
