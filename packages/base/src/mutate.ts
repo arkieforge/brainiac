@@ -53,6 +53,11 @@ export interface Context extends Grant {
    * say about notes the sender can't see, never the level or the hold.
    */
   readonly reader?: Principal;
+  /**
+   * For a sync edit: the socket speaks for a read-level connection, so the record refuses every change it sends.
+   * Propose and write connections' file edits sync as unattributed ones, with no hold (contract §3).
+   */
+  readonly readOnly?: boolean;
 }
 
 /** The connection's level doesn't allow the change at all. */

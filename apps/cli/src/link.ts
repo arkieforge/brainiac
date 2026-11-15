@@ -5,17 +5,21 @@ import type { Connect } from "./daemon.ts";
 /** Reconnects start after a second and back off to half a minute. */
 const RETRY_MS = [1_000, 30_000] as const;
 
+/** The token never travels in the clear, except to this machine (a dev server). */
+export function mustBeEncrypted(url: URL): void {
+  if (url.protocol === "wss:" || url.protocol === "https:") return;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return;
+  throw new Error(`${url.origin} isn't https: Brainiac sends its token only over an encrypted connection.`);
+}
+
 /**
- * The daemon's socket to the record: `<server>/sync`, with the connection's token. It reconnects for as long
- * as the daemon runs; the sync client resends whatever is pending on each `open`.
- * shortcut: the Worker serves /sync to signed-in sessions and CLI tokens with #87.
+ * The daemon's socket to the record: `<server>/sync`, with the connection's token in a header, which the Worker
+ * routes to the record it names. It reconnects for as long as the daemon runs; the sync client resends whatever is
+ * pending on each `open`.
  */
 export function socketLink(server: string, token: string | undefined): Connect {
   const url = new URL("/sync", server.replace(/^http/, "ws"));
-  // The token never travels in the clear, except to this machine (a dev server).
-  if (token && url.protocol !== "wss:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-    throw new Error(`${server} isn't https: Brainiac sends its token only over an encrypted connection.`);
-  }
+  if (token) mustBeEncrypted(url);
   return (on) => {
     let socket: WebSocket | undefined;
     let stopped = false;

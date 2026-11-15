@@ -13,6 +13,7 @@ import { testUtils } from "better-auth/plugins";
 
 import { type AuthConfig, authOptions, mcpResource } from "./auth/config.ts";
 import { DEV_CLIENT } from "./mcp/handler.ts";
+import { landing } from "./auth/pages.ts";
 
 /** The fictional fixture student that tests, evals and screenshots use. Never a real person. */
 export const FIXTURE_STUDENT = { email: "ada.okafor@example.edu", name: "Ada Okafor" };
@@ -43,15 +44,6 @@ const fixtureEmail = (tag: string | null) => {
   if (!/^[a-z0-9-]{1,40}$/i.test(tag)) return undefined;
   const [local, domain] = FIXTURE_STUDENT.email.split("@");
   return `${local}+${tag}@${domain}`;
-};
-
-/**
- * Where to land after signing in: only somewhere on this origin, as an absolute URL. Browsers read `/\\host` as
- * `//host`, and `/.//host` normalizes to a path of `//host`, so neither a prefix check nor a bare path is safe.
- */
-const landing = (next: string | null, origin: string) => {
-  const target = next ? URL.parse(next, origin) : null;
-  return target?.origin === origin ? target.href : `${origin}/account`;
 };
 
 // Moves the fragment's token into a header, drops it from the address bar, then follows the answer.

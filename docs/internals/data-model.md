@@ -6,7 +6,7 @@
 user, session, account, verification, passkey                  // Better Auth core + passkey plugin
 oauthClient, oauthAccessToken, oauthRefreshToken, oauthConsent  // Better Auth MCP / OAuth provider; a CIMD
 oauthResource, oauthClientResource, oauthClientAssertion        //   client's row is keyed by its metadata URL
-bases        { id, ownerId, doName, jurisdiction, createdAt, deletedAt? }
+bases        { id, ownerId, jurisdiction?, createdAt, deletedAt? }         // id: the Base DO's id (newUniqueId), as in CLI tokens; one per owner
 billing      { userId, polarCustomerId, plan, periodEnd }
 usage_daily  { baseId, day, toolCalls, ingestPages, storageBytes, tregCents }
 ```

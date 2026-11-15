@@ -116,7 +116,7 @@ describe("dev token", () => {
     const body: unknown = await res.json();
     const accessToken =
       body && typeof body === "object" && "access_token" in body ? String(body.access_token) : "";
-    const records = { of: () => ({ tool: unused, authenticate: unused }), byId: () => undefined };
+    const records = { of: async () => ({ tool: unused, authenticate: unused }), byId: () => undefined };
     const initialize = (devTokens: boolean) =>
       serveMcp(
         auth,

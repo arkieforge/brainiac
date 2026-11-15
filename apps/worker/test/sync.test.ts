@@ -1,7 +1,9 @@
-// Sync clients talking to the real Base DO over WebSockets in workerd (harness.ts forwards /sync).
+// Sync clients talking to the real Base DO over WebSockets in workerd, through the real /sync, /cli/login and
+// /cli/logout routes (harness.ts fakes only the session and the registry).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { tokenBase } from "@brainiac/base";
 import type { ServerMessage } from "@brainiac/core";
 import { emptyState, SyncClient } from "@brainiac/sync";
 import { Miniflare } from "miniflare";
@@ -10,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
 import type { TestBase } from "./harness.ts";
 
+const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
+const ROLE = "facts/roles/acme-intern-2025.md";
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(import.meta.dirname, "../../../fixtures/nadia", TUM), "utf8");
 const ID = "01M6AM78G0STS7TB29G7A10DCY";
@@ -28,14 +32,22 @@ beforeAll(async () => {
 });
 afterAll(() => mf.dispose());
 
+const ORIGIN = "http://brainiac.test";
+/** A tab signed in as the person whose record is `user` (harness.ts fakes the session and registry, nothing else). */
+const session = (user = "sync") => ({ cookie: `user=${user}`, origin: ORIGIN });
+/** A laptop with a CLI token. */
+const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+/** Asks `/sync` for a socket, as the real route sees it. */
+const upgrade = (headers: Record<string, string>) =>
+  mf.dispatchFetch(`${ORIGIN}/sync`, { headers: { upgrade: "websocket", ...headers } });
+
 /**
- * A sync client on its own socket, with a way to wait for a message it has handled. `?as=<actor>` speaks for
- * that actor, like `connection:<id>` (harness.ts). `state` is what an app restarting loads from its store.
+ * A sync client on its own socket, with a way to wait for a message it has handled. `auth` is a session (`session`)
+ * or a CLI token (`bearer`). `state` is what an app restarting loads from its store.
  */
-async function device(name: string, query = "", state = emptyState(name)) {
-  const response = await mf.dispatchFetch(`http://brainiac.test/sync${query}`, {
-    headers: { upgrade: "websocket" },
-  });
+async function device(name: string, auth: Record<string, string> = session(), state = emptyState(name)) {
+  const response = await upgrade(auth);
   const ws = response.webSocket;
   if (!ws) throw new Error(`no socket: ${response.status}`);
   ws.accept();
@@ -65,20 +77,29 @@ async function device(name: string, query = "", state = emptyState(name)) {
   return { client, ws, next, received };
 }
 
-/** The record every socket here reaches. */
-async function record() {
+/** The record of the person `user`; most sockets here reach the one of "sync". */
+async function record(user = "sync") {
   const namespace = await mf.getDurableObjectNamespace("BASE");
   // The stub's RPC methods are the DO's own; Miniflare's types describe only fetch.
-  return namespace.get(namespace.idFromName("sync")) as unknown as DurableObjectStub<TestBase>;
+  return namespace.get(namespace.idFromName(user)) as unknown as DurableObjectStub<TestBase>;
+}
+
+/** A new CLI connection on `base` at `level` (only tightening, which needs no passkey) and its token. */
+async function cliToken(base: DurableObjectStub<TestBase>, level: "read" | "propose" = "propose") {
+  const { id } = await base.addConnection({ kind: "cli" });
+  if (level === "read") await base.restrict(id, { level });
+  return { id, token: await base.mintToken(id) };
 }
 
 const socketClosed = ({ ws }: Awaited<ReturnType<typeof device>>) =>
   new Promise((resolve) => ws.addEventListener("close", resolve));
+const closeCode = ({ ws }: Awaited<ReturnType<typeof device>>) =>
+  new Promise<number>((resolve) => ws.addEventListener("close", (event) => resolve(event.code)));
 const set = (text: string, field: string, value: string) =>
   text.replace(/^---\n/, `---\n${field}: ${value}\n`);
 
-async function online(name: string) {
-  const laptop = await device(name);
+async function online(name: string, auth: Record<string, string> = session()) {
+  const laptop = await device(name, auth);
   const synced = laptop.next((m) => m.type === "snapshot");
   laptop.client.connect();
   await synced;
@@ -87,7 +108,7 @@ async function online(name: string) {
 
 /** The app starts again from the state it stored, on a new socket, and resends what has no answer. */
 async function restart(name: string, state: ReturnType<typeof emptyState>) {
-  const again = await device(name, "", structuredClone(state));
+  const again = await device(name, session(), structuredClone(state));
   const last = state.pending.at(-1)?.clientSeq;
   const settled = again.next((m) => m.type === "result" && m.clientSeq === last);
   again.client.connect();
@@ -136,13 +157,6 @@ describe("sync over the Base DO's sockets", () => {
     expect(tab.client.working(ID)).toContain("kind: job");
   });
 
-  it("refuses a socket for a connection the record doesn't have", async () => {
-    const response = await mf.dispatchFetch("http://brainiac.test/sync?as=connection:nobody", {
-      headers: { upgrade: "websocket" },
-    });
-    expect(response.status).toBe(401);
-  });
-
   it("refuses a mutate before hello, and a message that isn't one", async () => {
     const stranger = await device("stranger");
     const refused = stranger.next((m) => m.type === "error");
@@ -167,8 +181,8 @@ describe("sync over the Base DO's sockets", () => {
   it("never sends a sensitive note to a socket without the scope, and takes back one that turns sensitive", async () => {
     const base = await record();
     // A new connection starts at the floor: no sensitive scope.
-    const { id } = await base.addConnection({ kind: "cli" });
-    const as = `?as=connection:${id}`;
+    const { id, token } = await cliToken(base);
+    const as = bearer(token);
     const agent = await device("agent", as);
     const tab = await device("person");
     for (const d of [agent, tab]) {
@@ -230,10 +244,7 @@ describe("sync over the Base DO's sockets", () => {
     const closed = closedBy(back);
     await base.disconnect(id);
     expect(await closed).toBe(4001);
-    const again = await mf.dispatchFetch(`http://brainiac.test/sync${as}`, {
-      headers: { upgrade: "websocket" },
-    });
-    expect(again.status).toBe(401);
+    expect((await upgrade(as)).status).toBe(401);
   });
 
   describe("a record killed mid-write", () => {
@@ -255,5 +266,133 @@ describe("sync over the Base DO's sockets", () => {
       expect(await (await record()).rev(ID)).toBe(before + fields.length);
       for (const field of fields) expect(again.client.working(ID)).toContain(`${field}: x`);
     });
+  });
+});
+
+const idOf = async (user: string) => (await mf.getDurableObjectNamespace("BASE")).idFromName(user).toString();
+const opens = async (headers: Record<string, string>) => {
+  const response = await upgrade(headers);
+  response.webSocket?.accept();
+  response.webSocket?.close();
+  return response.status;
+};
+
+describe("reaching a record: /sync, brainiac login and logout", () => {
+  it("a token opens a socket only on its own record, and nothing else opens one", async () => {
+    const { token } = await cliToken(await record("tenant-a"));
+    await cliToken(await record("tenant-b"));
+    expect(await opens(bearer(token))).toBe(101);
+    // Cross-tenant: A's secret under B's id is routed to B, which has no such token.
+    // The secret is base64url, so it may hold `_` itself: cut after the id, not at the last underscore.
+    const secret = token.slice(`brn_${await idOf("tenant-a")}_`.length);
+    expect(await opens(bearer(`brn_${await idOf("tenant-b")}_${secret}`))).toBe(401);
+    // Ids that name no record of this namespace, and things that aren't tokens at all.
+    for (const other of [`brn_${"0".repeat(64)}_${secret}`, `brn_ab_${secret}`, "brainiac"])
+      expect(await opens(bearer(other)), other).toBe(401);
+    // Nobody signed in; a signed-in browser on another origin of the site; a client naming its own actor.
+    expect(await opens({})).toBe(401);
+    expect(await opens({ ...session(), origin: "http://usercontent.brainiac.test" })).toBe(403);
+    expect(await opens({ "x-brainiac-actor": "human" })).toBe(401);
+  });
+
+  it("a read connection's edits are refused once each, even when its client claims to be the person", async () => {
+    const base = await record("levels-read");
+    await base.mutate({ op: "create", path: TUM, raw, class: "normal" }, { actor: "human" });
+    const { token } = await cliToken(base, "read");
+    const laptop = await online("read-laptop", { ...bearer(token), "x-brainiac-actor": "human" });
+    expect(laptop.client.state.remote.has(ID)).toBe(true);
+
+    const answered = laptop.next((m) => m.type === "result");
+    laptop.client.edit(ID, set(laptop.client.working(ID) ?? "", "r1", "x"));
+    expect(await answered).toMatchObject({ ok: false, error: "This connection can only read." });
+    // Answered, so never resent: the edit waits as blocked with the reason, and the record is unchanged.
+    expect(laptop.client.state.pending).toEqual([]);
+    expect(laptop.client.state.blocked.get(ID)?.map((b) => b.reason)).toEqual([
+      "This connection can only read.",
+    ]);
+    expect(await base.rev(ID)).toBe(1);
+  });
+
+  it("a propose connection's file edit lands at once, even on a held type, as an unattributed edit", async () => {
+    const base = await record("levels-propose");
+    await base.setManifest(readFileSync(join(FIXTURES, "okf-base.yaml"), "utf8"));
+    const role = await base.mutate(
+      { op: "create", path: ROLE, raw: readFileSync(join(FIXTURES, ROLE), "utf8"), class: "normal" },
+      { actor: "human" },
+    );
+    if (role.status !== "applied") throw new Error(JSON.stringify(role));
+    const { token } = await cliToken(base);
+    const laptop = await online("propose-laptop", bearer(token));
+
+    const answered = laptop.next((m) => m.type === "result");
+    laptop.client.edit(
+      role.noteId,
+      (laptop.client.working(role.noteId) ?? "").replace(/^end: .*$/m, "end: 2025-10-31"),
+    );
+    // Through Brainiac's tools a propose connection's every change waits for the person (connections.test.ts).
+    expect(await answered).toMatchObject({ ok: true, rev: 2 });
+    expect(await base.rev(role.noteId)).toBe(2);
+  });
+
+  it("brainiac login: the signed-in person confirms, and the token reaches only the CLI on this machine", async () => {
+    const state = "s".repeat(32);
+    const query = `?port=49152&state=${state}&device=Ada%27s%20laptop`;
+    const login = (
+      search: string,
+      init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+    ) => mf.dispatchFetch(`${ORIGIN}/cli/login${search}`, { redirect: "manual", ...init });
+
+    // Nobody signed in: off to sign in, and back here after.
+    const away = await login(query);
+    expect(away.status).toBe(303);
+    expect(new URL(away.headers.get("location") ?? "").searchParams.get("next")).toBe(`/cli/login${query}`);
+    // Not a link brainiac login made: a privileged or impossible port, a missing or short state.
+    const bad = [`?port=80&state=${state}`, `?port=70000&state=${state}`, `?port=4915.2&state=${state}`];
+    for (const search of [...bad, "?port=49152&state=short", "?port=49152"])
+      expect((await login(search, { headers: session("login") })).status, search).toBe(400);
+
+    const page = await login(query, { headers: session("login") });
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Ada&#39;s laptop");
+
+    // The confirm is a POST from the site's own page; from anywhere else, it makes nothing.
+    const form = new URLSearchParams({ port: "49152", state, device: "Ada's laptop" });
+    const confirm = (headers: Record<string, string>) =>
+      login(query, {
+        method: "POST",
+        body: form.toString(),
+        headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+      });
+    expect((await confirm({ cookie: "user=login", origin: "https://elsewhere.example" })).status).toBe(403);
+    expect((await confirm({ cookie: "user=login" })).status).toBe(403);
+    expect((await confirm({ origin: ORIGIN })).status).toBe(401);
+
+    const done = await confirm(session("login"));
+    expect(done.status).toBe(200);
+    const html = await done.text();
+    expect(html).toContain('action="http://127.0.0.1:49152/callback"');
+    expect(html).toContain(`name="state" value="${state}"`);
+    const token = /name="token" value="([^"]+)"/.exec(html)?.[1] ?? "";
+    expect(tokenBase(token)).toBe(await idOf("login"));
+    expect(await (await record("login")).authenticate(token)).toMatchObject({
+      kind: "cli",
+      level: "propose",
+      sensitive: false,
+    });
+    await online("logged-in", bearer(token));
+  });
+
+  it("brainiac logout ends its connection: its open socket closes, and the token works nowhere", async () => {
+    const base = await record("logout");
+    const { token } = await cliToken(base);
+    const laptop = await online("leaving", bearer(token));
+    const closed = closeCode(laptop);
+    const logout = () => mf.dispatchFetch(`${ORIGIN}/cli/logout`, { method: "POST", headers: bearer(token) });
+
+    expect((await logout()).status).toBe(204);
+    expect(await closed).toBe(4001);
+    expect(await base.authenticate(token)).toBeNull();
+    expect(await opens(bearer(token))).toBe(401);
+    expect((await logout()).status).toBe(401);
   });
 });

@@ -298,7 +298,8 @@ function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { sta
       error: "This needs your approval with a passkey.",
     };
   }
-  // Sync carries no connection, so nothing it sends is held or forbidden; those read as what they are anyway.
+  // Sync carries no connection, so nothing it sends is held or forbidden (a read-level sender is refused before
+  // it gets here); those read as what they are anyway.
   const error =
     result.status === "invalid"
       ? result.issues.map((issue) => issue.message).join(" ")
@@ -322,14 +323,17 @@ function apply(sql: Sql, message: Mutate, ctx: Context, reader: Principal): Resu
     clientSeq: message.clientSeq,
     changeId: message.changeId,
   } as const;
+  // Refused, not thrown or dropped: the answer uses up its number, so the client moves the edit to blocked rather
+  // than resending it forever.
+  if (ctx.readOnly) return { ...done, ok: false, error: "This connection can only read." };
   const current = project(getNote(sql, noteId), reader);
 
   // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
   // would roll back and leave the client resending it forever, stuck behind it.
   const unreadable = change.kind === "delete" ? undefined : parseError(change.raw);
   if (unreadable !== undefined) return { ...done, ok: false, error: unreadable };
-  // shortcut: a reader may still create a note it then can't see (a sensitive one, or another type); whether a
-  // connection may is its level's call (#13).
+  // A sender may create a note it then can't see (a sensitive one, or another type): writing it tells the sender
+  // nothing it didn't send, and a propose or write connection's file edits are unattributed (contract §3).
   if (change.kind === "create" && !current) {
     const id = parseNote(change.raw).data["id"];
     if (id !== noteId) return { ...done, ok: false, error: "The note's id must match noteId." };

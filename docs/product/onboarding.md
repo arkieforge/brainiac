@@ -2,7 +2,7 @@
 
 ```
 curl -fsSL https://<domain>/install.sh | sh   # CLI + agent skill + Claude Code hook
-brainiac login                                   # browser sign-in (passkey); --token for CI
+brainiac login                                   # browser sign-in; BRAINIAC_TOKEN for CI
 brainiac onboard                                 # mode, folder, privacy defaults, hold window
 brainiac scan ~/CV.pdf ~/linkedin-export.zip     # read-only preview; nothing leaves the machine
 brainiac import                                  # filed as proposals you review

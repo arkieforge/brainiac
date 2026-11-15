@@ -42,8 +42,23 @@ the plan the person signs (each note's base revision, path, class and effect) an
 the site, the client resends the edit with the `approvalId` under a new `clientSeq` and a new `changeId`: the
 record answers a `changeId` it has seen with the answer it gave.
 
-- **Each socket reads as its principal**: the route that opens it sets who it speaks for, from the session or
-  token: the person, or a connection. What a connection may read comes from its own row in the record, read
+- **Who a socket speaks for**: `/sync` (`apps/worker/src/devices.ts`) takes WebSocket upgrades only. A laptop
+  sends its CLI token in the `authorization` header (never the URL; plain `ws:` only to loopback): the Worker
+  routes it to the record whose id the token names (`brn_<base id>_<secret>`), and that record's `authenticate`
+  decides, so another record's id with this secret gets a 401 and no socket. A tab sends the person's session
+  cookie from this origin's own pages (another origin, `usercontent.` included, gets a 403), and the base
+  registry in Neon names their record, made on first use. The base id never comes from the URL. The Worker then
+  sets the actor header the record trusts (`human` or `connection:<id>`), after dropping any the client sent.
+  `brainiac login` gets its token from the site: the person confirms on `/cli/login`, and the page posts a new
+  CLI connection's token to the CLI's listener on `127.0.0.1` in a form body, with the `state` only that
+  terminal knows. `brainiac logout` ends that connection, which closes its open sockets.
+- **A connection's level on the socket**: a read-level connection's `mutate` is refused with a result ("This
+  connection can only read."), which uses up its number like any refusal, so the edit moves to blocked rather
+  than being resent forever. Propose and write connections sync file edits as unattributed ones (contract §3):
+  applied like the person's, with no hold and no proposal, and the approval list still binds them. The daemon
+  can't tell the person's saves from anything else writing the folder, so the level that holds changes binds
+  Brainiac's tools, not the folder.
+- **Each socket reads as its principal**: what a connection may read comes from its own row in the record, read
   again for every message and push. Changing a connection's grants closes its open sockets, so its client says
   hello again and gets a snapshot that names every note it may no longer hold as withheld; a disconnected one
   can't reconnect. `snapshot`, `changes` and every push pass through the read projection

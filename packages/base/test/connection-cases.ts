@@ -3,11 +3,13 @@
 // (apps/worker/test/connections.test.ts checks real ones).
 import { deepStrictEqual as same, equal, match, ok } from "node:assert/strict";
 
-import { parseNote, splitNote, ulid, type PatchOp, type YamlValue } from "@brainiac/core";
+import { parseNote, splitNote, ulid, type ClientMessage, type PatchOp, type YamlValue } from "@brainiac/core";
 
 import {
   authenticate,
   connect,
+  principalOf,
+  serve,
   currentSeq,
   DAY_MS,
   decide,
@@ -368,6 +370,52 @@ export const connectionCases: Record<string, Case> = {
     equal(undoRun(sql, "anything", via(reader)).status, "forbidden");
     equal(field(sql, tum, "status"), "submitted");
   },
+
+  "over sync, a read connection's file edit is refused and uses up its number; a propose one's lands unheld":
+    (sql, fixtures) => {
+      const { role } = record(sql, fixtures);
+      const before = getNote(sql, role)?.raw ?? "";
+      const ENDS = ["", "2025-10-31", "2025-11-30"];
+      const edit = (clientId: string, clientSeq: number): ClientMessage => ({
+        type: "mutate",
+        clientId,
+        clientSeq,
+        changeId: `${clientId}-${clientSeq}`,
+        ackedUpTo: 0,
+        noteId: role,
+        baseRev: 1,
+        change: { kind: "put", raw: before.replace(/^end: .*$/m, `end: ${ENDS[clientSeq]}`), base: before },
+      });
+      const sent = (connection: Connection, message: ClientMessage) => {
+        const actor = `connection:${connection.id}`;
+        const ctx = { actor, now: T0, readOnly: connection.level === "read" };
+        return serve(sql, message, ctx, principalOf(connection)).replies;
+      };
+
+      const reader = connect(sql, { kind: "cli" }, T0);
+      ok("connection" in restrict(sql, reader.id, { level: "read" }));
+      const readOnly = getConnection(sql, reader.id);
+      ok(readOnly);
+      same(
+        sent(readOnly, edit("reader", 1)).map((m) => (m.type === "result" ? [m.ok, m.error] : m.type)),
+        [[false, "This connection can only read."]],
+      );
+      // Its number is used up, so the next one is taken in order rather than stuck behind a resend.
+      same(
+        sent(readOnly, edit("reader", 2)).map((m) => (m.type === "result" ? m.clientSeq : m.type)),
+        [2],
+      );
+      equal(getNote(sql, role)?.raw, before);
+
+      // The Role is a held type, which a propose connection's tool call could only propose: a file edit lands.
+      const proposer = connect(sql, { kind: "cli" }, T0);
+      same(
+        sent(proposer, edit("proposer", 1)).map((m) => (m.type === "result" ? [m.ok, m.rev] : m.type)),
+        [[true, 2]],
+      );
+      equal(field(sql, role, "end"), ENDS[1]);
+      same(sql.all("SELECT id FROM proposals"), []);
+    },
 
   "only the person decides a proposal; a connection withdraws only its own": (sql, fixtures) => {
     const { role } = record(sql, fixtures);

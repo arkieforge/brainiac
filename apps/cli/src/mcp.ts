@@ -81,7 +81,7 @@ export async function serveStdio({ server, token, input, write }: Bridge): Promi
         failure(
           id,
           refused
-            ? "Brainiac refused this device's token. Set a new one in BRAINIAC_TOKEN."
+            ? "Brainiac refused this device's token. Run brainiac login again."
             : `Brainiac answered ${response.status}. Try again.`,
         ),
       );
