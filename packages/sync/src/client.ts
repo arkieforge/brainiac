@@ -74,7 +74,7 @@ export interface Options {
    * Otherwise sensitive notes are never written to the store, and a restart takes a snapshot to get them
    * back. Pending and blocked edits to them are still written, since they are the person's unsent work.
    * shortcut: every restart with sensitive notes re-downloads the record; load them on demand instead once
-   * the record serves single notes on demand (#14's read projection).
+   * the record serves single notes on demand (`get`, #17).
    */
   readonly keepSensitive?: boolean;
 }
@@ -105,6 +105,11 @@ export class SyncClient {
    * between. Each goes once the remote layer has its revision. Not stored: a restart catches up first.
    */
   #landed: (Pending & { readonly rev: number })[] = [];
+  /**
+   * Notes the record withholds from this client's principal. Not stored: while there are any, the stored cursor
+   * is null, so a restart takes a snapshot, which names them again.
+   */
+  readonly #withheld = new Set<string>();
 
   constructor(state: State, options: Options) {
     this.state = state;
@@ -142,6 +147,11 @@ export class SyncClient {
       }
     }
     return text;
+  }
+
+  /** The record withholds this note from this client (it turned sensitive, say): no copy of it may stay. */
+  withheld(noteId: string): boolean {
+    return this.#withheld.has(noteId);
   }
 
   /** Calls `listener` with the notes that changed after every change to the state, local or remote. */
@@ -251,9 +261,10 @@ export class SyncClient {
     const kept = (note: Remote | undefined) =>
       note && (note.class === "normal" || this.#options.keepSensitive) ? note : null;
     const saved = toSaved(this.state);
-    const withheld = [...remote.values()].some((note) => !kept(note));
+    const withheld = this.#withheld.size > 0 || [...remote.values()].some((note) => !kept(note));
     const write = {
-      // Without its sensitive notes the stored remote layer is incomplete, so a restart starts over.
+      // Without its sensitive or withheld notes the stored remote layer is incomplete, so a restart starts
+      // over, and the snapshot it gets names every note to keep off the device again.
       saved: withheld ? { ...saved, cursor: null } : saved,
       clear,
       remote: [...(clear ? remote.keys() : this.#remoteChanged)].map(
@@ -299,6 +310,8 @@ export class SyncClient {
       this.#landed = this.#landed.filter(
         (l) => l.noteId !== item.noteId || (!item.deleted && l.rev > item.rev),
       );
+      if (item.deleted && item.withheld) this.#withheld.add(item.noteId);
+      else this.#withheld.delete(item.noteId);
       if (item.deleted) this.state.remote.delete(item.noteId);
       else {
         const rev = item.rev;
@@ -353,6 +366,7 @@ export class SyncClient {
         if (message.attempt !== this.#attempt) return;
         for (const noteId of state.remote.keys()) this.#touch(noteId);
         state.remote.clear();
+        this.#withheld.clear(); // the snapshot names every withheld note again
         this.#dropLanded(() => true); // the snapshot is the record as a whole
         this.#remoteChanged.clear();
         this.#clear = true;

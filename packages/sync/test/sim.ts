@@ -3,7 +3,16 @@
 import { DatabaseSync } from "node:sqlite";
 
 import { patch, type ClientMessage, type ServerMessage } from "@brainiac/core";
-import { getNote, migrate, mutate, serve, type NoteRow, type Sql, type SqlValue } from "@brainiac/base";
+import {
+  getNote,
+  migrate,
+  mutate,
+  PERSON,
+  serve,
+  type NoteRow,
+  type Sql,
+  type SqlValue,
+} from "@brainiac/base";
 
 import { emptyState, SyncClient, type State, type Store } from "../src/index.ts";
 
@@ -112,9 +121,11 @@ export class World {
   up(device: Device, pick = 0): boolean {
     const [message] = device.link.up.splice(pick % Math.max(device.link.up.length, 1), 1);
     if (!message) return false;
-    const { replies, push } = serve(this.sql, message, { actor: device.name, now: ++this.#now });
+    // Every device reads as the person; what other principals see is proved in packages/base.
+    const { replies, push } = serve(this.sql, message, { actor: device.name, now: ++this.#now }, PERSON);
     device.link.down.push(...replies);
-    if (push) for (const other of this.devices) if (other.link.connected) other.link.down.push(push);
+    const pushed = push?.(PERSON);
+    if (pushed) for (const other of this.devices) if (other.link.connected) other.link.down.push(pushed);
     return true;
   }
 

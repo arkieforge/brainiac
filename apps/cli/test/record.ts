@@ -4,7 +4,19 @@
 import { Database } from "bun:sqlite";
 
 import { bunSql } from "@brainiac/base/bun";
-import { getNote, getNoteByPath, migrate, mutate, serve, type NoteRow } from "@brainiac/base";
+import {
+  changesSince,
+  currentSeq,
+  getNote,
+  getNoteByPath,
+  migrate,
+  mutate,
+  PERSON,
+  serve,
+  type NoteClass,
+  type NoteRow,
+  type Principal,
+} from "@brainiac/base";
 import { emptyState, SyncClient } from "@brainiac/sync";
 
 import type { Connect } from "../src/daemon.ts";
@@ -21,7 +33,11 @@ export class TestRecord {
   #ids = 0;
   readonly #events = new Set<() => void>();
 
-  constructor() {
+  /** What every client may read: the person's view, or a connection's with fewer scopes. */
+  readonly reader: Principal;
+
+  constructor(reader: Principal = PERSON) {
+    this.reader = reader;
     migrate(this.sql);
   }
 
@@ -29,6 +45,15 @@ export class TestRecord {
   seed(id: string, path: string, body = "start\n", cls: "normal" | "sensitive" = "normal"): void {
     const raw = `---\nid: ${id}\ntype: Note\ntitle: "${path}"\n---\n${body}`;
     mutate(this.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: this.#now });
+  }
+
+  /** Sets a note's class in the record, as the site would, and pushes the change to every client. */
+  classify(id: string, cls: NoteClass): void {
+    const before = currentSeq(this.sql);
+    const baseRev = getNote(this.sql, id)?.rev ?? 0;
+    mutate(this.sql, { op: "classify", noteId: id, baseRev, class: cls }, { actor: "site", now: this.#now });
+    const pushed = changesSince(this.sql, before, this.reader);
+    for (const peer of this.#peers) this.#later(peer, () => peer.on.message(pushed));
   }
 
   note(id: string): NoteRow | undefined {
@@ -76,9 +101,15 @@ export class TestRecord {
     return {
       send: (message) =>
         this.#later(peer, () => {
-          const { replies, push } = serve(this.sql, message, { actor: "laptop", now: ++this.#now });
+          const { replies, push } = serve(
+            this.sql,
+            message,
+            { actor: "laptop", now: ++this.#now },
+            this.reader,
+          );
           for (const reply of replies) this.#later(peer, () => peer.on.message(reply));
-          if (push) for (const other of this.#peers) this.#later(other, () => other.on.message(push));
+          const pushed = push?.(this.reader);
+          if (pushed) for (const other of this.#peers) this.#later(other, () => other.on.message(pushed));
         }),
       close: () => {
         peer.open = false;

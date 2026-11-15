@@ -1,6 +1,6 @@
 // The real Base DO and jobs consumer, loaded into workerd by base.test.ts. TestBase adds what a test needs to
 // see and steer: reads, a crash, and running the dispatcher when the test says rather than when it fires.
-import { getNote, search, type ChunkInput, type Family, type Job } from "@brainiac/base";
+import { getNote, search, type ChunkInput, type Job, type Principal } from "@brainiac/base";
 
 import { ACTOR_HEADER, Base } from "../src/base.ts";
 import type { Env } from "../src/env.ts";
@@ -34,8 +34,8 @@ export class TestBase extends Base {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
   }
 
-  find(family: Family, text: string): string[] {
-    return search(this.sql, family, text).map((hit) => hit.noteId);
+  find(principal: Principal, text: string): string[] {
+    return search(this.sql, principal, text).map((hit) => hit.noteId);
   }
 
   rev(noteId: string): number | null {
@@ -69,10 +69,11 @@ export class TestBase extends Base {
 
 export default {
   queue: consume,
-  // Stands in for the authenticated route (#87): every socket reaches one record, as "tester".
+  // Stands in for the authenticated route (#87): every socket reaches one record, as "tester" (the person), or as
+  // the actor `?as=` names, like `connection:<id>`. The real route takes the actor from the session or token.
   fetch: (request: Request, env: Env) => {
     const headers = new Headers(request.headers);
-    headers.set(ACTOR_HEADER, "tester");
+    headers.set(ACTOR_HEADER, new URL(request.url).searchParams.get("as") ?? "tester");
     return env.BASE.get(env.BASE.idFromName("sync")).fetch(request.url, { headers });
   },
 };

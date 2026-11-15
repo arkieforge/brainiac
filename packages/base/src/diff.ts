@@ -1,24 +1,31 @@
 import { deepEqual, splitNote, type Diff } from "@brainiac/core";
 
-import type { NoteRow } from "./notes.ts";
+import type { NoteClass, NoteRow } from "./notes.ts";
 
 export interface State {
   readonly data: Readonly<Record<string, unknown>>;
   readonly body: string;
   readonly live: boolean;
+  /** Absent for a note that doesn't exist yet, so a create records no class change. */
+  readonly class?: NoteClass;
 }
 
 const NOTHING: State = { data: {}, body: "", live: false };
 
-export const stateOf = (note: Pick<NoteRow, "raw" | "fm" | "deletedAt"> | undefined): State =>
+export const stateOf = (note: Pick<NoteRow, "raw" | "fm" | "deletedAt" | "class"> | undefined): State =>
   note
-    ? { data: JSON.parse(note.fm), body: splitNote(note.raw).body, live: note.deletedAt === null }
+    ? {
+        data: JSON.parse(note.fm),
+        body: splitNote(note.raw).body,
+        live: note.deletedAt === null,
+        class: note.class,
+      }
     : NOTHING;
 
 export const side = <K extends "before" | "after", T>(key: K, has: boolean, value: T) =>
   (has ? { [key]: value } : {}) as Partial<Record<K, T>>;
 
-/** What changed from one state of a note to another: each top-level field, the body, and whether it is live. */
+/** What changed from one state of a note to another: each top-level field, the body, whether it is live, its class. */
 export function diff(before: State, after: State): Diff {
   const fields: Record<string, { before?: unknown; after?: unknown }> = {};
   for (const key of new Set([...Object.keys(before.data), ...Object.keys(after.data)])) {
@@ -31,5 +38,8 @@ export function diff(before: State, after: State): Diff {
     fields,
     ...(before.body !== after.body && { body: { before: before.body, after: after.body } }),
     ...(before.live !== after.live && { live: { before: before.live, after: after.live } }),
+    ...(before.class &&
+      after.class &&
+      before.class !== after.class && { class: { before: before.class, after: after.class } }),
   };
 }

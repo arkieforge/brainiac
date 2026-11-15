@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { search, serve } from "@brainiac/base";
+import { PERSON, search, serve } from "@brainiac/base";
 import { decodeClientMessage, patch, type NoteState } from "@brainiac/core";
 
 import { doctor, lockVault, request, restore, takeRequest } from "../src/commands.ts";
@@ -1142,7 +1142,7 @@ const cases: Record<string, () => Promise<void>> = {
     await v.until(() => v.daemon.state.known("moved/a.md") !== undefined, "the move");
     equal(v.daemon.paused(), undefined, "a move is one note, not a mass change");
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, "normal", "start").length, 3);
+    equal(search(index.sql, PERSON, "start").length, 3);
     index.close();
     equal(v.record.note(A)?.deletedAt, null, "not deleted in the record");
     v.daemon.stop();
@@ -1179,9 +1179,14 @@ const cases: Record<string, () => Promise<void>> = {
           message(socket, data) {
             const message = decodeClientMessage(String(data));
             if ("error" in message) return;
-            const { replies, push } = serve(record.sql, message, { actor: "laptop", now: Date.now() });
+            const { replies, push } = serve(
+              record.sql,
+              message,
+              { actor: "laptop", now: Date.now() },
+              PERSON,
+            );
             for (const reply of replies) socket.send(JSON.stringify(reply));
-            if (push) for (const other of sockets) other.send(JSON.stringify(push));
+            if (push) for (const other of sockets) other.send(JSON.stringify(push(PERSON)));
           },
         },
       });
@@ -1248,6 +1253,34 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  // Through the record's own projected feed, as a connection without the sensitive scope gets it: the note
+  // comes as withheld, with no class to go on, and still leaves with its history, even while paused.
+  async "a note withheld from this connection leaves the device, history and all, even while paused"() {
+    const record = new TestRecord({ sensitive: false });
+    record.seed(A, "notes/a.md", "CANARY-7Q3X\n");
+    record.seed(B, "notes/b.md");
+    record.seed(C, "notes/c.md");
+    const v = await open(record, folder("brainiac-vault-"), { graceMs: 20 });
+    v.daemon.state.displace("notes/a.md", "an older CANARY-7Q3X", Date.now(), A);
+    v.daemon.state.setPause({ reason: "a test pause", at: Date.now() });
+    record.classify(A, "sensitive");
+    await v.until(() => v.read("notes/a.md") === undefined, "the file to go");
+    ok(v.daemon.client.withheld(A));
+    // Its history is gone at once; only the file just removed is watched briefly for an editor still writing.
+    const kept = v.daemon.state.displaced("notes/a.md", Date.now(), A).map((version) => version.text);
+    ok(!kept.some((text) => text.includes("an older")), JSON.stringify(kept));
+    ok(kept.length <= 1, JSON.stringify(kept));
+    const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
+    same(search(index.sql, PERSON, "CANARY-7Q3X"), [], "out of the local index");
+    index.close();
+    await v.daemon.resume();
+    v.write("notes/b.md", setField(v.read("notes/b.md")!, "status", "a later batch"));
+    await v.until(() => v.daemon.state.asides().length === 0, "the brief watch to end");
+    same(restore(v.root, "notes/a.md", Date.now()), [], "no versions left");
+    same(v.daemon.state.displaced("notes/a.md", Date.now(), A), []);
+    v.daemon.stop();
+  },
+
   async "a note that becomes sensitive leaves the device: file, index and displaced versions"() {
     const v = await vault({ graceMs: 20 });
     const raw = v.read("notes/a.md")!;
@@ -1268,7 +1301,7 @@ const cases: Record<string, () => Promise<void>> = {
       "the kept file is gone",
     );
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, "normal", "start").length, 2, "only B and C are searchable");
+    equal(search(index.sql, PERSON, "start").length, 2, "only B and C are searchable");
     index.close();
     v.daemon.stop();
   },
@@ -1398,7 +1431,7 @@ const cases: Record<string, () => Promise<void>> = {
     const again = await open(v.record, v.root);
     // The index is private to the daemon; read it the way local search will.
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, "normal", "start").length, 3);
+    equal(search(index.sql, PERSON, "start").length, 3);
     index.close();
     again.daemon.stop();
     // Deleted outright, it is rebuilt the same way.
@@ -1406,7 +1439,7 @@ const cases: Record<string, () => Promise<void>> = {
       rmSync(join(v.root, ".brainiac", `index.db${suffix}`), { force: true });
     const third = await open(v.record, v.root);
     const rebuilt = openIndex(join(v.root, ".brainiac", "index.db")).index;
-    equal(search(rebuilt.sql, "normal", "start").length, 3);
+    equal(search(rebuilt.sql, PERSON, "start").length, 3);
     rebuilt.close();
     third.daemon.stop();
   },

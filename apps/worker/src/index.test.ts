@@ -9,12 +9,15 @@ vi.mock("cloudflare:workers", () => ({ DurableObject: Object }));
 // connect made after the pool ended, which the real one refuses ("Cannot use a pool after calling end on the pool").
 const pools: FakePool[] = [];
 class FakePool {
+  /** Opens every new pool at once, for tests that don't steer the timing. */
+  static openAtOnce = false;
   ended = false;
   connects = 0;
   connectsAfterEnd = 0;
   private gate = Promise.withResolvers<void>();
   constructor() {
     pools.push(this);
+    if (FakePool.openAtOnce) this.open();
   }
   async connect(): Promise<never> {
     this.connects++;
@@ -29,7 +32,14 @@ class FakePool {
     this.ended = true;
   }
 }
-vi.mock("pg", () => ({ Pool: FakePool, Client: Object }));
+// /health/db's client, which finds no database either.
+class FakeClient {
+  async connect(): Promise<never> {
+    throw new Error("no database in tests");
+  }
+  async end() {}
+}
+vi.mock("pg", () => ({ Pool: FakePool, Client: FakeClient }));
 
 const { default: worker } = await import("./index.ts");
 // Routing never touches bindings; /health/db is proved against a real stage instead.
@@ -108,5 +118,100 @@ describe("worker", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+});
+
+/** A stand-in for any binding that remembers every call made through it, however deep. */
+function recorder(calls: unknown[][]): unknown {
+  const fn = (...args: unknown[]) => {
+    calls.push(args);
+    return proxy;
+  };
+  const proxy: unknown = new Proxy(fn, {
+    get: (_target, key) => (key === "then" ? undefined : (calls.push([key]), proxy)),
+  });
+  return proxy;
+}
+
+// The cross-tenant suite: a record is reached only through a base id from the session or token. Every route
+// gets another person's base id every way a request can carry one, and must never pass it to a record.
+describe("no route takes a base id from the request", () => {
+  const VICTIM = "01M6V1CT1M00000000000000AB";
+  // Every route index.ts serves, plus the ones a record would be reached through. A new route goes here.
+  const ROUTES = [
+    "/health",
+    "/health/db",
+    "/dev/sign-in",
+    "/dev/token",
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/openid-configuration",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/api/auth/get-session",
+    "/mcp",
+    "/consent",
+    "/account",
+    "/sign-in",
+    "/sync",
+    "/base",
+  ];
+
+  it.each(ROUTES)("%s", async (route) => {
+    const calls: unknown[][] = [];
+    const work: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (promise: Promise<unknown>) => void work.push(promise) } as ExecutionContext;
+    const env = {
+      STAGE: "pr-1",
+      HYPERDRIVE: { connectionString: "postgres://test" },
+      BETTER_AUTH_SECRET: "a-test-secret-that-is-long-enough-to-pass",
+      DEV_SIGN_IN_TOKEN: "not-the-one-sent",
+      TURNSTILE_SITE_KEY: "test",
+      BASE: recorder(calls),
+      BLOBS: recorder(calls),
+      JOBS: recorder(calls),
+    } as unknown as Env;
+    const headers = {
+      upgrade: "websocket",
+      authorization: `Bearer ${VICTIM}`,
+      cookie: `base=${VICTIM}`,
+      "x-brainiac-base": VICTIM,
+      // The DO's own header: a client sending it must not be believed either.
+      "x-brainiac-actor": `connection:${VICTIM}`,
+    };
+    const urls = [
+      `https://brainiac.test${route}?base=${VICTIM}&baseId=${VICTIM}&record=${VICTIM}`,
+      `https://brainiac.test${route}/${VICTIM}`,
+    ];
+    FakePool.openAtOnce = true;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const url of urls) {
+        for (const method of ["GET", "POST"]) {
+          const body = method === "POST" ? JSON.stringify({ base: VICTIM, baseId: VICTIM }) : null;
+          // Only a route that got as far as the database (there is none here) may throw; any other error fails,
+          // rather than counting as a route that kept the id out.
+          const res = await worker
+            .fetch(new Request(url, { method, headers, body }), env, ctx)
+            .catch((error: unknown) => {
+              if (error instanceof Error && error.message === "no database in tests") return undefined;
+              throw error;
+            });
+          expect(res?.status, `${method} ${url}`).not.toBe(101);
+        }
+      }
+      await Promise.allSettled(work);
+    } finally {
+      FakePool.openAtOnce = false;
+      logged.mockRestore();
+    }
+    // A forwarded Request or Headers serializes as `{}`, so they are written out: a route that passes the client's
+    // own headers along to a record is caught too.
+    const seen = JSON.stringify(calls, (_key, value: unknown) =>
+      value instanceof Request
+        ? { url: value.url, headers: [...value.headers] }
+        : value instanceof Headers
+          ? [...value]
+          : value,
+    );
+    expect(seen).not.toContain(VICTIM);
   });
 });

@@ -12,6 +12,8 @@ const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(FIXTURES, TUM), "utf8");
 const human = { actor: "human" };
+/** Reads as a connection without the sensitive scope. */
+const agent = { sensitive: false };
 
 let mf: Miniflare;
 beforeAll(async () => {
@@ -57,7 +59,7 @@ describe("Base DO", () => {
     await fresh.dispatch();
     // Through the real queue and consumer, back into the record.
     expect(await installed).toBe("installed");
-    expect(await fresh.find("normal", "okafor")).toEqual([noteId]);
+    expect(await fresh.find(agent, "okafor")).toEqual([noteId]);
     expect(await fresh.jobs()).toEqual([]);
   });
 
@@ -82,13 +84,13 @@ describe("Base DO", () => {
     // The old result lands after the newer edit: dropped, so search never shows text from rev 1.
     const stale = { family: "normal", header: "[Application]", text: "Ask Dr Okafor" } as const;
     expect(await base.installIndex(job.id, [stale])).toBe("dropped");
-    expect(await base.find("normal", "okafor")).toEqual([]);
+    expect(await base.find(agent, "okafor")).toEqual([]);
 
     const installed = base.nextInstall();
     await base.dispatch();
     expect(await installed).toBe("installed");
-    expect(await base.find("normal", "email")).toEqual([noteId]);
-    expect(await base.find("normal", "okafor")).toEqual([]);
+    expect(await base.find(agent, "email")).toEqual([noteId]);
+    expect(await base.find(agent, "okafor")).toEqual([]);
   });
 
   it("undoes a run through the DO", async () => {

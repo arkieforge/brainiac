@@ -3,6 +3,7 @@ import {
   canSee,
   changesSince,
   connect,
+  connectionOf,
   decide,
   disconnect,
   getConnection,
@@ -10,6 +11,8 @@ import {
   grantHash,
   listNotes,
   mintToken,
+  PERSON,
+  principalOf,
   releaseDue,
   restrict,
   search,
@@ -45,6 +48,7 @@ import {
   type MutationResult,
   type NoteRow,
   type Opened,
+  type Principal,
   type Sql,
 } from "@brainiac/base";
 import { decodeClientMessage, type PlanItem, type ServerMessage } from "@brainiac/core";
@@ -57,8 +61,10 @@ import type { Env } from "./env.ts";
 const RETRY_MS = 60_000;
 
 /**
- * Who a sync socket speaks for. The Worker's authenticated route sets it on the upgrade request; nothing
- * outside the Worker can reach a DO, so the header can't come from a client.
+ * Who a sync socket speaks for: the person, or `connection:<id>`. The Worker's authenticated route sets it on the
+ * upgrade request; nothing outside the Worker can reach a DO, so the header can't come from a client. What the
+ * socket may read comes from the connection's own row, read again for every message and push, so narrowing a
+ * connection reaches its open sockets at once.
  * shortcut: no route forwards sockets yet; /sync lands with #87, routing a CLI token by the base id inside it.
  */
 export const ACTOR_HEADER = "x-brainiac-actor";
@@ -151,10 +157,7 @@ export class Base extends DurableObject<Env> {
   search(text: string, caller: Caller): string[] | Forbidden {
     const ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    const families = canSee(ctx.connection, { class: "sensitive" })
-      ? (["normal", "sensitive"] as const)
-      : (["normal"] as const);
-    return families.flatMap((family) => search(this.sql, family, text).map((hit) => hit.noteId));
+    return search(this.sql, principalOf(ctx.connection), text).map((hit) => hit.noteId);
   }
 
   // Proposals. A connection may withdraw its own; only the site's session route may decide one.
@@ -200,6 +203,7 @@ export class Base extends DurableObject<Env> {
     const result = grant(this.sql, plan, signed);
     // A grant can move or clear waiting releases: the alarm follows them.
     this.wake();
+    if ("connection" in result) this.resync(plan.connectionId);
     return result;
   }
 
@@ -207,11 +211,25 @@ export class Base extends DurableObject<Env> {
   restrict(connectionId: string, change: Parameters<typeof restrict>[2]): Granted {
     const result = restrict(this.sql, connectionId, change);
     this.wake();
+    if ("connection" in result) this.resync(connectionId);
     return result;
   }
 
   disconnect(connectionId: string): void {
     disconnect(this.sql, connectionId);
+    this.resync(connectionId, 4001, "This connection was disconnected.");
+  }
+
+  /**
+   * Closes a connection's open sockets after its grants change. A push re-reads only notes that changed, so a
+   * narrowed one would keep notes it may no longer hold; its client says hello again and, its principal having
+   * changed, gets a snapshot that names them as withheld.
+   */
+  private resync(connectionId: string, code = 4002, reason = "This connection's access changed."): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      const socket: Socket | null = ws.deserializeAttachment();
+      if (socket?.actor === `connection:${connectionId}`) ws.close(code, reason);
+    }
   }
 
   // Approvals. Only the site's session route may call these, with the record owner's passkey loaded from Neon
@@ -263,7 +281,7 @@ export class Base extends DurableObject<Env> {
     if (request.headers.get("upgrade") !== "websocket")
       return new Response("Expected a WebSocket", { status: 426 });
     const actor = request.headers.get(ACTOR_HEADER);
-    if (!actor) return new Response("Unauthorized", { status: 401 });
+    if (!actor || !this.reader(actor)) return new Response("Unauthorized", { status: 401 });
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ actor, clientId: null } satisfies Socket);
@@ -275,13 +293,15 @@ export class Base extends DurableObject<Env> {
     const message = decodeClientMessage(typeof data === "string" ? data : new TextDecoder().decode(data));
     if ("error" in message) return send({ type: "error", message: message.error });
     const socket: Socket = ws.deserializeAttachment();
+    const reader = this.reader(socket.actor);
+    if (!reader) return ws.close(4001, "This connection was disconnected.");
     if (message.type === "hello")
       ws.serializeAttachment({ ...socket, clientId: message.clientId } satisfies Socket);
     else if (message.clientId !== socket.clientId)
       return send({ type: "error", message: "Say hello first." });
     let served;
     try {
-      served = serve(this.sql, message, { actor: socket.actor, now: Date.now() });
+      served = serve(this.sql, message, { actor: socket.actor, now: Date.now() }, reader);
     } catch (error) {
       // A bug, not a refusal (refusals come back as results): the transaction rolled back and the change
       // keeps its number, so the client resends it once the bug is fixed. Say so rather than going quiet.
@@ -293,17 +313,35 @@ export class Base extends DurableObject<Env> {
     this.wake();
   }
 
+  /** What a socket's actor may read now: the person everything, a connection its grants; `undefined` once it is gone. */
+  private reader(actor: string): Principal | undefined {
+    if (!actor.startsWith("connection:")) return PERSON;
+    const connection = connectionOf(this.sql, actor);
+    return connection && principalOf(connection);
+  }
+
   /** After a change from anywhere: re-arm the alarm and push what changed to every sync socket. */
   private changed(before: number): void {
     this.wake();
-    if (currentSeq(this.sql) > before) this.push(changesSince(this.sql, before));
+    if (currentSeq(this.sql) > before) this.push((reader) => changesSince(this.sql, before, reader));
   }
 
-  private push(message: ServerMessage): void {
-    const text = JSON.stringify(message);
+  /** Sends each socket that said hello what changed, as its principal may see it now. */
+  private push(feed: (reader: Principal) => ServerMessage): void {
+    // Most sockets of a record read as the person, so each distinct principal's message is built once.
+    const built = new Map<string, string>();
     for (const ws of this.ctx.getWebSockets()) {
       const socket: Socket | null = ws.deserializeAttachment();
-      if (socket?.clientId) ws.send(text);
+      if (!socket?.clientId) continue;
+      const reader = this.reader(socket.actor);
+      if (!reader) {
+        ws.close(4001, "This connection was disconnected.");
+        continue;
+      }
+      const key = JSON.stringify(reader);
+      let text = built.get(key);
+      if (text === undefined) built.set(key, (text = JSON.stringify(feed(reader))));
+      ws.send(text);
     }
   }
 
@@ -330,7 +368,7 @@ export class Base extends DurableObject<Env> {
     purge(this.sql, now);
     const seq = currentSeq(this.sql);
     releaseDue(this.sql, now);
-    if (currentSeq(this.sql) > seq) this.push(changesSince(this.sql, seq));
+    if (currentSeq(this.sql) > seq) this.push((reader) => changesSince(this.sql, seq, reader));
     const due = dueJobs(this.sql, now);
     if (due.length > 0) {
       try {

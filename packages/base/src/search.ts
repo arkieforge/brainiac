@@ -1,6 +1,7 @@
 import { splitNote } from "@brainiac/core";
 
 import type { NoteRow } from "./notes.ts";
+import { project, type Principal } from "./project.ts";
 import type { Sql } from "./sql.ts";
 
 /** Chunks never mix privacy classes: each family has its own FTS table. */
@@ -59,24 +60,43 @@ export interface Hit {
 }
 
 /**
- * Keyword search over one family, best first. Returns candidates only, never chunk text: a chunk can be
- * from an older revision until it is re-indexed, and snippets must come from the note's current text.
- * Every word must match; the text is quoted, so FTS5 syntax in it (`AND`, `*`, `"`) is just text.
+ * Keyword search over the families `principal` may see, best first. Returns candidates only, never chunk
+ * text: a chunk can be from an older revision until it is re-indexed, and snippets must come from the note's
+ * current text. Every word must match; the text is quoted, so FTS5 syntax in it (`AND`, `*`, `"`) is just text.
  */
-export function search(sql: Sql, family: Family, text: string, limit = 20): Hit[] {
+export function search(sql: Sql, principal: Principal, text: string, limit = 20): Hit[] {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
   const query = words.map((word) => `"${word.replaceAll('"', '""')}"`).join(" ");
-  // Hits are re-checked against the note's current class too, so a leak needs two bugs, not one.
-  return sql.all<Hit>(
-    `SELECT chunks.noteId AS noteId, chunks.id AS chunkId, bm25(${FTS[family]}) AS rank
-     FROM ${FTS[family]}
-     JOIN chunks ON chunks.id = ${FTS[family]}.rowid
-     JOIN notes ON notes.id = chunks.noteId AND notes.deletedAt IS NULL
-     WHERE ${FTS[family]} MATCH ? ${family === "normal" ? "AND notes.class = 'normal'" : ""}
-     ORDER BY rank LIMIT ?`,
-    query,
-    limit,
+  const families: readonly Family[] = principal.sensitive ? ["normal", "sensitive"] : ["normal"];
+  const types = principal.types ? JSON.stringify(principal.types) : null;
+  // The class and the type scope are checked in SQL, before ranking and the limit, and each hit again by
+  // `project`, so a leak needs two bugs, not one.
+  return (
+    families
+      .flatMap((family) =>
+        sql.all<Hit & Pick<NoteRow, "class" | "type">>(
+          `SELECT chunks.noteId AS noteId, chunks.id AS chunkId, bm25(${FTS[family]}) AS rank,
+           notes.class AS class, notes.type AS type
+         FROM ${FTS[family]}
+         JOIN chunks ON chunks.id = ${FTS[family]}.rowid
+         JOIN notes ON notes.id = chunks.noteId AND notes.deletedAt IS NULL
+         WHERE ${FTS[family]} MATCH ? AND notes.class = ?
+           AND (? IS NULL OR notes.type IN (SELECT value FROM json_each(?)))
+         ORDER BY rank LIMIT ?`,
+          query,
+          family,
+          types,
+          types,
+          limit,
+        ),
+      )
+      .filter((hit) => project(hit, principal))
+      // shortcut: BM25 from two tables isn't one scale, so normal and sensitive hits interleave roughly; #22's
+      // fusion ranks them properly.
+      .toSorted((a, b) => a.rank - b.rank)
+      .slice(0, limit)
+      .map(({ noteId, chunkId, rank }) => ({ noteId, chunkId, rank }))
   );
 }
 

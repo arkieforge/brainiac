@@ -529,6 +529,8 @@ export class Daemon {
   }
 
   #withheld(id: string): boolean {
+    // The record withholding it (this connection lacks the sensitive scope) leaves the device the same way.
+    if (this.#client.withheld(id)) return true;
     return this.#client.state.remote.get(id)?.class === "sensitive" && !this.#options.keepSensitive;
   }
 

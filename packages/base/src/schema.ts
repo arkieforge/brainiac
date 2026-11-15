@@ -262,6 +262,16 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "ALTER TABLE proposals ADD COLUMN action TEXT",
     "ALTER TABLE proposals ADD COLUMN runId TEXT",
   ],
+  // The principal a client's cursor was earned under, so a hello under another one gets a snapshot; the note
+  // each stored answer is about, so a replay shows it only while the client may still see that note; and which
+  // change a landed answer answers, so a change id reused for another change never gets it. Rows from before
+  // this have none of it; there are none, since no deployed route forwarded a sync socket before it shipped.
+  [
+    "ALTER TABLE clients ADD COLUMN reader TEXT",
+    "ALTER TABLE results ADD COLUMN noteId TEXT",
+    "ALTER TABLE landed ADD COLUMN noteId TEXT",
+    "ALTER TABLE landed ADD COLUMN digest TEXT",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

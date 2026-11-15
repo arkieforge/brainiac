@@ -15,6 +15,7 @@ import {
 
 import { mutate, propose, type Context, type MutationResult } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
+import { project, type Principal } from "./project.ts";
 import type { Sql } from "./sql.ts";
 
 // The record's side of the sync protocol (docs/internals/sync-engine.md). The DO decodes each message and
@@ -23,6 +24,7 @@ import type { Sql } from "./sql.ts";
 interface ClientRow {
   readonly highWater: number;
   readonly ackedUpTo: number;
+  readonly reader: string | null;
 }
 
 /** The last `seq` the record assigned; 0 before its first change. */
@@ -44,19 +46,43 @@ const stateOf = (note: NoteRow): NoteState =>
       }
     : { noteId: note.id, seq: note.seq, deleted: true };
 
+/** A note `reader` may not see, by id alone: the device must drop it as it drops one that turned sensitive. */
+const withheld = (note: Pick<NoteRow, "id" | "seq">): NoteState => ({
+  noteId: note.id,
+  seq: note.seq,
+  deleted: true,
+  withheld: true,
+});
+
 /**
- * Each note changed after `cursor`, as it is now, or a snapshot when the feed no longer reaches back that far
- * (or the cursor is ahead of the record, as after a restore). Notes purged since come as deleted.
- * shortcut: every class is sent; #14 projects sensitive notes away from devices not marked as the person's.
+ * Each note changed after `cursor`, as `reader` may see it now, or a snapshot when the feed no longer reaches
+ * back that far (or the cursor is ahead of the record, as after a restore). Notes purged since come as
+ * deleted. A note the reader may not see comes as withheld, in snapshots too (deleted ones included), so a
+ * device drops one that turned sensitive while it was away, history and all; that is its id and when it
+ * changes, never its path or text.
  */
-export function changesSince(sql: Sql, cursor: number | null, attempt: number | null = null): ServerMessage {
+export function changesSince(
+  sql: Sql,
+  cursor: number | null,
+  reader: Principal,
+  attempt: number | null = null,
+): ServerMessage {
   const seq = currentSeq(sql);
   const [oldest] = sql.all<{ seq: number | null }>("SELECT min(seq) AS seq FROM changes");
   const reaches =
     cursor !== null && cursor <= seq && (cursor === seq || (oldest?.seq ?? Infinity) <= cursor + 1);
   if (!reaches) {
-    const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE deletedAt IS NULL ORDER BY seq");
-    return { type: "snapshot", seq, notes: notes.map(stateOf), attempt };
+    // Tombstones too: one the reader may not see is named as withheld, so a copy it still holds leaves the
+    // device as a withheld note does, not as an ordinary delete that keeps its history.
+    const notes = sql.all<NoteRow>("SELECT * FROM notes ORDER BY seq");
+    return {
+      type: "snapshot",
+      seq,
+      notes: notes.flatMap((note) =>
+        !project(note, reader) ? [withheld(note)] : note.deletedAt === null ? [stateOf(note)] : [],
+      ),
+      attempt,
+    };
   }
   const notes = sql.all<NoteRow>("SELECT * FROM notes WHERE seq > ? ORDER BY seq", cursor);
   const purged = sql.all<{ noteId: string; seq: number }>(
@@ -64,8 +90,34 @@ export function changesSince(sql: Sql, cursor: number | null, attempt: number | 
      WHERE seq > ? AND noteId NOT IN (SELECT id FROM notes) GROUP BY noteId`,
     cursor,
   );
-  const items = [...notes.map(stateOf), ...purged.map((row) => ({ ...row, deleted: true as const }))];
+  // shortcut: a purged note comes as plain deleted, so one that turned sensitive and was purged while a device
+  // without the scope was away leaves that device as an ordinary delete (its 7-day local history kept); name
+  // purged notes as withheld to such readers if that window matters.
+  const items = [
+    ...notes.map((note) => (project(note, reader) ? stateOf(note) : withheld(note))),
+    ...purged.map((row) => ({ noteId: row.noteId, seq: row.seq, deleted: true as const })),
+  ];
   return { type: "changes", from: cursor, to: seq, items };
+}
+
+/**
+ * A result as `reader` may see it now. Stored answers outlive the note's class (an error can quote the text
+ * it was about), so one about a note the reader can't see any more, or one purged since, keeps only its
+ * numbers and says no more than a refusal does. `about` is null for an answer about no note (a refused
+ * create, a change to a note that doesn't exist), which quotes only the change it answers.
+ */
+function asSeen(sql: Sql, result: Result, about: string | null, reader: Principal): Result {
+  if (about === null || project(getNote(sql, about), reader)) return result;
+  const { type, clientId, clientSeq, changeId, ok, rev } = result;
+  return {
+    type,
+    clientId,
+    clientSeq,
+    changeId,
+    ok,
+    ...(rev !== undefined && { rev }),
+    ...(!ok && { error: `No note with id ${about}.` }),
+  };
 }
 
 /** Forgets results the client has stored, and remembers how far it has acknowledged. */
@@ -85,21 +137,28 @@ const reset = (message: Mutate, reason: string): ServerMessage => ({
  * A client (re)connects: it gets its high-water mark and how far it has acknowledged (so a restored backup
  * or a copy can tell it is behind and repair), every result it hasn't acknowledged, and what changed since
  * its cursor. The record never resets on hello: a late hello carries old counters, and only the client
- * knows its current ones.
+ * knows its current ones. A client reading under another principal than its cursor was earned under (a
+ * scope granted or narrowed since) gets a snapshot: the feed after its cursor says nothing of notes that
+ * changed visibility without changing.
  */
-export function hello(sql: Sql, message: Hello, now: number): ServerMessage[] {
+export function hello(sql: Sql, message: Hello, now: number, reader: Principal): ServerMessage[] {
+  // Canonical, so the same scopes written another way are still the same principal.
+  const key = JSON.stringify([reader.sensitive, reader.types?.toSorted() ?? null]);
   return sql.transaction(() => {
+    const [before] = sql.all<ClientRow>("SELECT * FROM clients WHERE clientId = ?", message.clientId);
     sql.all(
-      `INSERT INTO clients (clientId, lastSeenAt, appVersion) VALUES (?, ?, ?)
-       ON CONFLICT (clientId) DO UPDATE SET lastSeenAt = excluded.lastSeenAt, appVersion = excluded.appVersion`,
+      `INSERT INTO clients (clientId, lastSeenAt, appVersion, reader) VALUES (?, ?, ?, ?)
+       ON CONFLICT (clientId) DO UPDATE SET lastSeenAt = excluded.lastSeenAt, appVersion = excluded.appVersion,
+         reader = excluded.reader`,
       message.clientId,
       now,
       message.appVersion,
+      key,
     );
     acknowledge(sql, message.clientId, message.ackedUpTo);
     const [client] = sql.all<ClientRow>("SELECT * FROM clients WHERE clientId = ?", message.clientId);
-    const results = sql.all<{ result: string }>(
-      "SELECT result FROM results WHERE clientId = ? ORDER BY clientSeq",
+    const results = sql.all<{ result: string; noteId: string | null }>(
+      "SELECT result, noteId FROM results WHERE clientId = ? ORDER BY clientSeq",
       message.clientId,
     );
     return [
@@ -109,8 +168,8 @@ export function hello(sql: Sql, message: Hello, now: number): ServerMessage[] {
         highWater: client?.highWater ?? 0,
         ackedUpTo: client?.ackedUpTo ?? 0,
       },
-      changesSince(sql, message.cursor, message.attempt),
-      ...results.map((row): ServerMessage => JSON.parse(row.result)),
+      changesSince(sql, before?.reader === key ? message.cursor : null, reader, message.attempt),
+      ...results.map((row) => asSeen(sql, JSON.parse(row.result), row.noteId, reader)),
     ];
   });
 }
@@ -121,7 +180,7 @@ export function hello(sql: Sql, message: Hello, now: number): ServerMessage[] {
  * digest gets the stored result; a different mutation under a used number, or one already acknowledged,
  * means two machines share the id: the reply is a reset, which the copy still holding that change acts on. Every result, refused or not, uses up its number.
  */
-export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage {
+export function receive(sql: Sql, message: Mutate, ctx: Context, reader: Principal): ServerMessage {
   const digest = createHash("sha256")
     .update(JSON.stringify([message.changeId, message.noteId, message.baseRev, message.change]))
     .digest("hex");
@@ -134,12 +193,12 @@ export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage 
     }
     acknowledge(sql, message.clientId, message.ackedUpTo);
     if (message.clientSeq <= client.highWater) {
-      const [stored] = sql.all<{ digest: string; result: string }>(
-        "SELECT digest, result FROM results WHERE clientId = ? AND clientSeq = ?",
+      const [stored] = sql.all<{ digest: string; result: string; noteId: string | null }>(
+        "SELECT digest, result, noteId FROM results WHERE clientId = ? AND clientSeq = ?",
         message.clientId,
         message.clientSeq,
       );
-      if (stored?.digest === digest) return JSON.parse(stored.result);
+      if (stored?.digest === digest) return asSeen(sql, JSON.parse(stored.result), stored.noteId, reader);
       return reset(message, "Another device is using this client id.");
     }
     if (message.clientSeq > client.highWater + 1) {
@@ -148,33 +207,57 @@ export function receive(sql: Sql, message: Mutate, ctx: Context): ServerMessage 
     // Answered before under some client id (a replay after a repair): the same answer, never applied again,
     // so a note deleted or reverted since stays that way and no proposal is opened twice.
     // shortcut: answers are kept for 90 days, as long as the feed; a replay older than that is applied anew.
-    const [landed] = sql.all<{ result: string }>(
-      "SELECT result FROM landed WHERE changeId = ?",
+    // A repaired copy resends a change with a fresh baseRev, so only the note and the change itself must match.
+    const change = createHash("sha256")
+      .update(JSON.stringify([message.changeId, message.noteId, message.change]))
+      .digest("hex");
+    const [landed] = sql.all<{ result: string; noteId: string | null; digest: string | null }>(
+      "SELECT result, noteId, digest FROM landed WHERE changeId = ?",
       message.changeId,
     );
-    const result: Result = landed
-      ? { ...JSON.parse(landed.result), clientId: message.clientId, clientSeq: message.clientSeq }
-      : apply(sql, message, {
-          ...ctx,
-          ...(message.approvalId !== undefined && { approvalId: message.approvalId }),
-        });
-    if (!landed) {
+    let result: Result;
+    let about: string | null;
+    if (landed && landed.digest !== change) {
+      // The same id on another change: never this answer, and never applied either.
+      result = {
+        type: "result",
+        clientId: message.clientId,
+        clientSeq: message.clientSeq,
+        changeId: message.changeId,
+        ok: false,
+        error: "This change id was already used for another change.",
+      };
+      about = null;
+    } else if (landed) {
+      result = { ...JSON.parse(landed.result), clientId: message.clientId, clientSeq: message.clientSeq };
+      about = landed.noteId;
+    } else {
+      result = apply(
+        sql,
+        message,
+        { ...ctx, reader, ...(message.approvalId !== undefined && { approvalId: message.approvalId }) },
+        reader,
+      );
+      about = getNote(sql, message.noteId) ? message.noteId : null;
       sql.all(
-        "INSERT INTO landed (changeId, result, at) VALUES (?, ?, ?)",
+        "INSERT INTO landed (changeId, result, at, noteId, digest) VALUES (?, ?, ?, ?, ?)",
         message.changeId,
         JSON.stringify(result),
         ctx.now,
+        about,
+        change,
       );
     }
     sql.all("UPDATE clients SET highWater = ? WHERE clientId = ?", message.clientSeq, message.clientId);
     sql.all(
-      "INSERT INTO results (clientId, clientSeq, digest, result) VALUES (?, ?, ?, ?)",
+      "INSERT INTO results (clientId, clientSeq, digest, result, noteId) VALUES (?, ?, ?, ?, ?)",
       message.clientId,
       message.clientSeq,
       digest,
       JSON.stringify(result),
+      about,
     );
-    return result;
+    return asSeen(sql, result, about, reader);
   });
 }
 
@@ -227,8 +310,11 @@ function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { sta
   return { ...done, ok: false, error };
 }
 
-/** Applies one client change under the merge rules: nothing is dropped silently. */
-function apply(sql: Sql, message: Mutate, ctx: Context): Result {
+/**
+ * Applies one client change under the merge rules: nothing is dropped silently. A note `reader` may not see
+ * is, to it, no note: its changes are refused the same way, so a reply never says what the note holds.
+ */
+function apply(sql: Sql, message: Mutate, ctx: Context, reader: Principal): Result {
   const { change, noteId } = message;
   const done = {
     type: "result",
@@ -236,12 +322,14 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
     clientSeq: message.clientSeq,
     changeId: message.changeId,
   } as const;
-  const current = getNote(sql, noteId);
+  const current = project(getNote(sql, noteId), reader);
 
   // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
   // would roll back and leave the client resending it forever, stuck behind it.
   const unreadable = change.kind === "delete" ? undefined : parseError(change.raw);
   if (unreadable !== undefined) return { ...done, ok: false, error: unreadable };
+  // shortcut: a reader may still create a note it then can't see (a sensitive one, or another type); whether a
+  // connection may is its level's call (#13).
   if (change.kind === "create" && !current) {
     const id = parseNote(change.raw).data["id"];
     if (id !== noteId) return { ...done, ok: false, error: "The note's id must match noteId." };
@@ -301,14 +389,20 @@ function apply(sql: Sql, message: Mutate, ctx: Context): Result {
 export interface Served {
   /** For the client that sent the message. */
   readonly replies: readonly ServerMessage[];
-  /** For every connected client, when the message changed the record. */
-  readonly push?: ServerMessage;
+  /** For every connected client, as each one's principal may see it, when the message changed the record. */
+  readonly push?: (reader: Principal) => ServerMessage;
 }
 
-/** One decoded client message, end to end: what the transport sends back and what it pushes to everyone. */
-export function serve(sql: Sql, message: ClientMessage, ctx: Context): Served {
-  if (message.type === "hello") return { replies: hello(sql, message, ctx.now) };
+/**
+ * One decoded client message from a client reading as `reader`, end to end: what the transport sends back
+ * and what it pushes to everyone.
+ */
+export function serve(sql: Sql, message: ClientMessage, ctx: Context, reader: Principal): Served {
+  if (message.type === "hello") return { replies: hello(sql, message, ctx.now, reader) };
   const before = currentSeq(sql);
-  const reply = receive(sql, message, ctx);
-  return { replies: [reply], ...(currentSeq(sql) > before && { push: changesSince(sql, before) }) };
+  const reply = receive(sql, message, ctx, reader);
+  return {
+    replies: [reply],
+    ...(currentSeq(sql) > before && { push: (other: Principal) => changesSince(sql, before, other) }),
+  };
 }
