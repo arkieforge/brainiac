@@ -10,6 +10,20 @@ export const passes = (strict: boolean, failing: number, samples: number) =>
   strict ? failing === 0 : failing * 2 < samples;
 
 /**
+ * Whether an eval whose cases all grade one shared run needs another sample: once `samples` ran, a 3rd when a
+ * case that isn't strict has disagreeing results.
+ */
+export const another = (
+  sample: number,
+  samples: number,
+  cases: readonly { readonly id: string; readonly strict: boolean }[],
+  rows: readonly { readonly case: string; readonly ok: boolean }[],
+) =>
+  sample <= samples ||
+  (sample === samples + 1 &&
+    cases.some((c) => !c.strict && new Set(rows.filter((r) => r.case === c.id).map((r) => r.ok)).size > 1));
+
+/**
  * Runs `one` `samples` times, then once more when the results disagree, unless the case is strict, whose verdict a
  * failing sample has settled already.
  */

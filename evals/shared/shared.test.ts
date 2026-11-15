@@ -1,20 +1,27 @@
 // The shared harness's logic, which CI runs: verdicts and sampling, reading each harness's events, the model check,
 // and baselines. Paid runs themselves don't run here (evals/README.md).
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
 import { readBaseline, report } from "./cli.ts";
-import { checkModel, command, fromClaude, fromCodex } from "./runners.ts";
-import { passes, sampled } from "./sampling.ts";
+import { checkModel, codexModel, command, fromClaude, fromCodex } from "./runners.ts";
+import { another, passes, sampled } from "./sampling.ts";
 
 const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** A run of two samples whose results are `oks`, a 3rd one passing. */
 const sampleRun = (oks: boolean[], strict: boolean) =>
   sampled(2, strict, async (sample) => ({ sample, ok: oks[sample - 1] ?? true }));
 const item = (value: object) => ({ type: "item.completed", item: value });
+/** One shared run's rows: the guard's and the control's results, sample by sample. */
+const rows = (guard: boolean[], control: boolean[]) => [
+  ...guard.map((ok) => ({ case: "guard", ok })),
+  ...control.map((ok) => ({ case: "control", ok })),
+];
+/** A line of Codex's session file naming the model a turn went to. */
+const turn = (model: string) => JSON.stringify({ type: "turn_context", payload: { model } });
 const ASK = {
   prompt: "Which university?",
   mcp: { url: "http://127.0.0.1:1/mcp", token: "secret-token" },
@@ -36,6 +43,17 @@ describe("sampling", () => {
     expect((await sampleRun([true, false, true], false)).map((r) => r.sample)).toEqual([1, 2, 3]);
     expect((await sampleRun([true, true], false)).map((r) => r.sample)).toEqual([1, 2]);
     expect((await sampleRun([true, false], true)).map((r) => r.sample)).toEqual([1, 2]);
+  });
+
+  it("takes a 3rd shared run when a control disagrees, never for a guard alone", () => {
+    const cases = [
+      { id: "guard", strict: true },
+      { id: "control", strict: false },
+    ];
+    expect(another(2, 2, cases, [])).toBe(true);
+    expect(another(3, 2, cases, rows([true, true], [true, false]))).toBe(true);
+    expect(another(3, 2, cases, rows([true, false], [true, true]))).toBe(false);
+    expect(another(4, 2, cases, rows([true, true, true], [true, false, true]))).toBe(false);
   });
 });
 
@@ -67,6 +85,12 @@ describe("runners", () => {
       ],
       "gpt-6.1-sol",
     );
+    expect(() => fromCodex([{ type: "turn.failed", error: { message: "limit" } }], "gpt-6.1-sol")).toThrow(
+      /didn't finish/,
+    );
+    expect(() => fromCodex([item({ type: "agent_message", text: "half" })], "gpt-6.1-sol")).toThrow(
+      /didn't finish/,
+    );
     expect(run.calls.map((call) => call.tool)).toEqual(["mcp__brainiac__describe", "Bash", "Edit"]);
     expect([run.text, run.model, run.usage]).toEqual([
       "Northvale University.",
@@ -84,6 +108,7 @@ describe("runners", () => {
       },
       {
         type: "result",
+        subtype: "success",
         result: "Northvale.",
         total_cost_usd: 0.25,
         usage: { input_tokens: 3, output_tokens: 9 },
@@ -96,6 +121,30 @@ describe("runners", () => {
       usage: { ...NO_USAGE, input: 3, output: 9 },
       costUsd: 0.25,
     });
+    expect(() => fromClaude([{ type: "result", subtype: "error_max_turns", is_error: true }])).toThrow(
+      /didn't finish/,
+    );
+    expect(() => fromClaude([])).toThrow(/didn't finish/);
+  });
+
+  it("reads the model Codex sent each turn to from the session it wrote", () => {
+    const home = mkdtempSync(join(tmpdir(), "brainiac-eval-test-"));
+    try {
+      expect(codexModel(home)).toBe("");
+      const day = join(home, "sessions/2026/11/16");
+      mkdirSync(day, { recursive: true });
+      writeFileSync(
+        join(day, "rollout.jsonl"),
+        [JSON.stringify({ type: "session_meta" }), turn("gpt-6.1-sol")].join("\n"),
+      );
+      expect(codexModel(home)).toBe("gpt-6.1-sol");
+      writeFileSync(join(day, "rollout.jsonl"), [turn("gpt-6.1-sol"), turn("gpt-6-luna")].join("\n"));
+      expect(() => checkModel("gpt-6.1-sol", codexModel(home))).toThrow(
+        /gpt-6.1-sol and gpt-6-luna answered/,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("refuses a run that a model other than the one asked for answered", () => {

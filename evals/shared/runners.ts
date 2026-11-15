@@ -3,7 +3,16 @@
 // machine's settings, instructions, hooks, plugins or other servers. Both report the same shape, so a grader never
 // knows which ran.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, copyFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -73,7 +82,6 @@ export function command(ask: Ask) {
       args: [
         "exec",
         "--json",
-        "--ephemeral",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
@@ -150,13 +158,37 @@ function codexHome() {
   };
 }
 
+/**
+ * The model Codex sent each turn to, from the session it wrote in `home`: what its config resolved, not just what
+ * the command asked for. Several different ones read as all of them, which no asked model matches.
+ */
+export function codexModel(home: string) {
+  const sessions = join(home, "sessions");
+  const lines = existsSync(sessions)
+    ? readdirSync(sessions, { recursive: true, encoding: "utf8" })
+        .filter((file) => file.endsWith(".jsonl"))
+        .flatMap((file) => readFileSync(join(sessions, file), "utf8").split("\n"))
+    : [];
+  const models = new Set(
+    lines.flatMap((line) => {
+      if (!line.includes('"turn_context"')) return [];
+      const entry = record(JSON.parse(line));
+      const model = record(entry["payload"])["model"];
+      return entry["type"] === "turn_context" && typeof model === "string" ? [model] : [];
+    }),
+  );
+  return [...models].join(" and ");
+}
+
 const record = (value: unknown): Event => (typeof value === "object" && value !== null ? { ...value } : {});
 const count = (value: unknown) => (typeof value === "number" ? value : 0);
 
-/** Claude Code's stream-json events as a run. */
+/** Claude Code's stream-json events as a run. Throws unless it ended in a successful result: no answer to grade. */
 export function fromClaude(events: readonly Event[]): Omit<Run, "events"> {
   const init = events.find((e) => e["type"] === "system" && e["subtype"] === "init");
   const result = events.find((e) => e["type"] === "result");
+  if (result?.["subtype"] !== "success" || result["is_error"] === true)
+    throw new Error(`The run didn't finish: ${JSON.stringify(result ?? "no result event")}`);
   const usage = record(result?.["usage"]);
   return {
     calls: events.flatMap((event) => {
@@ -179,9 +211,13 @@ export function fromClaude(events: readonly Event[]): Omit<Run, "events"> {
 
 /**
  * Codex's `--json` events as a run, its tools named as Claude Code names them: an MCP call `mcp__<server>__<tool>`,
- * a command `Bash`, and a file change (`apply_patch`) `Edit`. Codex doesn't report its model, so it's the one asked.
+ * a command `Bash`, and a file change (`apply_patch`) `Edit`. Its events don't name the model, so `model` comes from
+ * the session Codex wrote (`codexModel`). Throws unless every turn completed.
  */
 export function fromCodex(events: readonly Event[], model: string): Omit<Run, "events"> {
+  const failed = events.find((e) => e["type"] === "turn.failed");
+  if (failed || !events.some((e) => e["type"] === "turn.completed"))
+    throw new Error(`The run didn't finish: ${JSON.stringify(failed ?? "no completed turn")}`);
   const items = events.filter((e) => e["type"] === "item.completed").map((e) => record(e["item"]));
   const turns = events.filter((e) => e["type"] === "turn.completed").map((e) => record(e["usage"]));
   const sum = (key: string) => turns.reduce((total, usage) => total + count(usage[key]), 0);
@@ -238,8 +274,9 @@ export async function run(ask: Ask): Promise<Run> {
         events.push(JSON.parse(line));
       } catch {} // not an event: the harness's own warnings
     }
-    await ended;
-    const done = codex ? fromCodex(events, ask.model ?? "") : fromClaude(events);
+    const code = await ended;
+    if (code !== 0) throw new Error(`${bin} exited with ${code}.`);
+    const done = codex ? fromCodex(events, codexModel(codex.home)) : fromClaude(events);
     checkModel(ask.model, done.model);
     return { events, ...done };
   } finally {
@@ -252,6 +289,6 @@ export async function run(ask: Ask): Promise<Run> {
 export function checkModel(asked: string | undefined, actual: string) {
   if (actual === "")
     throw new Error("The run reported no model, so it can't be trusted to be the one asked for.");
-  if (asked !== undefined && !actual.includes(asked))
+  if (asked !== undefined && (actual.includes(" and ") || !actual.includes(asked)))
     throw new Error(`Asked for ${asked}, but ${actual} answered.`);
 }

@@ -17,6 +17,7 @@ import {
 } from "../../packages/base/src/index.ts";
 import { context, dryRun, flags, readBaseline, report, type Row } from "../shared/cli.ts";
 import { installed, isCodex, run } from "../shared/runners.ts";
+import { another } from "../shared/sampling.ts";
 import { connection, fixtureRecord, PERSON, ROOT, serve, signature, SKILL } from "../shared/world.ts";
 import { CASES, type Outcome } from "./cases.ts";
 
@@ -101,8 +102,10 @@ if (!installed(bin)) throw new Error(`The photos eval runs ${bin}: it must be on
 
 mkdirSync(options.out, { recursive: true });
 const rows: Row[] = [];
-// Every case checks the same run, so a sample is one run and none gets a 3rd, as most cases are guards.
-for (let sample = 1; sample <= options.samples; sample++) {
+// Guards fail on any failing sample; a control fails when half or more do.
+const graded = options.cases.map((c) => ({ ...c, strict: c.kind !== "control" }));
+// Every case checks the same run, so a sample is one run, and a 3rd when a control disagrees.
+for (let sample = 1; another(sample, options.samples, graded, rows); sample++) {
   const made = world();
   const { sql } = made;
   const mcp = await serve(sql, made.photos);
@@ -161,8 +164,7 @@ const passed = report(options.out, {
   name: "photos",
   model: options.model,
   samples: options.samples,
-  // Guards fail on any failing sample; a control fails when half or more do.
-  cases: options.cases.map((c) => ({ ...c, strict: c.kind !== "control" })),
+  cases: graded,
   rows,
   ...(options.baseline && { baseline: readBaseline(options.baseline) }),
 });

@@ -19,6 +19,7 @@ import {
 } from "../../packages/base/src/index.ts";
 import { context, flags, readBaseline, report, type Row } from "../shared/cli.ts";
 import { checkModel, fromClaude, isCodex } from "../shared/runners.ts";
+import { another } from "../shared/sampling.ts";
 import { addItem, connection, fixtureRecord, ROOT, serve } from "../shared/world.ts";
 import { CASES, ITEMS, type Outcome } from "./cases.ts";
 
@@ -104,8 +105,10 @@ if (!claude) throw new Error("The filing eval runs Claude Code: claude must be o
 
 mkdirSync(options.out, { recursive: true });
 const rows: Row[] = [];
-// Every case checks the same run, so a sample is one inbox filed; none gets a 3rd, as most cases are guards.
-for (let sample = 1; sample <= options.samples; sample++) {
+// Guards fail on any failing sample (they are exactness checks); a control fails when half or more do.
+const graded = options.cases.map((c) => ({ ...c, strict: c.kind !== "control" }));
+// Every case checks the same run, so a sample is one inbox filed, and a 3rd when a control disagrees.
+for (let sample = 1; another(sample, options.samples, graded, rows); sample++) {
   const made = world();
   const { sql } = made;
   const known = new Set(listNotes(sql).map((note) => note.id));
@@ -127,6 +130,7 @@ for (let sample = 1; sample <= options.samples; sample++) {
     mcp.close();
     rmSync(home, { recursive: true, force: true });
   }
+  if (filed.code !== 0) throw new Error(`claude exited with ${filed.code}.`);
   const done = fromClaude(filed.events);
   checkModel(options.model, done.model);
   const init = filed.events.find((e) => e["type"] === "system" && e["subtype"] === "init");
@@ -177,8 +181,7 @@ const passed = report(options.out, {
   name: "filing",
   model: options.model,
   samples: options.samples,
-  // Guards fail on any failing sample (they are exactness checks); a control fails when half or more do.
-  cases: options.cases.map((c) => ({ ...c, strict: c.kind !== "control" })),
+  cases: graded,
   rows,
   ...(options.baseline && { baseline: readBaseline(options.baseline) }),
 });

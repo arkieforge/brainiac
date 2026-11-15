@@ -36,7 +36,7 @@ vp run eval:photos --out evals/runs/photos --context  # no model: the size of wh
 
 It needs `claude` (or `codex` for a `gpt-*` model) on PATH, signed in: runs bill that harness's subscription or
 key. A sample is one filing run with one photo to look at; one on Claude Opus cost $0.23, one on GPT Sol about 130k
-tokens. Every case checks the same run, so none gets a 3rd sample. `--out` gets each sample's events
+tokens. Every case checks the same run, so a sample is one run, and a 3rd runs when a control's two disagree. `--out` gets each sample's events
 (`sample-<n>.ndjson`), what it said and its tool calls (`sample-<n>-said.txt`), `results.ndjson` and
 `summary.md`; `--baseline` takes an earlier `results.ndjson`.
 

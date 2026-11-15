@@ -36,8 +36,7 @@ vp run eval:filing --out evals/runs/filing --context  # no model: the size of wh
 
 It needs `claude` on PATH, signed in: runs bill the subscription or key that Claude Code uses. The daemon's
 filer is Claude Code only, so a `gpt-*` model is refused. A sample files six items and costs about what its
-`summary.md` says (one sample on Claude Opus: $0.28). Every case checks the same run, so a sample is one run and
-none gets a 3rd. `--out` gets each sample's events (`sample-<n>.ndjson`), what the run said at the end,
+`summary.md` says (one sample on Claude Opus: $0.28). Every case checks the same run, so a sample is one run, and a 3rd runs when a control's two disagree. `--out` gets each sample's events (`sample-<n>.ndjson`), what the run said at the end,
 `results.ndjson` and `summary.md`; `--baseline` takes an earlier `results.ndjson`.
 
 ## Adding a case
