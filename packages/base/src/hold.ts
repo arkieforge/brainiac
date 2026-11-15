@@ -73,6 +73,8 @@ function heldOf(manifest: Manifest | undefined) {
 
 const body = (note: NoteRow) => splitNote(note.raw).body;
 
+const newlines = (text: string | undefined) => (text ?? "").split("\n").length - 1;
+
 /**
  * Whether `is` only adds new blocks after `was`: a blank line where they meet, or a heading on a line of its own.
  * Text on the next line without a blank one continues the last paragraph, so it changes what that says.
@@ -81,8 +83,9 @@ function appended(was: string, is: string): boolean {
   if (!is.startsWith(was)) return false;
   const added = is.slice(was.length);
   if (added === "" || was.trim() === "") return true;
-  const breaks = (/\n*$/.exec(was)?.[0].length ?? 0) + (/^\n*/.exec(added)?.[0].length ?? 0);
-  return breaks >= 2 || (breaks === 1 && added.replace(/^\n/, "").startsWith("#"));
+  const breaks = newlines(/(?:\r?\n)*$/.exec(was)?.[0]) + newlines(/^(?:\r?\n)*/.exec(added)?.[0]);
+  // An ATX heading: one to six `#` and then a space or the line's end. `#tag` continues the paragraph.
+  return breaks >= 2 || (breaks === 1 && /^#{1,6}(?:[ \t]|\r?\n|$)/.test(added.replace(/^\r?\n/, "")));
 }
 
 /** Whether a write-level change with this effect waits out the hold. */

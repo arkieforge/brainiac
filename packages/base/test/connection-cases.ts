@@ -464,13 +464,26 @@ export const connectionCases: Record<string, Case> = {
     };
     applied(mutate(sql, withBody("Led a team of 5"), human()));
     // So is the next line without a blank one: markdown reads it as the same paragraph.
-    for (const body of ["Led a team of 50", "Led a team of 5 (declined)", "Led a team of 5\n(declined)"])
+    for (const body of [
+      "Led a team of 50",
+      "Led a team of 5 (declined)",
+      "Led a team of 5\n(declined)",
+      // Not a heading without the space: the same paragraph.
+      "Led a team of 5\n#1 of 3 teams, declined",
+    ])
       proposed(mutate(sql, withBody(body), via(writer)));
     // A new field leaves that body as it is.
     applied(mutate(sql, patchOf(sql, role, [set("floor", 3)]), via(writer)));
     // A new paragraph or heading is new text.
     applied(mutate(sql, withBody("Led a team of 5\n\nThen more."), via(writer)));
     applied(mutate(sql, withBody("Led a team of 5\n\nThen more.\n## Later\n"), via(writer)));
+    applied(
+      mutate(
+        sql,
+        withBody("Led a team of 5\n\nThen more.\n## Later\n\r\n\r\nWindows paragraph."),
+        via(writer),
+      ),
+    );
   },
 
   "a released change applies only as it was held": (sql, fixtures) => {

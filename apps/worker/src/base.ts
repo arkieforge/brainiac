@@ -196,12 +196,18 @@ export class Base extends DurableObject<Env> {
   async grant(plan: GrantPlan, response: AuthenticationResponseJSON, approver: Approver): Promise<Granted> {
     const signed = await this.check(response, grantHash(plan), approver);
     // The check awaited: a change to the connection meanwhile moved its rev, which the plan names.
-    return "error" in signed ? signed : grant(this.sql, plan, signed);
+    if ("error" in signed) return signed;
+    const result = grant(this.sql, plan, signed);
+    // A grant can move or clear waiting releases: the alarm follows them.
+    this.wake();
+    return result;
   }
 
   /** Tightens a connection; no passkey needed. */
   restrict(connectionId: string, change: Parameters<typeof restrict>[2]): Granted {
-    return restrict(this.sql, connectionId, change);
+    const result = restrict(this.sql, connectionId, change);
+    this.wake();
+    return result;
   }
 
   disconnect(connectionId: string): void {
