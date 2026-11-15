@@ -17,8 +17,18 @@ person. Use its type and field names; don't invent your own.
 ## Find, then read
 
 - `query` finds notes by type and fields. Use it before anything else.
+- `search` finds notes and file text by words and meaning when you can't name the fields. `related` lists the
+  notes linked to one, like the attempt a new score supersedes or the document that proves it.
 - `get` reads notes by id or path, with their body, sources, history and `rev`.
 - A note you can't see reads the same as one that doesn't exist. Say you couldn't find it; don't guess.
+
+## Answer from the record
+
+- For a question about the person, call `ask {mode: "context", question}` with their words. It returns the
+  notes that answer it, each value with its cite and whether the person verified it. Answer only from them.
+- If they don't hold the answer, say it isn't in their record. Never fill it from memory or what's typical.
+- Before you give numbers or dates, check your draft with `ask {mode: "verify", text, claims}`: one claim
+  `{note, field, value}` per value you state. Fix each mismatch and each uncited number or date, then verify again.
 
 ## Quote values exactly
 

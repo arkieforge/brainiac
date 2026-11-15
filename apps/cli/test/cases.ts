@@ -1259,11 +1259,13 @@ const cases: Record<string, () => Promise<void>> = {
         ["get", { ids: [A, B, C] }],
         ["get", { paths: ["notes/c.md"], body: false }],
       ] as const;
-      const writes = [
+      const refused = [
         ["update", { id: A, rev: record.note(A)!.rev, set: { status: "offline edit" } }],
         ["create", { type: "Note", fields: { title: "Offline note" } }],
         ["undo", { run: "x" }],
         ["request_info", { question: "Which school?" }],
+        // A read the copy can't answer yet (#118) is refused the same way.
+        ["ask", { mode: "context", question: "Which school?" }],
       ] as const;
       const requests = [
         {
@@ -1278,7 +1280,7 @@ const cases: Record<string, () => Promise<void>> = {
         },
         { jsonrpc: "2.0", method: "notifications/initialized" },
         { jsonrpc: "2.0", id: 1, method: "tools/list" },
-        ...[...calls, ...writes].map(([name, args], i) => ({
+        ...[...calls, ...refused].map(([name, args], i) => ({
           jsonrpc: "2.0",
           id: i + 2,
           method: "tools/call",
@@ -1300,7 +1302,21 @@ const cases: Record<string, () => Promise<void>> = {
       equal(answers.get(0)?.result?.serverInfo?.name, "brainiac", `initialize answers offline, ${what}`);
       same(
         answers.get(1)?.result?.tools?.map((t: { name: string }) => t.name),
-        ["describe", "query", "get", "add", "create", "update", "undo", "request_info", "inbox", "fill_form"],
+        [
+          "describe",
+          "query",
+          "get",
+          "search",
+          "related",
+          "ask",
+          "add",
+          "create",
+          "update",
+          "undo",
+          "request_info",
+          "inbox",
+          "fill_form",
+        ],
       );
       const syncedAt = Number(new Date(JSON.parse(answers.get(2).result.content[0].text).syncedAt));
       ok(syncedAt > 0 && syncedAt <= Date.now(), "the time of the last sync");
@@ -1334,10 +1350,13 @@ const cases: Record<string, () => Promise<void>> = {
       same(got.missing, scope && keepSensitive ? [] : [C], `the sensitive note offline, ${what}`);
       equal(got.notes.find((n: { id: string }) => n.id === A)?.rev, record.note(A)!.rev, "the record's rev");
       if (scope && !keepSensitive) ok(got.cloudOnly, "says sensitive notes are cloud-only here");
-      for (const [i] of writes.entries()) {
-        const refused = answers.get(calls.length + 2 + i);
-        equal(refused.result.isError, true, `${writes[i]![0]} refuses offline, ${what}`);
-        ok(/can't be reached/.test(refused.result.content[0].text), refused.result.content[0].text);
+      for (const [i, [name]] of refused.entries()) {
+        const answer = answers.get(calls.length + 2 + i);
+        const text: string = answer.result.content[0].text;
+        equal(answer.result.isError, true, `${name} refuses offline, ${what}`);
+        ok(/can't be reached/.test(text), text);
+        // A read is refused as a read, never told it "changed nothing".
+        equal(/changed nothing/.test(text), name !== "ask", text);
       }
       // Nothing changed or queued: the record, the file, and the sync client's pending changes.
       equal(record.note(A)?.raw.includes("offline edit"), false);
