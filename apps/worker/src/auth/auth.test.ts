@@ -366,10 +366,39 @@ describe("recovery", () => {
     expect((await intruder.remove(real?.id ?? "")).status).toBe(403);
     expect(await intruder.passkeys()).toHaveLength(2);
 
-    // The owner removes the intruder's waiting passkey; that needs no fresh passkey proof.
+    // The owner removes the intruder's waiting passkey; that needs no fresh passkey proof. Without one it signs
+    // nobody out, or the intruder could sign the owner out everywhere by removing its own.
     later(VOUCH_MS + 1);
     const pending = (await owner.passkeys()).find((p) => !canApprove(p));
-    expect((await owner.remove(pending?.id ?? "")).status).toBe(200);
+    expect(await owner.remove(pending?.id ?? "")).toEqual({
+      status: 200,
+      body: { status: true, signedOut: false },
+    });
+    expect(await owner.passkeys()).toHaveLength(1);
+    expect(await intruder.passkeys()).toHaveLength(1);
+  });
+
+  it("signs out whoever added a waiting passkey when the owner removes it with a passkey", async () => {
+    const { student, browser } = setup();
+    const real = createAuthenticator(ORIGIN);
+    const owner = await student(real);
+    const intruder = browser();
+    await intruder.signInWithCode();
+    await intruder.addPasskey(createAuthenticator(ORIGIN));
+
+    later(SIGN_UP_MS + 1);
+    await owner.signInWithPasskey(real);
+    const pending = (await owner.passkeys()).find((p) => !canApprove(p));
+    expect(await owner.remove(pending?.id ?? "")).toEqual({
+      status: 200,
+      body: { status: true, signedOut: true },
+    });
+
+    // Even with its cached cookie, the intruder's session can't add another passkey or remove one.
+    await expect(intruder.addPasskey(createAuthenticator(ORIGIN))).rejects.toThrow(/answered 401/);
+    const [kept] = await owner.passkeys();
+    expect((await intruder.remove(kept?.id ?? "")).status).toBe(401);
+    expect((await intruder.call("/get-session?disableCookieCache=true")).body).toBeNull();
     expect(await owner.passkeys()).toHaveLength(1);
   });
 

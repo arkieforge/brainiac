@@ -154,19 +154,37 @@ export const recovery = (sendEmail: Mailer) =>
                   { field: "approvesAt", ...approvesAt },
                 ],
               });
-            if ((await removeIf({ value: null })) + (await removeIf({ operator: "gt", value: now })) > 0) {
-              return ctx.json({ status: true });
-            }
-            const proof = session.session.passkeyId
-              ? await ctx.context.adapter.findOne<ApprovingPasskey>({
-                  model: "passkey",
+            const proved = async () => {
+              const proof = session.session.passkeyId
+                ? await ctx.context.adapter.findOne<ApprovingPasskey>({
+                    model: "passkey",
+                    where: [
+                      { field: "id", value: session.session.passkeyId },
+                      { field: "userId", value: session.user.id },
+                    ],
+                  })
+                : null;
+              return vouches(session.session, proof ? [proof] : [], now);
+            };
+            const unfinished = await removeIf({ value: null });
+            const waiting = await removeIf({ operator: "gt", value: now });
+            if (unfinished + waiting > 0) {
+              // Whoever added a waiting passkey got in by email and can still act, so the owner's removal ends
+              // every other session too. Only with proof: otherwise an intruder removing its own would sign the
+              // owner out everywhere. One statement, so no row cap leaves a session behind.
+              const signedOut = waiting > 0 && (await proved());
+              if (signedOut) {
+                await ctx.context.adapter.deleteMany({
+                  model: "session",
                   where: [
-                    { field: "id", value: session.session.passkeyId },
                     { field: "userId", value: session.user.id },
+                    { field: "token", operator: "ne", value: session.session.token },
                   ],
-                })
-              : null;
-            if (!vouches(session.session, proof ? [proof] : [], now)) {
+                });
+              }
+              return ctx.json({ status: true, signedOut });
+            }
+            if (!(await proved())) {
               throw new APIError("FORBIDDEN", {
                 message: "Confirm with a passkey that can approve to remove this one.",
               });
