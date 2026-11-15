@@ -2,7 +2,7 @@
 // `/mcp` with this device's token, so the tools, their answers and the connection's grants are exactly the
 // record's, as over remote MCP, and a narrowed grant applies to the next call.
 // shortcut: offline, calls fail with a clear error instead of answering reads from the local copy; that needs the
-// copy's revisions and the connection's last grants on disk (#92).
+// copy's revisions and the connection's last grants on disk (#94).
 import { createInterface } from "node:readline";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
