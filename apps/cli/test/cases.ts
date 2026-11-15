@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PERSON, putChunks, search, serve } from "@brainiac/base";
+import { chunkNote, mutate, PERSON, putChunks, search, serve } from "@brainiac/base";
 import { decodeClientMessage, patch, type NoteState } from "@brainiac/core";
 
 import { doctor, lockVault, request, restore, watchRequests } from "../src/commands.ts";
@@ -1136,6 +1136,76 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  // Online, `brainiac mcp serve` forwards every call to the record, so a laptop's answers are the cloud's. Offline
+  // only the local copy can answer: keyword-only, over the notes this device holds. A laptop that doesn't keep
+  // sensitive notes answers as the record answers a reader without the sensitive scope; one that keeps them, as
+  // it answers the person.
+  async "offline, the local copy answers search as the record does, keyword-only, on either device setting"() {
+    const notes = [
+      [
+        A,
+        "notes/a.md",
+        "normal",
+        "type: Project\ntitle: Transit app\n",
+        "Thesis on transit apps for Dhaka buses.",
+      ],
+      [
+        B,
+        "notes/b.md",
+        "normal",
+        "type: Award\ntitle: Transit award\nproves: [c.md]\n",
+        "বিশ্ববিদ্যালয়ে transit award.",
+      ],
+      [
+        C,
+        "notes/c.md",
+        "sensitive",
+        "type: TestScore\ntitle: IELTS\nsupersedes: a.md\n",
+        "Writing held the transit score back.",
+      ],
+    ] as const;
+    const questions = ["transit", "award", "held the score", "বিশ্ববিদ্যালয়ে", "Dhaka buses", "IELTS"];
+    for (const keepSensitive of [false, true]) {
+      const record = new TestRecord();
+      for (const [id, path, cls, fields, body] of notes) {
+        const raw = `---\nid: ${id}\n${fields}---\n${body}\n`;
+        const made = mutate(record.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: 1 });
+        equal(made.status, "applied", JSON.stringify(made));
+        // Indexed as the jobs consumer would, without vectors: the local copy has none to compare.
+        const note = record.note(id);
+        ok(note);
+        putChunks(record.sql, id, note.rev, chunkNote(note));
+      }
+      const v = await open(record, folder("brainiac-vault-"), { keepSensitive });
+      if (keepSensitive)
+        await v.until(() => v.read("notes/c.md") === record.note(C)?.raw, "the sensitive note");
+      equal(v.read("notes/c.md") !== undefined, keepSensitive, "only a device that keeps them holds one");
+      const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
+      const reader = keepSensitive ? PERSON : { sensitive: false };
+      for (const q of questions) {
+        same(
+          search(index.sql, PERSON, q),
+          search(record.sql, reader, q),
+          `${q}, keepSensitive: ${keepSensitive}`,
+        );
+      }
+      // Not vacuous: every answer says it is keyword-only, the sensitive note and its edge are there only on the
+      // device that keeps it, and the graph hop runs on the local copy too.
+      const transit = search(index.sql, PERSON, "transit");
+      same([transit.mode, transit.hits.length], ["keyword", keepSensitive ? 3 : 2]);
+      same(
+        search(index.sql, PERSON, "award").neighbors,
+        keepSensitive ? [{ noteId: C, via: { noteId: B, field: "proves", direction: "out" } }] : [],
+      );
+      same(
+        search(index.sql, PERSON, "Dhaka buses").neighbors.map((n) => n.noteId),
+        keepSensitive ? [C] : [],
+      );
+      index.close();
+      v.daemon.stop();
+    }
+  },
+
   async "a note moved on disk stays searchable"() {
     const v = await vault();
     mkdirSync(join(v.root, "moved"));
@@ -1143,7 +1213,7 @@ const cases: Record<string, () => Promise<void>> = {
     await v.until(() => v.daemon.state.known("moved/a.md") !== undefined, "the move");
     equal(v.daemon.paused(), undefined, "a move is one note, not a mass change");
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, PERSON, "start").length, 3);
+    equal(search(index.sql, PERSON, "start").hits.length, 3);
     index.close();
     equal(v.record.note(A)?.deletedAt, null, "not deleted in the record");
     v.daemon.stop();
@@ -1305,7 +1375,7 @@ const cases: Record<string, () => Promise<void>> = {
     ok(!kept.some((text) => text.includes("an older")), JSON.stringify(kept));
     ok(kept.length <= 1, JSON.stringify(kept));
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    same(search(index.sql, PERSON, "CANARY-7Q3X"), [], "out of the local index");
+    same(search(index.sql, PERSON, "CANARY-7Q3X").hits, [], "out of the local index");
     index.close();
     await v.daemon.resume();
     v.write("notes/b.md", setField(v.read("notes/b.md")!, "status", "a later batch"));
@@ -1335,7 +1405,7 @@ const cases: Record<string, () => Promise<void>> = {
       "the kept file is gone",
     );
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, PERSON, "start").length, 2, "only B and C are searchable");
+    equal(search(index.sql, PERSON, "start").hits.length, 2, "only B and C are searchable");
     index.close();
     v.daemon.stop();
   },
@@ -1465,7 +1535,7 @@ const cases: Record<string, () => Promise<void>> = {
     const again = await open(v.record, v.root);
     // The index is private to the daemon; read it the way local search will.
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, PERSON, "start").length, 3);
+    equal(search(index.sql, PERSON, "start").hits.length, 3);
     index.close();
     again.daemon.stop();
     // Deleted outright, it is rebuilt the same way.
@@ -1473,7 +1543,7 @@ const cases: Record<string, () => Promise<void>> = {
       rmSync(join(v.root, ".brainiac", `index.db${suffix}`), { force: true });
     const third = await open(v.record, v.root);
     const rebuilt = openIndex(join(v.root, ".brainiac", "index.db")).index;
-    equal(search(rebuilt.sql, PERSON, "start").length, 3);
+    equal(search(rebuilt.sql, PERSON, "start").hits.length, 3);
     rebuilt.close();
     third.daemon.stop();
   },
@@ -1486,11 +1556,11 @@ const cases: Record<string, () => Promise<void>> = {
     stale.sql.all("UPDATE meta SET value = 'chunks-0' WHERE key = 'chunks'");
     for (const id of stale.sql.all<{ id: string }>("SELECT id FROM notes").map((row) => row.id))
       putChunks(stale.sql, id, 0, []);
-    equal(search(stale.sql, PERSON, "start").length, 0);
+    equal(search(stale.sql, PERSON, "start").hits.length, 0);
     stale.close();
     const again = await open(v.record, v.root);
     const { index } = openIndex(join(v.root, ".brainiac", "index.db"));
-    equal(search(index.sql, PERSON, "start").length, 3);
+    equal(search(index.sql, PERSON, "start").hits.length, 3);
     index.close();
     again.daemon.stop();
   },

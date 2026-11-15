@@ -5,10 +5,10 @@
 // signature to one use, in the mutation's own transaction, so cloud and local judge alike.
 import { createHash, randomBytes } from "node:crypto";
 
-import { deepEqual, findClash, isUlid, PathError, resolveRelation, type PlanItem } from "@brainiac/core";
+import { deepEqual, isUlid, PathError, pathKey, resolveRelation, type PlanItem } from "@brainiac/core";
 
 import { diff, stateOf } from "./diff.ts";
-import { getNote, getNoteByPath, type NoteRow } from "./notes.ts";
+import { getNote, type NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 /** How long a review session lasts after its signature, and how long its nonce waits to be signed. */
@@ -69,24 +69,41 @@ function verifiedFields(verified: unknown): string[] | "all" {
  * accepts and this doesn't would carry an edge past approvals and the hold.
  */
 export function relationTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): NoteRow | undefined {
-  if (!from || typeof relation !== "string") return undefined;
-  let target: NoteRow | undefined;
-  if (isUlid(relation)) target = getNote(sql, relation);
-  else {
-    let path: string;
-    try {
-      path = resolveRelation(from.path, relation);
-    } catch (error) {
-      if (error instanceof PathError) return undefined;
-      throw error;
+  const id = from && relationResolver(sql)(from, relation);
+  return id === undefined ? undefined : getNote(sql, id);
+}
+
+/**
+ * `relationTarget` for many relations: the id of the live note each relation names, if any. The live paths are
+ * read once, on the first path relation, so an id or no relation at all costs no scan of the record. Search's
+ * graph hop follows edges with it, so it reads them exactly as approvals do.
+ */
+export function relationResolver(
+  sql: Sql,
+): (from: Pick<NoteRow, "id" | "path">, relation: unknown) => string | undefined {
+  let byKey: Map<string, string> | undefined;
+  return (from, relation) => {
+    if (typeof relation !== "string") return undefined;
+    let id: string | undefined;
+    if (isUlid(relation)) id = getNote(sql, relation)?.deletedAt === null ? relation : undefined;
+    else {
+      let key: string;
+      try {
+        key = pathKey(resolveRelation(from.path, relation));
+      } catch (error) {
+        if (error instanceof PathError) return undefined;
+        throw error;
+      }
+      // The record refuses two live paths that differ only in case or Unicode form, so a key names one note.
+      byKey ??= new Map(
+        sql
+          .all<{ id: string; path: string }>("SELECT id, path FROM notes WHERE deletedAt IS NULL")
+          .map((note) => [pathKey(note.path), note.id]),
+      );
+      id = byKey.get(key);
     }
-    const live = sql
-      .all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL")
-      .map((r) => r.path);
-    const match = findClash(live, path);
-    target = match === undefined ? undefined : getNoteByPath(sql, match);
-  }
-  return target !== undefined && target.id !== from.id && target.deletedAt === null ? target : undefined;
+    return id === from.id ? undefined : id;
+  };
 }
 
 /** The live verified note a `supersedes` relation names, if any. */

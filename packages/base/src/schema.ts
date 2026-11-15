@@ -4,8 +4,9 @@ import type { Sql } from "./sql.ts";
  * Every migration, in order; migration `i` takes a record from version `i` to `i + 1`. Version 0 is the
  * shape before this package: only the `meta` table.
  *
- * Migrations are additive for one release (new tables, new columns, new indexes), so the previous Worker
- * still runs on a record the new one has migrated, and a rollback never needs a down migration. Removing
+ * Migrations are additive for one release (new tables, new columns, new indexes, or rebuilding a derived table
+ * with the same name and columns), so the previous Worker still runs on a record the new one has migrated, and a
+ * rollback never needs a down migration. Removing
  * or renaming anything waits until no deployed code reads it. Never edit a migration that has shipped:
  * append a new one.
  *
@@ -308,6 +309,17 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       snapshot TEXT NOT NULL
     ) WITHOUT ROWID`,
   ],
+  // unicode61 splits words at combining marks by default, so a Bangla or Hindi word became fragments (and a
+  // fragment matched inside other words): marks are word characters now. Same names and columns, so the
+  // previous Worker still reads and writes them; refilled from the chunks, which carry search until the
+  // re-index (`CHUNKS`) stores them folded.
+  (["normal", "sensitive"] as const).flatMap((family) => [
+    `DROP TABLE chunks_fts_${family}`,
+    `CREATE VIRTUAL TABLE chunks_fts_${family} USING fts5(header, text,
+      tokenize = "unicode61 remove_diacritics 2 categories 'L* N* Co M*'")`,
+    `INSERT INTO chunks_fts_${family} (rowid, header, text)
+      SELECT id, header, text FROM chunks WHERE family = '${family}'`,
+  ]),
 ];
 
 /** The SQL schema version this code writes. */

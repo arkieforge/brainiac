@@ -19,6 +19,7 @@ import {
   PERSON,
   purge,
   putChunks,
+  putNote,
   recordApproval,
   search,
   serve,
@@ -128,7 +129,15 @@ function leaks(outputs: readonly unknown[], hidden: ReadonlySet<string>): string
 
 /** What a reader gets from every read surface there is: the feed on hello, a later feed, a push, search. */
 function readEverything(sql: Sql, reader: Principal, clientId: string): unknown[] {
-  const words = ["CANARY-TRF-7Q3X", "CANARY-BODY-7Q3X", "CANARY-PERSON-7Q3X", "computer", "supervisor"];
+  // "British Council" finds the test report, whose `proves` names a sensitive score: a graph neighbor.
+  const words = [
+    "CANARY-TRF-7Q3X",
+    "CANARY-BODY-7Q3X",
+    "CANARY-PERSON-7Q3X",
+    "computer",
+    "supervisor",
+    "British Council",
+  ];
   return [
     ...serve(sql, hello(clientId, null), ctx, reader).replies,
     changesSince(sql, 0, reader),
@@ -236,7 +245,7 @@ export const privacyCases: Record<string, Case> = {
     const made = mutate(sql, { op: "classify", noteId: role, baseRev: 1, class: "sensitive" }, ctx);
     equal(made.status, "applied", JSON.stringify(made));
     // No job has run: the words are gone from the normal index itself, not only filtered out.
-    same(search(sql, AGENT, "telemetry"), []);
+    same(hitIds(search(sql, AGENT, "telemetry")), []);
     same(sql.all("SELECT rowid FROM chunks_fts_normal WHERE chunks_fts_normal MATCH 'telemetry'"), []);
     same(changesSince(sql, cursor, AGENT), {
       type: "changes",
@@ -254,7 +263,7 @@ export const privacyCases: Record<string, Case> = {
     // Re-indexed by its job, it is found again, in the sensitive family only.
     install(sql);
     same(hitIds(search(sql, PERSON, "telemetry")), [role]);
-    same(search(sql, AGENT, "telemetry"), []);
+    same(hitIds(search(sql, AGENT, "telemetry")), []);
 
     // Making it normal again loosens privacy: only a passkey signature over that exact change lets it land.
     const loosen = { op: "classify", noteId: role, baseRev: 2, class: "normal" } as const;
@@ -286,9 +295,52 @@ export const privacyCases: Record<string, Case> = {
     ok("approvalId" in approved, JSON.stringify(approved));
     equal(mutate(sql, loosen, { ...person, approvalId: approved.approvalId }).status, "applied");
     equal(getNote(sql, role)?.class, "normal");
-    same(search(sql, PERSON, "telemetry"), []);
+    same(hitIds(search(sql, PERSON, "telemetry")), []);
     install(sql);
     same(hitIds(search(sql, AGENT, "telemetry")), [role]);
+  },
+
+  "one graph hop reaches only the notes the reader may see, and only one hop": (sql, fixtures) => {
+    const { ids } = record(sql, fixtures);
+    const report = ids["documents/ielts-trf-2026.md"];
+    const transcript = ids["documents/transcript-bsc.md"];
+    // The report proves the November score (sensitive), which supersedes the March one: two hops away.
+    same(search(sql, PERSON, "British Council").neighbors, [
+      { noteId: ids[IELTS], via: { noteId: report, field: "proves", direction: "out" } },
+    ]);
+    same(search(sql, AGENT, "British Council").neighbors, []);
+    same(search(sql, { sensitive: true, types: ["Document"] }, "British Council").neighbors, []);
+    // Inbound too: the transcript's `proves` names the degree.
+    same(search(sql, AGENT, "Northvale computer science").neighbors, [
+      {
+        noteId: transcript,
+        via: { noteId: ids["facts/education/bsc-northvale.md"], field: "proves", direction: "in" },
+      },
+    ]);
+  },
+
+  "body links are graph edges too, both ways, and reach only notes the reader may see": (sql, fixtures) => {
+    const { ids } = record(sql, fixtures);
+    const role = getNote(sql, ids[ROLE] ?? "");
+    ok(role);
+    const links =
+      "See [the transcript](../../documents/transcript-bsc.md#page-2) and [Dr Okafor](../../people/dr-okafor.md).";
+    // Not re-indexed: edges are read from the current text, so the new links count at once.
+    putNote(sql, { ...role, raw: `${role.raw}\n${links}\n`, rev: 2, seq: 100 });
+    const transcript = ids["documents/transcript-bsc.md"];
+    const out = (noteId: string | undefined) => ({
+      noteId,
+      via: { noteId: role.id, field: "body", direction: "out" },
+    });
+    same(search(sql, AGENT, "telemetry").neighbors, [out(transcript)]);
+    same(search(sql, PERSON, "telemetry").neighbors, [out(transcript), out(ids[OKAFOR])]);
+    same(
+      search(sql, AGENT, "registrar").neighbors.map((n) => [n.noteId, n.via.field, n.via.direction]),
+      [
+        [ids["facts/education/bsc-northvale.md"], "proves", "out"],
+        [role.id, "body", "in"],
+      ],
+    );
   },
 
   "a token scoped to some types sees only notes of those types": (sql, fixtures) => {
@@ -301,7 +353,7 @@ export const privacyCases: Record<string, Case> = {
       [ids[ROLE]],
     );
     ok(snapshot.notes.every((note) => !note.deleted || note.withheld));
-    same(search(sql, roles, "okafor"), []);
+    same(hitIds(search(sql, roles, "okafor")), []);
     same(hitIds(search(sql, roles, "telemetry")), [ids[ROLE]]);
     equal(getNoteByPath(sql, OKAFOR)?.class, "sensitive");
   },

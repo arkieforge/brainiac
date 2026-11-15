@@ -59,6 +59,7 @@ import {
   currentSeq,
   doSql,
   dueJobs,
+  EMBED_MODEL,
   finishJob,
   jobInput,
   markDispatched,
@@ -85,6 +86,7 @@ import {
   type NoteRow,
   type Opened,
   type Principal,
+  type Results,
   type Sql,
 } from "@brainiac/base";
 import { decodeClientMessage, type Manifest, type PlanItem, type ServerMessage } from "@brainiac/core";
@@ -93,6 +95,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import { checkSignature, type Approver } from "./approvals.ts";
 import type { Env } from "./env.ts";
+import type { Models } from "./jobs.ts";
 
 const RETRY_MS = 60_000;
 
@@ -274,13 +277,41 @@ export class Base extends DurableObject<Env> {
     this.changed(before);
   }
 
-  /** Keyword search over the families the caller may see: note ids, and `<sha256>#p<page>` for a file's page. */
-  search(text: string, caller: Caller): string[] | Forbidden {
+  /**
+   * Search over the families the caller may see (`search` in @brainiac/base). The question is embedded here, in
+   * the cloud, so a laptop online gets the same ranking by forwarding its call; when Workers AI can't embed it,
+   * the answer is keyword-only and says so.
+   */
+  async search(text: string, caller: Caller): Promise<Results | Forbidden> {
+    const asked = this.context(caller);
+    if ("status" in asked) return asked;
+    const vector = await this.#embed(text);
+    // Read again after the model call: a grant narrowed meanwhile applies to this answer.
     const ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    return search(this.sql, principalOf(ctx.connection), text).map((hit) =>
-      "noteId" in hit ? hit.noteId : `${hit.fileSha}#p${hit.page}`,
-    );
+    return search(this.sql, principalOf(ctx.connection), text, vector ? { vector } : {});
+  }
+
+  /** Workers AI, for questions' embeddings (the jobs consumer embeds chunks with its own). */
+  protected models(): Pick<Models, "run"> {
+    return this.env.AI;
+  }
+
+  /**
+   * The question's embedding with `EMBED_MODEL`, or `undefined` when there is no question, nothing to compare it
+   * with (a record not embedded yet doesn't wait on the model for a keyword-only answer), or Workers AI fails.
+   */
+  async #embed(text: string): Promise<number[] | undefined> {
+    if (text.trim() === "") return undefined;
+    const embedded = this.sql.all("SELECT 1 FROM vectors WHERE model = ? LIMIT 1", EMBED_MODEL);
+    if (embedded.length === 0) return undefined;
+    try {
+      const { data } = await this.models().run(EMBED_MODEL, { text: [text], truncate_inputs: true });
+      return data?.[0];
+    } catch (error) {
+      console.error("question embedding failed", error);
+      return undefined;
+    }
   }
 
   // Proposals. A connection may withdraw its own; only the site's session route may decide one.

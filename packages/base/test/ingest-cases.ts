@@ -108,7 +108,7 @@ export const ingestCases: Record<string, Case> = {
     same([file?.checks, file?.class, file?.pages], ["clean", "sensitive", 2]);
     // Cleared files are sensitive: the person finds the page, a connection without the scope finds nothing.
     same(
-      search(sql, PERSON, "transit").map((hit) => ("page" in hit ? [hit.fileSha, hit.page] : hit)),
+      search(sql, PERSON, "transit").hits.map((hit) => ("page" in hit ? [hit.fileSha, hit.page] : hit)),
       [[sha256, 2]],
     );
     same(hitIds(search(sql, AGENT, "transit")), []);
