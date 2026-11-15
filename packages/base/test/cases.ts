@@ -24,10 +24,10 @@ import { approvalCases } from "./approval-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
+import { vaultCases } from "./vault-cases.ts";
 
 /** A connection without the sensitive scope, as every connection starts. */
 export const AGENT: Principal = { sensitive: false };
-import { vaultCases } from "./vault-cases.ts";
 
 export interface Fixture {
   readonly path: string;
