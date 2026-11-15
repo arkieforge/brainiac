@@ -44,7 +44,9 @@ brainiac/
 │   ├── sync/                sync client: browser + CLI daemon
 │   └── render/              markdown pipeline and viewers (from T3 Code, MIT)
 ├── apps/
-│   ├── worker/              the one Worker: UI, API, MCP, files, queue consumer, Workflows; exports the Base DO
+│   ├── worker/              the one Worker: API, MCP, files, queue consumer, Workflows; serves web's build; exports the Base DO
+│   ├── web/                 the site: TanStack Start in SPA mode, built to static files
+│   ├── marketing/           the public Astro site
 │   ├── cli/                 brainiac CLI, daemon, stdio MCP, Claude Code hook (bun build --compile)
 │   └── extension/           browser extension: fill + save link
 ├── evals/                   model evals, T3 Code's layout

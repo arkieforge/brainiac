@@ -1,6 +1,8 @@
 import type { Base, JobMessage } from "./base.ts";
 
 export interface Env {
+  /** The web app's build (apps/web): its shell and static assets. */
+  ASSETS: Fetcher;
   BASE: DurableObjectNamespace<Base>;
   BLOBS: R2Bucket;
   JOBS: Queue<JobMessage>;

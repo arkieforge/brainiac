@@ -159,6 +159,10 @@ export default {
         emailCodes: Boolean(env.EMAIL && env.EMAIL_FROM),
       });
     }
+    // Every other page belongs to the web app: its shell, whose router reads the path. Only pages, so a missing
+    // script or image is a 404 and not HTML.
+    if (request.method === "GET" && request.headers.get("accept")?.includes("text/html"))
+      return env.ASSETS.fetch(new Request(new URL("/", url), request));
     return new Response("Not found", { status: 404 });
   },
   queue: consume,

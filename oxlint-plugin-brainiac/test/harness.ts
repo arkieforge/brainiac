@@ -1,15 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { it } from "vite-plus/test";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURES = join(import.meta.dirname, "..", ".fixtures");
 
-/** Runs the real `vp lint` (root config, this plugin) on one source file and returns its output. */
-function lint(source: string, name: string): string {
-  mkdirSync(FIXTURES, { recursive: true });
-  const file = join(FIXTURES, `${name.replace(/\W+/g, "-")}.ts`);
+/**
+ * Runs the real `vp lint` (root config, this plugin) on one source file and returns its output. `path` places the
+ * file under the fixtures folder, for rules that read where a file lives.
+ */
+function lint(source: string, name: string, path = `${name.replace(/\W+/g, "-")}.ts`): string {
+  const file = join(FIXTURES, path);
+  mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, source);
   try {
     const run = spawnSync(join(ROOT, "node_modules/.bin/vp"), ["lint", file], {
@@ -26,9 +29,9 @@ function lint(source: string, name: string): string {
 export function ruleHarness(rule: string) {
   const tag = `brainiac(${rule})`;
   return {
-    valid: (name: string, source: string) =>
-      it(`valid: ${name}`, ({ expect }) => expect(lint(source, name)).not.toContain(tag)),
-    invalid: (name: string, source: string) =>
-      it(`invalid: ${name}`, ({ expect }) => expect(lint(source, name)).toContain(tag)),
+    valid: (name: string, source: string, path?: string) =>
+      it(`valid: ${name}`, ({ expect }) => expect(lint(source, name, path)).not.toContain(tag)),
+    invalid: (name: string, source: string, path?: string) =>
+      it(`invalid: ${name}`, ({ expect }) => expect(lint(source, name, path)).toContain(tag)),
   };
 }

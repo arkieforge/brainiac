@@ -4,6 +4,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
+import * as Command from "alchemy/Command";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -99,10 +100,21 @@ export default Alchemy.Stack(
       // made on, so a passkey from one won't sign in on the other.
       const domain = yield* optional("DOMAIN");
 
+      // The site (apps/web), built to static files: its shell and assets. Rebuilt only when its files change.
+      const web = yield* Command.Build("web", {
+        command: "vp build",
+        cwd: "apps/web",
+        outdir: "dist/client",
+      });
+
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
         ...(domain && { domain }),
         main: "apps/worker/src/index.ts",
+        // A path that is a built file is served straight from the edge; every other one runs the Worker, which
+        // answers its own routes and hands the rest of the pages the web app's shell (apps/worker/src/index.ts).
+        // The build's output hash is set whenever it memoizes, which it does by default.
+        assets: { directory: web.outdir, hash: web.hash.output.as<string>() },
         // Strictly public fetch: a fetch to one of our own hostnames goes through Cloudflare's front door, not
         // straight to an origin. The MCP client metadata fetch relies on it (apps/worker/src/auth/cimd-fetch.ts).
         compatibility: { flags: ["nodejs_compat", "global_fetch_strictly_public"] },
