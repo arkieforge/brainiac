@@ -77,6 +77,7 @@ export {
   type NoteRow,
 } from "./notes.ts";
 export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
+export { digest, questionEmails, setQuestionEmails, type Digest } from "./questions.ts";
 export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
 export { extracts, needsReading, pdfHidesText, PIPELINE, splitPages } from "./pages.ts";

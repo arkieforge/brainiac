@@ -39,6 +39,9 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
   disagree, a duplicate if not. A type without a `key` is never checked for either.
 - **What a document says**: a Document's `extracted` mapping holds the values it prints, and a note's source
   (`{resource, page, fields}`) names which of them it proves. The detectors compare the two field by field.
+- **Questions**: a field spec's `ask` (`"When did your role at {org} end?"`) makes an empty value a question
+  for the person; `current: true` says an item has no end yet, and `not_applicable: [end]` that a field is never
+  asked about on that note. Agents' questions are `Question` notes in `questions/` (see "Questions").
 - **Held types**: a type marked `held: true` in `okf-base.yaml` is a fact type. A connection's change to its existing values waits out the hold window, and its folder is a held area (see "The contract").
 - **Names**: kebab-case `<what>-<when>`. Portal file names (`Karim_Nadia_Transcript.pdf`) are applied only when building a packet.
 - **Distinct events are distinct notes**: two IELTS attempts are two TestScore notes, the newer one `supersedes` the older. "Current score" is a query, and history stays queryable.

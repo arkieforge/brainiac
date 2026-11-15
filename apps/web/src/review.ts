@@ -1,7 +1,14 @@
 // Review mode's session (contract §4): one passkey signature over a nonce covers verify, fix and undo on the items
 // it was opened over, for 10 minutes. The record checks every edit against it; this tab only remembers which
 // nonce to send and when to ask for a new signature.
-import { overview, parseNote, type Manifest, type Overview, type ReviewNote } from "@brainiac/core";
+import {
+  overview,
+  parseNote,
+  type Manifest,
+  type Overview,
+  type QuestionNote,
+  type ReviewNote,
+} from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 
 import { api } from "./record.ts";
@@ -59,9 +66,9 @@ export async function openSession(noteIds: readonly string[]): Promise<string | 
 /** Parsed front-matter by note, reused while the text is the same: the overview re-reads only what changed. */
 const parsed = new Map<string, { readonly raw: string; readonly data: ReviewNote["data"] }>();
 
-/** The record's overview from this tab's copy: every note the person can see, as the detectors read it. */
-export function overviewOf(client: SyncClient | undefined, manifest: Manifest | null, now: number): Overview {
-  const notes: ReviewNote[] = [];
+/** Every note the person can see in this tab's copy, parsed, in path order, as the detectors and questions read it. */
+export function parsedNotes(client: SyncClient | undefined): QuestionNote[] {
+  const notes: QuestionNote[] = [];
   const seen = new Set<string>();
   for (const [id, remote] of client?.state.remote ?? []) {
     const raw = client?.working(id);
@@ -77,12 +84,13 @@ export function overviewOf(client: SyncClient | undefined, manifest: Manifest | 
       }
       parsed.set(id, entry);
     }
-    notes.push({ id, path: remote.path, data: entry.data });
+    notes.push({ id, path: remote.path, data: entry.data, class: remote.class });
   }
   for (const id of parsed.keys()) if (!seen.has(id)) parsed.delete(id);
-  return overview(
-    notes.toSorted((a, b) => a.path.localeCompare(b.path)),
-    manifest,
-    now,
-  );
+  return notes.toSorted((a, b) => a.path.localeCompare(b.path));
+}
+
+/** The record's overview from this tab's copy: every note the person can see, as the detectors read it. */
+export function overviewOf(client: SyncClient | undefined, manifest: Manifest | null, now: number): Overview {
+  return overview(parsedNotes(client), manifest, now);
 }

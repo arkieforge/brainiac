@@ -23,6 +23,8 @@ export interface Env {
   /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;
+  /** The site's public origin (`https://<domain>`), for links in emails the cron sends; set only with a domain. */
+  SITE_ORIGIN?: string;
   /** The Alchemy stage: `prod`, `pr-<n>`, `dev_<you>`, `live_<you>`. */
   STAGE: string;
   /**

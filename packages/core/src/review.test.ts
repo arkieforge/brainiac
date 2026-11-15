@@ -84,6 +84,16 @@ describe("the fixture record", () => {
     });
     expect(counts).toMatchObject({ checked: 1, wrong: 0, conflict: 0 });
   });
+
+  it("counts the record's items, not the work waiting on it: inbox items and questions", () => {
+    const waiting = [
+      note("inbox/a.md", { type: "InboxItem" }),
+      note("questions/b.md", { type: "Question", title: "Which came first?", status: "open" }),
+    ];
+    const { items, counts } = overview([...fixture, ...waiting], manifest, NOW);
+    expect(counts.items).toBe(overview(fixture, manifest, NOW).counts.items);
+    expect(items.some((i) => i.type === "Question" || i.type === "InboxItem")).toBe(false);
+  });
 });
 
 describe("detectors", () => {

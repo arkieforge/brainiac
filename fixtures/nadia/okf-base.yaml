@@ -11,8 +11,9 @@ types:
       institution: {kind: text, required: true, example: Northvale University}
       degree: {kind: text, required: true, example: BSc Computer Science}
       start: {kind: date}
-      end: {kind: date}
-      cgpa: {kind: number, example: 3.82}
+      end: {kind: date, ask: "When did your {degree} at {institution} end?"}
+      current: {kind: boolean}
+      cgpa: {kind: number, example: 3.82, ask: "What is your CGPA for {degree}?"}
       scale: {kind: number, example: 4}
       sources: {kind: list}
   TestScore:
@@ -42,7 +43,8 @@ types:
       title: {kind: text, required: true, example: Software Engineering Intern}
       kind: {values: [internship, job, research, volunteer]}
       start: {kind: date, required: true}
-      end: {kind: date}
+      end: {kind: date, ask: "When did your role at {org} end?"}
+      current: {kind: boolean}
   Application:
     version: 1
     folder: applications
@@ -81,7 +83,7 @@ types:
       nationality: {kind: text}
       birth_date: {kind: date}
       sex: {values: [M, F, X]}
-      expires: {kind: date}
+      expires: {kind: date, ask: "When does your {kind} from {issuer} expire?"}
   Person:
     version: 1
     folder: people

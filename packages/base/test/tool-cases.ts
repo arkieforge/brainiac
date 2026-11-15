@@ -9,6 +9,7 @@ import {
   auditOf,
   callTool,
   connect,
+  digest,
   getNote,
   grant,
   migrate,
@@ -16,6 +17,7 @@ import {
   putNote,
   recordApproval,
   releaseDue,
+  setQuestionEmails,
   SCAN_LIMIT,
   type Connection,
   type Context,
@@ -397,6 +399,167 @@ export const toolCases: Record<string, Case> = {
     equal(call(sql, scoped, "update", { withdraw: mine["proposal"] })["status"], "invalid");
     equal(call(sql, proposer, "update", { withdraw: mine["proposal"] })["status"], "withdrawn");
     equal(rows(sql, proposer, { type: "Proposal", where: { status: { eq: "open" } } }).length, 0);
+  },
+
+  "questions: gaps the record finds and ones agents ask, each closed by the edit that answers it": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const floor = as(connection(sql));
+    const scoped = as(connection(sql, { sensitive: true }));
+    const writer = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+    const open = (ctx: Context) =>
+      rows(sql, ctx, { type: "Question", where: { status: { eq: "open" } } }).map((r) => r.fields);
+    same(open(floor), []);
+    // The person clears the role's end date: its type asks for one.
+    const role = getNote(sql, n.role);
+    ok(role);
+    equal(
+      mutate(
+        sql,
+        { op: "patch", noteId: n.role, baseRev: role.rev, ops: [{ op: "unset", path: ["end"] }] },
+        { actor: "human", now: T0 },
+      ).status,
+      "applied",
+    );
+    same(open(floor), [
+      {
+        type: "Question",
+        rank: 0,
+        kind: "found",
+        question: "When did your role at Acme Robotics end?",
+        why: "Your Role has no end yet",
+        note: n.role,
+        field: "end",
+        input: { kind: "date" },
+        ongoing: true,
+        status: "open",
+      },
+    ]);
+    equal(call(sql, floor, "describe")["openQuestions"], 1);
+    // Asking about the same field gets that question back, not a second one.
+    same(call(sql, floor, "request_info", { question: "When did it end?", note: n.role, field: "end" }), {
+      status: "queued",
+      question: `${n.role}.end`,
+      already: true,
+    });
+
+    // A question about a sensitive note is sensitive: the floor never hears of it.
+    const score = call(sql, scoped, "request_info", {
+      question: "Is 8.0 your final overall?",
+      note: n.ielts,
+      field: "overall",
+      suggested: 8,
+    });
+    const made = getNote(sql, String(score["question"]));
+    same([made?.path.startsWith("questions/"), made?.type, made?.class], [true, "Question", "sensitive"]);
+    same(fieldsOf(sql, String(score["question"]))["was"], 8);
+    same(
+      open(scoped).map((q) => [q["question"], q["note"], q["input"], q["suggested"], q["why"]]),
+      [
+        [
+          "Is 8.0 your final overall?",
+          n.ielts,
+          { kind: "number" },
+          8,
+          "For TUM MSc Informatics, Winter 2027, due 2027-05-31",
+        ],
+        [
+          "When did your role at Acme Robotics end?",
+          n.role,
+          { kind: "date" },
+          undefined,
+          "Your Role has no end yet",
+        ],
+      ],
+    );
+    equal(open(floor).length, 1);
+
+    // The answer is an edit: the field changes, and its question is gone.
+    call(sql, writer, "update", { id: n.role, rev: revOf(sql, n.role), set: { end: "2025-09-30" } });
+    call(sql, writer, "update", { id: n.ielts, rev: revOf(sql, n.ielts), set: { "sections.writing": 7 } });
+    same(
+      open(scoped).map((q) => q["question"]),
+      ["Is 8.0 your final overall?"],
+    );
+    // One about nothing is answered on its own note, and lists with its answer.
+    const free = String(
+      call(sql, floor, "request_info", { question: "Which internship came first?" })["question"],
+    );
+    call(sql, writer, "update", {
+      id: free,
+      rev: revOf(sql, free),
+      set: { status: "answered", answer: "Acme, then the lab" },
+    });
+    same(
+      rows(sql, floor, { type: "Question" }).map((r) => [
+        r.fields["question"],
+        r.fields["status"],
+        r.fields["answer"],
+      ]),
+      [["Which internship came first?", "answered", "Acme, then the lab"]],
+    );
+    match(refused(sql, floor, "request_info", { question: "When?", field: "end" }), /field goes with note/);
+
+    // A question holds its note's values, so when the note turns sensitive, so does the question.
+    const asked = String(
+      call(sql, floor, "request_info", {
+        question: "Is Acme the org?",
+        note: n.role,
+        field: "org",
+        suggested: "Acme",
+      })["question"],
+    );
+    equal(fieldsOf(sql, asked)["was"], "Acme Robotics");
+    equal(
+      mutate(
+        sql,
+        { op: "classify", noteId: n.role, baseRev: revOf(sql, n.role), class: "sensitive" },
+        { actor: "human", now: T0 },
+      ).status,
+      "applied",
+    );
+    equal(getNote(sql, asked)?.class, "sensitive");
+    same(call(sql, floor, "get", { ids: [asked] })["missing"], [asked]);
+    ok(!rows(sql, floor, { type: "Question" }).some((r) => r.id === asked));
+    // A deleted question too, so restoring it brings back nothing the floor may read.
+    const bsc = String(
+      call(sql, floor, "request_info", { question: "Is the degree right?", note: n.bsc, field: "degree" })[
+        "question"
+      ],
+    );
+    const person = { actor: "human", now: T0 };
+    equal(mutate(sql, { op: "delete", noteId: bsc, baseRev: revOf(sql, bsc) }, person).status, "applied");
+    equal(
+      mutate(sql, { op: "classify", noteId: n.bsc, baseRev: revOf(sql, n.bsc), class: "sensitive" }, person)
+        .status,
+      "applied",
+    );
+    equal(getNote(sql, bsc)?.class, "sensitive");
+  },
+
+  "the weekly email says a normal question's words, only counts a sensitive one, and stops when turned off": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    equal(digest(sql, T0), undefined, "nothing waiting, no email");
+    const scoped = as(connection(sql, { sensitive: true }));
+    call(sql, scoped, "request_info", {
+      question: "Is 8.0 your final overall?",
+      note: n.ielts,
+      field: "overall",
+    });
+    call(sql, scoped, "request_info", { question: "What is your father's full name?", sensitive: true });
+    call(sql, scoped, "request_info", { question: "Which internship came first?" });
+    const email = digest(sql, T0);
+    same(email, { lines: ["Which internship came first? (Your agent asked)"], private: 2, more: 0 });
+    ok(!JSON.stringify(email).includes("8.0") && !JSON.stringify(email).includes("father"));
+    setQuestionEmails(sql, false);
+    equal(digest(sql, T0), undefined);
+    setQuestionEmails(sql, true);
+    ok(digest(sql, T0));
   },
 
   "create writes a typed note where its type lives, and warns instead of duplicating": (sql, fixtures) => {
@@ -835,12 +998,16 @@ export const toolCases: Record<string, Case> = {
     const undone = call(sql, as(writer), "undo", { run: made["run"] });
     same([undone["undone"], latest()], [[], [made["id"]]]);
 
-    // A question or proposal row names the note it's about.
-    call(sql, as(floor), "request_info", { question: "Which org?", note: n.role });
+    // A question or proposal row names the note it's about; asking names the question it made.
+    const asked = call(sql, as(floor), "request_info", { question: "Which org?", note: n.role });
+    same(
+      auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
+      [n.role, asked["question"]],
+    );
     call(sql, as(floor), "query", { type: "Question" });
     same(
       auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
-      [n.role],
+      [asked["question"], n.role],
     );
     // A note's own fields are never read as references: only the note itself is named.
     call(sql, as(writer), "update", { id: n.role, rev: revOf(sql, n.role), set: { notes: [n.ielts] } });

@@ -209,7 +209,7 @@ export function headline(note: ReviewNote, manifest: Manifest | null): string {
 }
 
 /** Finds notes by relation (a path relative to the note, or an id), as the record resolves them. */
-function resolver(notes: readonly ReviewNote[]) {
+export function resolver(notes: readonly ReviewNote[]) {
   const byPath = new Map(notes.map((note) => [pathKey(note.path), note]));
   const byId = new Map(notes.map((note) => [note.id, note]));
   return (from: ReviewNote, relation: unknown): ReviewNote | undefined => {
@@ -648,7 +648,7 @@ function meetsBounds(note: ReviewNote, check: Readonly<Record<string, unknown>>)
 const isOpen = (note: ReviewNote) => note.data["type"] === "Application" && note.data["status"] !== "decided";
 
 /** The current notes an open application's requirement check matches, for every open application. */
-function usedBy(notes: readonly ReviewNote[], now: number): Map<string, string[]> {
+export function usedBy(notes: readonly ReviewNote[], now: number): Map<string, string[]> {
   const resolve = resolver(notes);
   const superseded = new Set(notes.flatMap((n) => [resolve(n, n.data["supersedes"])?.id ?? []].flat()));
   const current = notes.filter((n) => !superseded.has(n.id));
@@ -736,8 +736,12 @@ function markOf(checks: readonly Check[], verified: readonly string[]): Mark {
 
 /** Every typed note as an item with its headline, mark and checks, grouped by type, and the counts per mark. */
 export function overview(notes: readonly ReviewNote[], manifest: Manifest | null, now: number): Overview {
+  // Inbox items and questions are waiting work, not items of the record.
   const typed = notes.filter(
-    (note) => typeof note.data["type"] === "string" && note.data["type"] !== "InboxItem",
+    (note) =>
+      typeof note.data["type"] === "string" &&
+      note.data["type"] !== "InboxItem" &&
+      note.data["type"] !== "Question",
   );
   const resolve = resolver(notes);
   const checks = detect(notes, manifest, now);

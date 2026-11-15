@@ -4,12 +4,14 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, afterEach, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { configDir, loadConfig, saveConfig } from "../src/config.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
 import { refusal, slashed } from "../src/hook.ts";
 import { logout, startLogin, type Waiting } from "../src/login.ts";
+import { callRecord } from "../src/mcp.ts";
+import { questionsReport } from "../src/questions.ts";
 import { service } from "../src/service.ts";
 
 describe("what the daemon takes from disk", () => {
@@ -274,5 +276,53 @@ describe("brainiac login", () => {
   it("never sends a token to logout in the clear, except to this machine", async () => {
     const token = `brn_${"a".repeat(64)}_${"b".repeat(43)}`;
     await expect(logout("http://brainiac.test", token)).rejects.toThrow(/isn't https/);
+  });
+});
+
+const ask = () => callRecord("https://brainiac.example", "brn_x", "query", {});
+/** A fetch that answers every call with this tools/call result. */
+const answering = (result: unknown) => async () => Response.json({ jsonrpc: "2.0", id: 1, result });
+
+const questionRow = (i: number, deadline?: string) => ({
+  id: `q${i}`,
+  fields: { question: `Question ${i}?`, why: `Why ${i}`, ...(deadline && { deadline }) },
+});
+
+describe("brainiac questions", () => {
+  const NOW = Date.UTC(2026, 10, 15);
+
+  it("prints the ones asked now, each with why, and where to answer them", () => {
+    const rows = [questionRow(0, "2026-11-18"), ...Array.from({ length: 6 }, (_, i) => questionRow(i + 1))];
+    expect(questionsReport({ rows }, "https://brainiac.example", NOW, false)).toEqual([
+      "? Question 0?  (Why 0)",
+      "? Question 1?  (Why 1)",
+      "? Question 2?  (Why 2)",
+      "? Question 3?  (Why 3)",
+      "? Question 4?  (Why 4)",
+      "2 more wait: brainiac questions --all",
+      "Answer them at https://brainiac.example/questions",
+    ]);
+    expect(questionsReport({ rows }, "https://brainiac.example", NOW, true)).toHaveLength(8);
+    expect(questionsReport({ rows: [] }, "https://brainiac.example", NOW, false)).toEqual([
+      "No questions: nothing missing that Brainiac can find.",
+    ]);
+  });
+
+  it("reads one tool call's answer, and says so when the record can't be reached", async () => {
+    try {
+      vi.stubGlobal("fetch", answering({ content: [{ type: "text", text: '{"rows":[]}' }] }));
+      expect(await ask()).toEqual({ rows: [] });
+      vi.stubGlobal("fetch", answering({ content: [{ type: "text", text: "bad filter" }], isError: true }));
+      await expect(ask()).rejects.toThrow("bad filter");
+      vi.stubGlobal("fetch", async () => {
+        throw new TypeError("offline");
+      });
+      await expect(ask()).rejects.toThrow(/needs it online/);
+      await expect(callRecord("http://brainiac.example", "brn_x", "query", {})).rejects.toThrow(
+        /isn't https/,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

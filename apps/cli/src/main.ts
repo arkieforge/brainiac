@@ -11,7 +11,8 @@ import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
 import { refusal, ToolCall } from "./hook.ts";
 import { socketLink } from "./link.ts";
-import { serveStdio } from "./mcp.ts";
+import { callRecord, serveStdio } from "./mcp.ts";
+import { QUESTIONS_QUERY, questionsReport } from "./questions.ts";
 import { logout, openBrowser, startLogin } from "./login.ts";
 import { service } from "./service.ts";
 
@@ -21,6 +22,7 @@ brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
 brainiac mcp serve [--server <url>]
+brainiac questions [--all] [--json]
 brainiac hook
 brainiac resume [--undo]
 brainiac repair
@@ -56,6 +58,8 @@ async function main(argv: readonly string[]): Promise<void> {
       server: { type: "string" },
       repair: { type: "boolean" },
       undo: { type: "boolean" },
+      all: { type: "boolean" },
+      json: { type: "boolean" },
     },
   });
   const dir = configDir();
@@ -177,6 +181,18 @@ async function main(argv: readonly string[]): Promise<void> {
         input: process.stdin,
         write: (line) => process.stdout.write(`${line}\n`),
       });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (command === "questions") {
+    if (!config.server || !token) fail("brainiac questions needs --server <url> once, and brainiac login.");
+    try {
+      const answer = await callRecord(config.server, token, "query", QUESTIONS_QUERY);
+      if (values.json) return console.log(JSON.stringify(answer, null, 2));
+      for (const line of questionsReport(answer, config.server, Date.now(), values.all ?? false))
+        console.log(line);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }
