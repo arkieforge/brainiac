@@ -7,7 +7,8 @@ Write or run an eval when a change affects what a model sees: MCP tool descripti
 results, the agent skill, or prompts. The planned evals and their release gates are in
 [docs/operations/quality-bar.md](../docs/operations/quality-bar.md).
 
-No eval exists yet; the harness is issue #27 (M1). When it lands, every eval follows this shape:
+The shared harness is issue #27 (M1). [`filing`](filing/README.md) is the first eval; every eval follows
+this shape:
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.

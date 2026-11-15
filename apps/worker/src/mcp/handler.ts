@@ -1,9 +1,8 @@
 // The remote MCP endpoint (`/mcp`), behind the OAuth server in auth/config.ts. It serves the tools in
 // packages/base/src/tools.ts, each call answered by the caller's own record as the caller's connection. It takes an
 // MCP client's OAuth access token, or a CLI token (`brainiac mcp serve` forwards here with one).
-import { PROMPTS, tokenBase, TOOLS, type Answer, type Connection } from "@brainiac/base";
+import { BACKGROUND_HEADER, tokenBase, type Answer, type Connection } from "@brainiac/base";
 import { createResourceServerChallenge } from "@better-auth/oauth-provider";
-import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { APIError, isAPIError } from "better-auth/api";
 import {
   createDpopReplayStore,
@@ -15,9 +14,15 @@ import {
 import { decodeProtectedHeader } from "jose";
 
 import { type createAuth, mcpResource } from "../auth/config.ts";
+import { serveTools } from "./tools.ts";
 
-/** Which connection a call comes through: an MCP client's, by its OAuth client id, or a CLI connection's. */
-export type Via = { readonly oauthClientId: string } | { readonly connectionId: string };
+/**
+ * Which connection a call comes through: an MCP client's, by its OAuth client id, or a CLI connection's. A client
+ * with nobody there says so (`BACKGROUND_HEADER`), which narrows the connection for the call.
+ */
+export type Via = ({ readonly oauthClientId: string } | { readonly connectionId: string }) & {
+  readonly background?: boolean;
+};
 
 /** The part of a Base DO's stub /mcp uses. */
 export interface RecordStub {
@@ -40,44 +45,6 @@ export interface McpOptions {
 
 /** The OAuth client id dev.ts signs its tokens for. */
 export const DEV_CLIENT = "brainiac-dev";
-
-const UNAVAILABLE = "Brainiac couldn't finish that call. Get the note again before you retry a change.";
-
-/** A prompt's text as the one user message prompts/get returns. */
-const say = (text: string) => ({
-  messages: [{ role: "user" as const, content: { type: "text" as const, text } }],
-});
-
-/** An MCP server with every tool and prompt, each tool call answered by `call`. Stateless: one per request. */
-function toolServer(call: (name: string, args: unknown) => Promise<Answer>): McpServer {
-  const server = new McpServer({ name: "brainiac", version: "0.0.0" });
-  for (const [name, tool] of Object.entries(TOOLS)) {
-    // The SDK advertises this schema in tools/list and checks each call against it; the record checks again.
-    const inputSchema: StandardSchemaWithJSON = tool.input;
-    server.registerTool(name, { description: tool.description, inputSchema }, async (args) => {
-      let answer: Answer;
-      try {
-        answer = await call(name, args);
-      } catch (error) {
-        // The record or the network failed: its words are for the logs, not the agent.
-        console.error("mcp tool call failed", name, error);
-        return { content: [{ type: "text", text: UNAVAILABLE }], isError: true };
-      }
-      return answer.ok
-        ? { content: [{ type: "text", text: JSON.stringify(answer.value) }] }
-        : { content: [{ type: "text", text: answer.error }], isError: true };
-    });
-  }
-  for (const [name, prompt] of Object.entries(PROMPTS)) {
-    const { title, description } = prompt;
-    if ("args" in prompt)
-      server.registerPrompt(name, { title, description, argsSchema: prompt.args }, (args) =>
-        say(prompt.text(args)),
-      );
-    else server.registerPrompt(name, { title, description }, () => say(prompt.text()));
-  }
-  return server;
-}
 
 // Signing keys, cached per isolate for 5 minutes (every origin of a stage shares one key table). A token naming
 // a key we don't have refetches, at most every 30 seconds.
@@ -223,7 +190,10 @@ export async function serveMcp(
       { status: 503, headers: { "retry-after": "5" } },
     );
   }
-  const { record, via } = from;
-  // Both protocol eras are served, because clients move to 2026-07-28 at their own pace.
-  return createMcpHandler(() => toolServer((name, args) => record.tool(via, name, args))).fetch(request);
+  const { record } = from;
+  const via: Via = {
+    ...from.via,
+    ...(request.headers.get(BACKGROUND_HEADER) === "1" && { background: true }),
+  };
+  return serveTools(request, (name, args) => record.tool(via, name, args));
 }

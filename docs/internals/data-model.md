@@ -32,7 +32,7 @@ approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)],
 review_runs  { nonce, actor, items JSON, assertion, credentialId, expiresAt }   // one signature, only for its opener and the items shown; assertion '' until signed
 passkey_keys { credentialId PK, publicKey, counter }                // the last counter each passkey signed with here
 connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, rev, createdAt }   // rev: bumped by every grant change; a grant signature names it
-inbox_leases { itemId, agent, expiresAt }                            // one filer per item
+inbox_leases { itemId, agent, expiresAt, rev }                       // one filer per item, and the rev it read
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }   // unused: found questions are computed from the notes (questions.ts), asked ones are Question notes
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }   // unused: checks are computed on read from the notes (review.ts), so none goes stale
 jobs         { id, kind: index | file, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed; a file job's noteId is file:<sha256> and its rev the file's

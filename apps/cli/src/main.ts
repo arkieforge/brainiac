@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import { doctor, lockVault, request, restore, watchRequests } from "./commands.ts";
 import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
+import { fileable, fileInbox, filer, type Bridge } from "./filing.ts";
 import { refusal, ToolCall } from "./hook.ts";
 import { socketLink } from "./link.ts";
 import { callRecord, serveStdio } from "./mcp.ts";
@@ -21,8 +22,9 @@ brainiac logout
 brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
-brainiac mcp serve [--server <url>]
+brainiac mcp serve [--server <url>] [--background]
 brainiac questions [--all] [--json]
+brainiac filing [on|off|now]
 brainiac hook
 brainiac resume [--undo]
 brainiac repair
@@ -33,6 +35,22 @@ brainiac doctor`;
 const self = () =>
   // A compiled binary's embedded script: /$bunfs/ on macOS and Linux, B:\~BUN\ on Windows.
   /^(\/\$bunfs\/|[A-Z]:[\\/]~BUN[\\/])/i.test(Bun.main) ? [process.execPath] : [process.execPath, Bun.main];
+
+/** `brainiac mcp serve --background`, as a filing run starts it. */
+const bridge = (): Bridge => {
+  const [command = process.execPath, ...args] = self();
+  return { command, args: [...args, "mcp", "serve", "--background"] };
+};
+
+/** One filing run with the Claude Code binary at `claude`, reporting what it said at the end. */
+async function fileNow(claude: string): Promise<boolean> {
+  const { code, events } = await fileInbox(bridge(), { claude });
+  const result = events.find((event) => event["type"] === "result");
+  const said = typeof result?.["result"] === "string" ? `\n${result["result"]}` : "";
+  if (code === 0) console.log(`Filing run finished.${said}`);
+  else console.error(`The filing run stopped (exit ${code}).${said}`);
+  return code === 0;
+}
 
 /** The login service for this user, running this binary. */
 const unit = () =>
@@ -60,6 +78,7 @@ async function main(argv: readonly string[]): Promise<void> {
       undo: { type: "boolean" },
       all: { type: "boolean" },
       json: { type: "boolean" },
+      background: { type: "boolean" },
     },
   });
   const dir = configDir();
@@ -139,6 +158,16 @@ async function main(argv: readonly string[]): Promise<void> {
       if (what === "undo") daemon.resume({ undo: true }).catch(report);
       if (what === "repair") daemon.repair().catch(report);
     });
+    // New inbox items the record sends start a filing run, once the person turned filing on.
+    const { filing } = config;
+    if (filing) {
+      const file = filer(() => fileNow(filing.claude).then(() => {}));
+      const fileNew = (ids: Iterable<string>) =>
+        file([...ids].filter((id) => fileable(daemon.client.state.remote.get(id))));
+      daemon.subscribe(fileNew);
+      // Items already waiting when the daemon starts get one run too.
+      fileNew(daemon.client.state.remote.keys());
+    }
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.on(signal, () => {
         daemon.stop();
@@ -180,6 +209,7 @@ async function main(argv: readonly string[]): Promise<void> {
         token,
         input: process.stdin,
         write: (line) => process.stdout.write(`${line}\n`),
+        ...(values.background && { background: true }),
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
@@ -197,6 +227,37 @@ async function main(argv: readonly string[]): Promise<void> {
       fail(error instanceof Error ? error.message : String(error));
     }
     return;
+  }
+  if (command === "filing") {
+    // Found here, in the person's shell: the login service that runs the daemon has only the system's PATH.
+    const claude = config.filing?.claude ?? Bun.which("claude");
+    const missing =
+      "Filing runs Claude Code on your own subscription: install it (claude on your PATH) first.";
+    if (sub === "on") {
+      const found = Bun.which("claude");
+      if (!found) fail(missing);
+      saveConfig(dir, { ...config, filing: { claude: found } });
+      return console.log(
+        `Filing is on with ${found}: new inbox items start a headless run. Restart the daemon to start it.`,
+      );
+    }
+    if (sub === "off") {
+      const { filing: _off, ...kept } = config;
+      saveConfig(dir, kept);
+      return console.log("Filing is off: inbox items wait for your Claude. Restart the daemon to stop it.");
+    }
+    if (sub === "now") {
+      if (!config.server || !token) fail("brainiac filing now needs brainiac login first.");
+      if (!claude) fail(missing);
+      if (!(await fileNow(claude))) process.exitCode = 1;
+      return;
+    }
+    if (sub !== undefined) fail(USAGE);
+    return console.log(
+      config.filing
+        ? `Filing is on with ${config.filing.claude}.`
+        : "Filing is off: brainiac filing on turns it on.",
+    );
   }
   if (command === "hook") {
     // Claude Code's PreToolUse hook: exit code 2 refuses the call, and the agent reads stderr. No vault, no rules.

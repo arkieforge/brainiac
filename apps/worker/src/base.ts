@@ -215,10 +215,13 @@ export class Base extends DurableObject<Env> {
   /**
    * One MCP tool call, as the connection it comes through: an MCP client's, found by its OAuth client id (and
    * connected at the floor on its first call), or the CLI connection whose token the Worker checked here. Which
-   * record answers is the Worker's choice from the token; nothing in the call names one.
+   * record answers is the Worker's choice from the token; nothing in the call names one. A background call
+   * (nobody there) runs narrowed: normal notes only, and every change waits for the person.
    */
   tool(
-    via: { readonly oauthClientId: string } | { readonly connectionId: string },
+    via: ({ readonly oauthClientId: string } | { readonly connectionId: string }) & {
+      readonly background?: boolean;
+    },
     name: string,
     args: unknown,
   ): Answer {
@@ -229,7 +232,12 @@ export class Base extends DurableObject<Env> {
         : getConnection(this.sql, via.connectionId);
     if (!connection) return { ok: false, error: "This connection was disconnected." };
     const before = currentSeq(this.sql);
-    const answer = callTool(this.sql, name, args, { actor: `connection:${connection.id}`, connection, now });
+    const answer = callTool(this.sql, name, args, {
+      actor: `connection:${connection.id}`,
+      connection,
+      now,
+      ...(via.background && { background: true }),
+    });
     this.changed(before);
     return answer;
   }

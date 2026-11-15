@@ -1084,32 +1084,39 @@ describe("MCP clients", () => {
     const { port } = server.address() as AddressInfo;
     // Its own config folder, so the test never touches this machine's.
     const home = mkdtempSync(join(tmpdir(), "brainiac-mcp-"));
-    const child = spawn(
-      createRequire(import.meta.url).resolve("bun/bin/bun.exe"),
-      [
-        join(import.meta.dirname, "../../../cli/src/main.ts"),
-        "mcp",
-        "serve",
-        "--server",
-        `http://127.0.0.1:${port}`,
-      ],
-      {
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, BRAINIAC_TOKEN: cliToken },
-        stdio: ["pipe", "pipe", "inherit"],
-      },
-    );
-    const waiting = new Map<number, (message: { result?: unknown }) => void>();
-    createInterface({ input: child.stdout }).on("line", (line) => {
-      const message = JSON.parse(line);
-      waiting.get(message.id)?.(message);
-    });
-    let next = 0;
-    const stdio = (method: string, params: unknown) =>
-      new Promise<{ result?: unknown }>((resolve) => {
-        const id = ++next;
-        waiting.set(id, resolve);
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    const children: ReturnType<typeof spawn>[] = [];
+    /** `brainiac mcp serve` with `flags`, and a way to call it. */
+    const bridge = (...flags: string[]) => {
+      const child = spawn(
+        createRequire(import.meta.url).resolve("bun/bin/bun.exe"),
+        [
+          join(import.meta.dirname, "../../../cli/src/main.ts"),
+          "mcp",
+          "serve",
+          "--server",
+          `http://127.0.0.1:${port}`,
+          ...flags,
+        ],
+        {
+          env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, BRAINIAC_TOKEN: cliToken },
+          stdio: ["pipe", "pipe", "inherit"],
+        },
+      );
+      children.push(child);
+      const waiting = new Map<number, (message: { result?: unknown }) => void>();
+      createInterface({ input: child.stdout! }).on("line", (line) => {
+        const message = JSON.parse(line);
+        waiting.get(message.id)?.(message);
       });
+      let next = 0;
+      return (method: string, params: unknown) =>
+        new Promise<{ result?: unknown }>((resolve) => {
+          const id = ++next;
+          waiting.set(id, resolve);
+          child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+        });
+    };
+    const stdio = bridge();
     const remote = async (method: string, params: unknown) =>
       (await rpc(auth, access, method, params)).message;
     try {
@@ -1146,8 +1153,17 @@ describe("MCP clients", () => {
       const scores = await stdio("tools/call", { name: "query", arguments: { type: "TestScore" } });
       expect(JSON.stringify(scores.result)).toContain("IELTS Academic, November 2026");
       await same();
+      // In the background (the daemon's filer) the same token sees normal notes only, and only proposes.
+      const background = bridge("--background");
+      await background("initialize", init);
+      const hidden = await background("tools/call", { name: "query", arguments: { type: "TestScore" } });
+      expect(JSON.stringify(hidden.result)).not.toContain("IELTS");
+      const described = await background("tools/call", { name: "describe", arguments: {} });
+      expect(described.result).toMatchObject({ content: [{ type: "text" }] });
+      const [text] = (described.result as { content: { text: string }[] }).content;
+      expect(JSON.parse(text?.text ?? "{}").you).toEqual({ level: "propose", sensitive: false, holdDays: 3 });
     } finally {
-      child.kill();
+      for (const child of children) child.kill();
       server.close();
       rmSync(home, { recursive: true, force: true });
     }

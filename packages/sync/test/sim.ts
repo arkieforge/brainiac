@@ -3,48 +3,10 @@
 import { DatabaseSync } from "node:sqlite";
 
 import { patch, type ClientMessage, type ServerMessage } from "@brainiac/core";
-import {
-  getNote,
-  migrate,
-  mutate,
-  PERSON,
-  purge,
-  serve,
-  type NoteRow,
-  type Sql,
-  type SqlValue,
-} from "@brainiac/base";
+import { getNote, migrate, mutate, PERSON, purge, serve, type NoteRow, type Sql } from "@brainiac/base";
+import { nodeSql } from "@brainiac/base/node";
 
 import { emptyState, SyncClient, type State, type Store } from "../src/index.ts";
-
-function nodeSql(db: DatabaseSync): Sql {
-  const statements = new Map<string, ReturnType<DatabaseSync["prepare"]>>();
-  let depth = 0;
-  return {
-    all: <Row>(query: string, ...params: SqlValue[]) => {
-      let statement = statements.get(query);
-      if (!statement) statements.set(query, (statement = db.prepare(query)));
-      return statement.all(...params) as Row[];
-    },
-    // Nested, a transaction is a savepoint, as in bun:sqlite and the DO: the mutation path rolls back its own
-    // writes inside the sync handler's transaction when they need an approval.
-    transaction: (fn) => {
-      const name = `t${depth++}`;
-      db.exec(`SAVEPOINT ${name}`);
-      try {
-        const result = fn();
-        db.exec(`RELEASE ${name}`);
-        return result;
-      } catch (error) {
-        db.exec(`ROLLBACK TO ${name}`);
-        db.exec(`RELEASE ${name}`);
-        throw error;
-      } finally {
-        depth--;
-      }
-    },
-  };
-}
 
 /** One client's link to the record: messages in flight each way, lost when the link drops. */
 interface Link {

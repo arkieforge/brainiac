@@ -15,6 +15,7 @@ export {
 export { activity, auditOf, type AuditCall } from "./audit.ts";
 export {
   authenticate,
+  BACKGROUND_HEADER,
   canSee,
   connectionOf,
   principalOf,
@@ -128,5 +129,13 @@ export {
   type FileView,
   type Uploaded,
 } from "./vault.ts";
-export { callTool, SCAN_LIMIT, TOOLS, type Answer, type ToolName } from "./tools.ts";
+export {
+  callTool,
+  INBOX_LEASE_MS,
+  SCAN_LIMIT,
+  TOOLS,
+  type Answer,
+  type ToolContext,
+  type ToolName,
+} from "./tools.ts";
 export { PROMPTS } from "./prompts.ts";

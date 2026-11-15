@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./bun": "./src/bun.ts"
+    "./bun": "./src/bun.ts",
+    "./node": "./src/node.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p .",
