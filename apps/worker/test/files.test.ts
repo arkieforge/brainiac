@@ -5,6 +5,7 @@ import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
+import { createAuthenticator } from "../src/auth/test-authenticator.ts";
 import type { TestBase } from "./harness.ts";
 
 const SITE = "https://brainiac.test";
@@ -154,6 +155,53 @@ describe("files", () => {
       { origin: SITE, passkey: true },
     );
     expect(minted).toMatchObject({ status: "forbidden" });
+  });
+
+  it("loosens a kind the person confirmed only with their passkey over that change", async () => {
+    const sha256 = await upload("relabel", TRANSCRIPT, "text/plain");
+    const passkey = createAuthenticator(SITE);
+    const neon = {
+      credentialId: passkey.id,
+      publicKey: passkey.publicKey,
+      counter: 0,
+      approvesAt: new Date(0).toISOString(),
+      origin: SITE,
+    };
+    const kind = (body: object) =>
+      mf.dispatchFetch(`${SITE}/api/files/${sha256}/kind`, {
+        method: "POST",
+        headers: {
+          ...tab("relabel"),
+          "content-type": "application/json",
+          "x-test-passkey": JSON.stringify(neon),
+        },
+        body: JSON.stringify(body),
+      });
+    const classOf = async () => {
+      const { files } = (await (
+        await mf.dispatchFetch(`${SITE}/api/files`, { headers: tab("relabel") })
+      ).json()) as { files: { class: string }[] };
+      return files[0]?.class;
+    };
+    expect((await kind({ kind: "passport" })).status).toBe(200);
+    expect(await classOf()).toBe("vault");
+    const asked = await kind({ kind: "transcript" });
+    expect(asked.status).toBe(409);
+    const { challenge } = (await asked.json()) as { challenge: string };
+    // Signed over another change, or by a passkey Neon doesn't hold for this person: the file stays in the vault.
+    expect(
+      (await kind({ kind: "transcript", response: passkey.authenticate({ challenge: "b3RoZXI" }) })).status,
+    ).toBe(400);
+    const stranger = createAuthenticator(SITE);
+    expect((await kind({ kind: "transcript", response: stranger.authenticate({ challenge }) })).status).toBe(
+      403,
+    );
+    // A signature over loosening to transcript doesn't loosen it to anything else.
+    expect((await kind({ kind: "cv", response: passkey.authenticate({ challenge }) })).status).not.toBe(200);
+    expect(await classOf()).toBe("vault");
+    const signed = await kind({ kind: "transcript", response: passkey.authenticate({ challenge }) });
+    expect(signed.status).toBe(200);
+    expect(await classOf()).toBe("sensitive");
   });
 
   it("refuses changes from another origin's pages", async () => {

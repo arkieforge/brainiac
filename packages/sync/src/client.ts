@@ -1,4 +1,11 @@
-import { merge, type Change, type ClientMessage, type NoteState, type ServerMessage } from "@brainiac/core";
+import {
+  merge,
+  type Change,
+  type ClientMessage,
+  type NoteState,
+  type PlanItem,
+  type ServerMessage,
+} from "@brainiac/core";
 
 import { toSaved, type Store, type Write } from "./store.ts";
 
@@ -17,6 +24,8 @@ export interface Pending {
   readonly noteId: string;
   readonly baseRev: number;
   readonly change: Change;
+  /** The person's approval of this change's plan, for a change resent after a `needsApproval` result. */
+  readonly approvalId?: string;
 }
 
 /**
@@ -30,6 +39,8 @@ export interface Blocked {
   readonly proposalId?: string;
   /** The note's revision when the record kept this edit out as a conflict. */
   readonly rev?: number;
+  /** The plan the person signs to let this edit through (a verified value changed), and its hash. */
+  readonly needsApproval?: { readonly planHash: string; readonly items: readonly PlanItem[] };
 }
 
 /** Everything a client must keep across restarts, kept in a `Store`. */
@@ -212,6 +223,20 @@ export class SyncClient {
     this.#commit();
   }
 
+  /**
+   * The person approved the plan `planHash` of a blocked edit to the note: the edit goes again, citing
+   * `approvalId`, under a new `clientSeq` and a new `changeId`, since the record answers a `changeId` it has
+   * seen with the answer it gave. False if no blocked edit has that plan.
+   */
+  approved(noteId: string, planHash: string, approvalId: string): boolean {
+    const blocked = this.state.blocked.get(noteId)?.find((b) => b.needsApproval?.planHash === planHash);
+    if (!blocked) return false;
+    this.#unblock(noteId, (b) => b === blocked);
+    this.#queue(noteId, blocked.change, { approvalId });
+    this.#commit();
+    return true;
+  }
+
   /** Forgets the note's blocked edits: the person keeps the record's version, or picked in the proposal. */
   dismiss(noteId: string): void {
     if (!this.state.blocked.delete(noteId)) return;
@@ -276,13 +301,18 @@ export class SyncClient {
     return write;
   }
 
-  #queue(noteId: string, change: Change, changeId: string = crypto.randomUUID()): void {
-    const pending = {
+  #queue(
+    noteId: string,
+    change: Change,
+    { changeId = crypto.randomUUID(), approvalId }: { changeId?: string; approvalId?: string } = {},
+  ): void {
+    const pending: Pending = {
       clientSeq: ++this.state.lastAssigned,
       changeId,
       noteId,
       baseRev: this.state.remote.get(noteId)?.rev ?? 0,
       change,
+      ...(approvalId !== undefined && { approvalId }),
     };
     this.state.pending.push(pending);
     this.#touch(noteId);
@@ -424,6 +454,7 @@ export class SyncClient {
               reason: message.error ?? (message.conflict ? "conflict" : "refused"),
               ...(message.conflict && { proposalId: message.conflict.proposalId }),
               ...(message.conflict && message.rev !== undefined && { rev: message.rev }),
+              ...(message.needsApproval && { needsApproval: message.needsApproval }),
             },
           ]);
         }
@@ -457,7 +488,11 @@ export class SyncClient {
     this.#welcomed = false;
     this.#dirty = true;
     // Same changeIds: the record knows which of these already landed under the old id.
-    for (const p of pending) this.#queue(p.noteId, p.change, p.changeId);
+    for (const p of pending)
+      this.#queue(p.noteId, p.change, {
+        changeId: p.changeId,
+        ...(p.approvalId !== undefined && { approvalId: p.approvalId }),
+      });
     this.connect();
   }
 }

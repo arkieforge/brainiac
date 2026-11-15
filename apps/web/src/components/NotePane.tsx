@@ -1,8 +1,10 @@
 import { parseNote } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 
+import { approvePlan } from "../approve.ts";
 import { fieldsOf } from "../fields.ts";
 import { OFFLINE_SENSITIVE, useRecord } from "../record.ts";
+import { ApproveButton, Plan } from "./Approval.tsx";
 import { BodyEditor } from "./BodyEditor.tsx";
 import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
@@ -10,6 +12,25 @@ import { FieldForm } from "./FieldForm.tsx";
 /** Whether this note's edits have reached the record, and what to do about one that won't. */
 function SyncState({ client, noteId }: { readonly client: SyncClient; readonly noteId: string }) {
   const blocked = client.state.blocked.get(noteId);
+  const plan = blocked?.at(-1)?.needsApproval;
+  if (plan)
+    return (
+      <div className="sync-state warn approval" role="status">
+        <p>Not synced: this edit needs your passkey. Approving lets exactly this through:</p>
+        <Plan items={plan.items} />
+        <ApproveButton
+          approve={async () => {
+            const approved = await approvePlan(plan.planHash, plan.items);
+            if ("error" in approved) return approved;
+            client.approved(noteId, plan.planHash, approved.approvalId);
+            return undefined;
+          }}
+        />{" "}
+        <button type="button" onClick={() => client.dismiss(noteId)}>
+          Keep the record's version
+        </button>
+      </div>
+    );
   if (blocked?.length)
     return (
       <p className="sync-state warn" role="status">
