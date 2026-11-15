@@ -10,7 +10,7 @@ The fixture record is built once on node:sqlite and indexed as a laptop's copy i
 embeds questions here (hybrid ranking needs Workers AI on a deployed stage). Its connection reads everything,
 sensitive notes included, as the person's own Claude would. Each sample is a fresh headless Claude Code run
 (`claude -p <question>`) with the record's `/mcp`, served by the Worker's own tool server
-(`apps/worker/src/mcp/tools.ts`), as its only MCP server, no built-in tools, none of this machine's settings,
+(`packages/base/src/mcp.ts`), as its only MCP server, no built-in tools, none of this machine's settings,
 and the agent skill (`apps/cli/plugin/skills/brainiac/SKILL.md`) appended to the system prompt, as the plugin
 would load it. The case then checks the final answer.
 
