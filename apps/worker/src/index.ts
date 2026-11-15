@@ -7,7 +7,7 @@ import { Client, Pool } from "pg";
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
-import { accountPage, landing, signInPage } from "./auth/pages.ts";
+import { accountPage, landing, signInPage, type Activity } from "./auth/pages.ts";
 import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
@@ -160,18 +160,29 @@ const siteSession =
       };
     });
 
-async function account(request: Request, auth: ReturnType<typeof createAuth>): Promise<Response> {
+async function account(
+  request: Request,
+  auth: ReturnType<typeof createAuth>,
+  record: (userId: string) => ReturnType<typeof recordOf>,
+): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
   const session = await auth.api.getSession({
     headers: request.headers,
     query: { disableCookieCache: true },
   });
   if (!session) return Response.redirect(new URL("/sign-in", request.url).toString(), 303);
-  const [passkeys, apps] = await Promise.all([
+  const [passkeys, apps, connections] = await Promise.all([
     auth.api.listPasskeys({ headers: request.headers }),
     auth.api.listConnectedApps({ headers: request.headers }),
+    record(session.user.id).then(async (base): Promise<Activity[]> => (base ? await base.activity() : [])),
   ]);
-  return accountPage(session.user.email, passkeys, vouchedUntil(session.session, passkeys), apps);
+  return accountPage(
+    session.user.email,
+    passkeys,
+    vouchedUntil(session.session, passkeys),
+    apps,
+    connections,
+  );
 }
 
 // OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may
@@ -226,7 +237,10 @@ export default {
         }),
       );
     if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
-    if (pathname === "/account") return withAuth(request, env, ctx, (auth) => account(request, auth));
+    if (pathname === "/account")
+      return withAuth(request, env, ctx, (auth, pool) =>
+        account(request, auth, (userId) => recordOf(env, pool, userId)),
+      );
     if (pathname === "/sync") return openSync(request, env, signedIn(request, env, ctx));
     if (pathname === "/cli/login") return cliLogin(request, env, signedIn(request, env, ctx, true));
     if (pathname === "/cli/logout") return cliLogout(request, env);

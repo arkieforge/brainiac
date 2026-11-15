@@ -19,6 +19,7 @@ import {
 import { type, type Type } from "arktype";
 
 import type { NeedsApproval } from "./approvals.ts";
+import { recordAudit } from "./audit.ts";
 import { principalOf } from "./connections.ts";
 import { diff, stateOf } from "./diff.ts";
 import { checkFilter, matches, paginate, Where, type Row } from "./filter.ts";
@@ -37,6 +38,7 @@ import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
 import { withdraw, type Decided } from "./proposals.ts";
 import type { Sql } from "./sql.ts";
+import { currentSeq } from "./sync.ts";
 
 /** What a tool call answers: a JSON value for the agent, or why the call itself was wrong. */
 export type Answer =
@@ -56,16 +58,21 @@ const present = <T extends object>(args: T): Present<T> =>
 const fail = (error: string): Answer => ({ ok: false, error });
 const ok = (value: unknown): Answer => ({ ok: true, value });
 
+/** One tool call as its connection, collecting the notes its answer shows for the call's audit row. */
+interface Call extends Context {
+  readonly shown: Set<string>;
+}
+
 /** A tool: its description, its input schema, and its logic over the record as `ctx`'s connection. */
 function tool<const T extends object>(
   description: string,
   input: Type<T>,
-  run: (sql: Sql, args: Present<T>, ctx: Context) => Answer,
+  run: (sql: Sql, args: Present<T>, ctx: Call) => Answer,
 ) {
   return {
     description,
     input,
-    call(sql: Sql, args: unknown, ctx: Context): Answer {
+    call(sql: Sql, args: unknown, ctx: Call): Answer {
       const parsed = input(args ?? {});
       if (parsed instanceof type.errors) return fail(parsed.summary);
       // These schemas have no morphs, so what passes is T; arktype can't show that for a generic T.
@@ -79,9 +86,11 @@ const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOStrin
 const principal = (ctx: Context): Principal => principalOf(ctx.connection);
 
 /** The live note with this id, as the caller may see it: hidden and missing read the same. */
-const visible = (sql: Sql, ctx: Context, id: string) => {
+const visible = (sql: Sql, ctx: Call, id: string) => {
   const note = getNote(sql, id);
-  return note && note.deletedAt === null ? project(note, principal(ctx)) : undefined;
+  const seen = note && note.deletedAt === null ? project(note, principal(ctx)) : undefined;
+  if (seen) ctx.shown.add(seen.id);
+  return seen;
 };
 
 const fieldsOf = (note: NoteRow): Record<string, unknown> => JSON.parse(note.fm);
@@ -338,6 +347,13 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
       : notes.map(noteRow);
     const page = paginate(rows, args);
     if ("error" in page) return fail(page.error);
+    // A proposal or question row names the notes it is about, which the caller may see (checked above).
+    for (const { id, data, note } of page.rows) {
+      if (note) ctx.shown.add(id);
+      else
+        for (const ref of [data["note"], data["notes"]].flat())
+          if (typeof ref === "string") ctx.shown.add(ref);
+    }
     return ok({
       rows: page.rows.map(({ id, data, note }) => ({
         id,
@@ -361,6 +377,7 @@ const describe = tool(
         return counts;
       }, {});
     const me = notes.find((note) => note.path === "me.md");
+    if (me) ctx.shown.add(me.id);
     const proposals = proposalRows(sql, ctx).filter((row) => row.data["status"] === "open");
     const { connection } = ctx;
     return ok({
@@ -417,6 +434,7 @@ const get = tool(
         missing.push("id" in ref ? ref.id : ref.path);
         continue;
       }
+      ctx.shown.add(note.id);
       const fields = fieldsOf(note);
       found.push({
         id: note.id,
@@ -456,7 +474,7 @@ const READ_ONLY = { status: "forbidden", message: "This connection can only read
 const typesOf = (sql: Sql) => ({ ...BUILT_IN_TYPES, ...manifestOf(sql)?.types });
 
 /** A relation from the note at `from` to the visible live note `id`, or why there can't be one. */
-function relation(sql: Sql, ctx: Context, from: string, id: string): string | { error: string } {
+function relation(sql: Sql, ctx: Call, from: string, id: string): string | { error: string } {
   const target = visible(sql, ctx, id);
   return target ? relationTo(from, target.path) : { error: `No note with id ${id}.` };
 }
@@ -464,7 +482,7 @@ function relation(sql: Sql, ctx: Context, from: string, id: string): string | { 
 /** The ops that point `field` at each note in `ids`: a list gains them, a single relation is set. */
 function linkOps(
   sql: Sql,
-  ctx: Context,
+  ctx: Call,
   note: { path: string; type: string | null; data: Readonly<Record<string, unknown>> },
   links: Readonly<Record<string, string | readonly string[]>>,
 ): PatchOp[] | { error: string } {
@@ -626,13 +644,15 @@ const create = tool(
           fold(note.title) === fold(title) &&
           project(note, principal(ctx)),
       );
-      if (twin)
+      if (twin) {
+        ctx.shown.add(twin.id);
         return ok({
           status: "duplicate",
           duplicate: { id: twin.id, path: twin.path, title: twin.title, rev: twin.rev },
           message:
             "A note of this type with this title exists. Update it instead, or send duplicate_ok: true if this is a different one.",
         });
+      }
     }
     const raw =
       patch("", [
@@ -762,6 +782,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
           status: "invalid",
           issues: [{ field: "id", message: `No ${args.restore ? "deleted " : ""}note with id ${args.id}.` }],
         });
+      ctx.shown.add(note.id);
       if (args.rev === undefined)
         return fail("rev is required: get the note and send its rev, so you change what you read.");
       const built = mutationOf(note, args.rev);
@@ -781,6 +802,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
     const rows = liveVisible(sql, ctx, args.type);
     if (typeof rows === "string") return fail(rows);
     const matched = rows.map(noteRow).filter((row) => matches(row, args));
+    for (const row of matched) ctx.shown.add(row.id);
     if (matched.length > BULK_LIMIT)
       return fail(
         `This matches ${matched.length} notes; one update changes at most ${BULK_LIMIT}. Narrow the filter.`,
@@ -813,6 +835,12 @@ const undo = tool(
     const known = sql.all("SELECT 1 FROM revisions WHERE runId = ? LIMIT 1", args.run).length > 0;
     if (!known)
       return ok({ status: "invalid", issues: [{ field: "run", message: `No run ${args.run} to undo.` }] });
+    // Its answer can show any note the run touched (a conflict's values, a dry run's), deleted ones too.
+    for (const { noteId } of sql.all<{ noteId: string }>(
+      "SELECT DISTINCT noteId FROM revisions WHERE runId = ?",
+      args.run,
+    ))
+      if (project(getNote(sql, noteId), principal(ctx))) ctx.shown.add(noteId);
     const run = () =>
       undoRun(sql, args.run, {
         ...ctx,
@@ -860,8 +888,39 @@ export const TOOLS = { describe, query, get, add, create, update, undo, request_
 
 export type ToolName = keyof typeof TOOLS;
 
-/** Runs one tool call as `ctx` (the record loads the connection from its own table). */
+/** The approval a call cites, if this record has one by that id: an id it never issued isn't one. */
+function citedApproval(sql: Sql, args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null || !("approval_id" in args)) return undefined;
+  const id = args.approval_id;
+  if (typeof id !== "string") return undefined;
+  return sql.all("SELECT 1 FROM approvals WHERE id = ?", id).length > 0 ? id : undefined;
+}
+
+/**
+ * Runs one tool call as `ctx` (the record loads the connection from its own table), and writes its audit row in
+ * the same transaction: the notes the answer showed and every note the call changed, so a change and its row
+ * land together or not at all.
+ */
 export function callTool(sql: Sql, name: string, args: unknown, ctx: Context): Answer {
-  if (!Object.hasOwn(TOOLS, name)) return fail(`No tool named ${name}.`);
-  return TOOLS[name as ToolName].call(sql, args, ctx);
+  return sql.transaction(() => {
+    const before = currentSeq(sql);
+    const call: Call = { ...ctx, shown: new Set() };
+    const answer = Object.hasOwn(TOOLS, name)
+      ? TOOLS[name as ToolName].call(sql, args, call)
+      : fail(`No tool named ${name}.`);
+    for (const { noteId } of sql.all<{ noteId: string }>(
+      "SELECT DISTINCT noteId FROM changes WHERE seq > ?",
+      before,
+    ))
+      call.shown.add(noteId);
+    const approvalId = citedApproval(sql, args);
+    recordAudit(sql, {
+      actor: ctx.actor,
+      tool: name,
+      noteIds: [...call.shown],
+      ...(approvalId !== undefined && { approvalId }),
+      at: ctx.now,
+    });
+    return answer;
+  });
 }

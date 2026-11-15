@@ -12,6 +12,7 @@ export {
   type Opened,
   type Signature,
 } from "./approvals.ts";
+export { activity, auditOf, type AuditCall } from "./audit.ts";
 export {
   authenticate,
   canSee,

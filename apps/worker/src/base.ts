@@ -1,4 +1,5 @@
 import {
+  activity,
   authenticate,
   callTool,
   canSee,
@@ -279,6 +280,11 @@ export class Base extends DurableObject<Env> {
     this.wake();
     if ("connection" in result) this.resync(connectionId);
     return result;
+  }
+
+  /** Each connection and its most recent tool calls (the audit log), for the person's account page. */
+  activity(): ReturnType<typeof activity> {
+    return activity(this.sql);
   }
 
   disconnect(connectionId: string): void {

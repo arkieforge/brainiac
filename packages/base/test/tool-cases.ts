@@ -1,11 +1,12 @@
 // Conformance cases for the MCP tools (tools.ts), on the fixture record: the filter, cursors, levels, the sensitive
 // scope, the approval list and what results never contain. cases.ts runs them on both engines; the transports
 // are tested in apps/worker (auth.test.ts).
-import { deepStrictEqual as same, equal, match, ok } from "node:assert/strict";
+import { deepStrictEqual as same, equal, match, ok, throws } from "node:assert/strict";
 
 import { parseNote, type PlanItem } from "@brainiac/core";
 
 import {
+  auditOf,
   callTool,
   connect,
   getNote,
@@ -720,5 +721,96 @@ export const toolCases: Record<string, Case> = {
       ok(!text.includes(canary), `${canary} leaked: ${text}`);
     // The portal login is a reference to the vault, never the secret.
     ok(text.includes("secret:portal.tum"));
+  },
+
+  "each tool call writes one audit row in its own transaction, naming what it read and changed": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const rowsNow = () => sql.all<{ n: number }>("SELECT count(*) AS n FROM audit")[0]?.n;
+    const floor = connection(sql);
+    const writer = connection(sql, { level: "write", sensitive: true, holdDays: 0 });
+    const noteIds = (made: Connection) => auditOf(sql, made.id).map((c) => c.notes.map((note) => note.id));
+
+    // A read names the notes the answer showed, never the ones hidden from it.
+    call(sql, as(floor), "get", { ids: [n.ielts, n.role] });
+    call(sql, as(floor), "query", { type: "Role" });
+    same(noteIds(floor), [[n.role], [n.role]]);
+    same(
+      auditOf(sql, floor.id).map((c) => c.tool),
+      ["query", "get"],
+    );
+    // A sensitive read by a connection with the scope is on record, by path.
+    call(sql, as(writer), "get", { ids: [n.ielts] });
+    same(auditOf(sql, writer.id)[0]?.notes, [{ id: n.ielts, path: PATHS.ielts }]);
+
+    // A refused call and a call to no tool are still calls.
+    const before = rowsNow() ?? 0;
+    refused(sql, as(floor), "get", {});
+    refused(sql, as(floor), "nope", {});
+    equal(rowsNow(), before + 2);
+
+    // A change names the note it changed, and the approval it cited when the record issued it.
+    const held = call(sql, as(writer), "update", { id: n.ielts, rev: 1, set: { overall: 8.5 } });
+    const approved = recordApproval(sql, held["items"] as PlanItem[], signature(), T0);
+    ok("approvalId" in approved);
+    call(sql, as(writer), "update", {
+      id: n.ielts,
+      rev: 1,
+      set: { overall: 8.5 },
+      approval_id: approved.approvalId,
+    });
+    const [last, first] = auditOf(sql, writer.id);
+    same([last?.approvalId, last?.notes.map((note) => note.id)], [approved.approvalId, [n.ielts]]);
+    equal(first?.approvalId, null);
+    call(sql, as(writer), "update", { id: n.role, rev: 1, set: { org: "Acme" }, approval_id: "made-up" });
+    equal(auditOf(sql, writer.id)[0]?.approvalId, null);
+
+    // A created note is named too, with its path once it exists.
+    const made = call(sql, as(writer), "create", {
+      type: "Person",
+      fields: { title: "Dr Lindqvist", role: "referee" },
+    });
+    equal(made["status"], "applied", JSON.stringify(made));
+    same(auditOf(sql, writer.id)[0]?.notes, [{ id: made["id"], path: made["path"] }]);
+
+    // An undo names the run's notes, even when its answer changes nothing: a dry run, or only conflicts.
+    const latest = () => auditOf(sql, writer.id)[0]?.notes.map((note) => note.id);
+    call(sql, as(writer), "undo", { run: made["run"], dry_run: true });
+    same(latest(), [made["id"]]);
+    const person = { actor: "human", now: T0 };
+    const ops = [{ op: "set", path: ["role"], value: "advisor" }] as const;
+    equal(
+      mutate(sql, { op: "patch", noteId: String(made["id"]), baseRev: 1, ops: [...ops] }, person).status,
+      "applied",
+    );
+    const undone = call(sql, as(writer), "undo", { run: made["run"] });
+    same([undone["undone"], latest()], [[], [made["id"]]]);
+
+    // A question or proposal row names the note it's about.
+    call(sql, as(floor), "request_info", { question: "Which org?", note: n.role });
+    call(sql, as(floor), "query", { type: "Question" });
+    same(
+      auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
+      [n.role],
+    );
+    // A note's own fields are never read as references: only the note itself is named.
+    call(sql, as(writer), "update", { id: n.role, rev: revOf(sql, n.role), set: { notes: [n.ielts] } });
+    call(sql, as(floor), "query", { type: "Role", fields: ["notes"] });
+    same(
+      auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
+      [n.role],
+    );
+
+    // One transaction: a change whose audit row can't be written doesn't land either.
+    sql.all("ALTER TABLE audit RENAME TO audit_gone");
+    const rev = revOf(sql, n.role);
+    throws(() => callTool(sql, "update", { id: n.role, rev, set: { org: "Acme GmbH" } }, as(writer)));
+    equal(revOf(sql, n.role), rev);
+    sql.all("ALTER TABLE audit_gone RENAME TO audit");
+
+    // Each connection sees only its own calls.
+    ok(auditOf(sql, floor.id).every((c) => !c.notes.some((note) => note.id === n.ielts)));
   },
 };

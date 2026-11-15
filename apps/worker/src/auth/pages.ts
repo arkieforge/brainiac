@@ -1,5 +1,7 @@
 // The pages auth needs before the web app exists (#50): sign in or up, enroll passkeys, and let an MCP client
 // in. Plain HTML with a little inline script; the WebAuthn ceremonies use the browser's own JSON helpers.
+import type { AuditCall, Connection } from "@brainiac/base";
+
 import type { ConnectedApp } from "./connected-apps.ts";
 import { canApprove, type ApprovingPasskey } from "./recovery.ts";
 
@@ -141,6 +143,7 @@ export function accountPage(
   passkeys: readonly ApprovingPasskey[],
   vouchedUntil: number,
   apps: readonly ConnectedApp[],
+  connections: readonly Activity[] = [],
   now = new Date(),
 ): Response {
   const step = nextPasskeyStep(passkeys);
@@ -166,12 +169,29 @@ export function accountPage(
 <button type="button" class="quiet" data-disconnect="${escape(a.clientId)}" data-name="${escape(a.name ?? from)}">Disconnect</button></li>`;
     })
     .join("");
+  const activityRows = connections
+    .map(({ connection, calls }) => {
+      const app = apps.find((a) => a.clientId === connection.oauthClientId);
+      const id = connection.oauthClientId;
+      const name =
+        connection.kind === "cli"
+          ? "Brainiac CLI"
+          : (app?.name ?? (id && URL.canParse(id) ? new URL(id).host : id));
+      const grants = `${connection.level}${connection.sensitive ? ", sees sensitive notes" : ""}`;
+      const items = calls.map(
+        (call) =>
+          `<li><span>${escape(call.tool)}${describeNotes(call)}</span><span class="note">${new Date(call.at).toUTCString()}</span></li>`,
+      );
+      return `<details><summary>${escape(name ?? "An app")} <span class="note">${escape(grants)}</span></summary>${items.length ? `<ul>${items.join("")}</ul>` : '<p class="note">No calls yet.</p>'}</details>`;
+    })
+    .join("");
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
 ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" id="add">Add a passkey</button></section>`}
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
+${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, and when it used your approval.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `// Changing passkeys asks for one that can approve first (the proof lasts 10 minutes, and a security key can
 // take a while to find), so a new one needn't wait 72 hours. Someone who lost theirs can carry on when adding,
@@ -223,6 +243,22 @@ document.getElementById("sign-out").onclick = run(async () => {
   })));
   location.href = "/sign-in";
 });`,
+  );
+}
+
+/** A connection and its most recent calls, from the record's audit log. */
+export interface Activity {
+  readonly connection: Pick<Connection, "kind" | "oauthClientId" | "level" | "sensitive">;
+  readonly calls: readonly AuditCall[];
+}
+
+/** The notes one call touched, by path, as a short phrase after the tool's name. */
+function describeNotes(call: AuditCall): string {
+  const paths = call.notes.map((note) => note.path ?? "a deleted note");
+  const shown = paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "");
+  return (
+    (shown ? `: ${escape(shown)}` : "") +
+    (call.approvalId ? ' <span class="note">with your approval</span>' : "")
   );
 }
 
