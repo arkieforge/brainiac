@@ -17,6 +17,7 @@
     // run from its package's binary rather than imported.
     "packages/base": { "entry": ["test/bun.ts", "test/workerd.ts"], "ignoreDependencies": ["bun"] },
     "packages/sync": { "entry": ["test/bun.ts"], "ignoreDependencies": ["bun"] },
+    "apps/cli": { "entry": ["test/bun.ts"] },
     // test/harness.ts is bundled into workerd by base.test.ts.
     "apps/worker": {
       "entry": ["src/index.ts", "test/harness.ts"],

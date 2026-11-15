@@ -1,0 +1,91 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import { configDir } from "../src/config.ts";
+import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
+import { service } from "../src/service.ts";
+
+describe("what the daemon takes from disk", () => {
+  it("syncs notes, never hidden files, temp files or other tools' conflict copies", () => {
+    expect(isNote("facts/tests/ielts-2026-11.md")).toBe(true);
+    expect(isNote("applications/essay (1).md")).toBe(true); // a name people use, not only Google Drive's copies
+    for (const path of [
+      "notes/a.txt",
+      ".brainiac/state.md",
+      ".obsidian/workspace.md",
+      "notes/.~brainiac-1234",
+      "notes/a (conflicted copy 2026-11-14).md",
+      "notes/a.sync-conflict-20261114-123456-ABCDEFG.md",
+    ]) {
+      expect(isNote(path), path).toBe(false);
+    }
+    // iCloud's " 2" copies are ignored only inside iCloud, where they come from.
+    expect(isNote("notes/plan 2.md")).toBe(true);
+    expect(isNote("notes/plan 2.md", true)).toBe(false);
+  });
+
+  it("pauses for more than 50 notes, or 10% of the record from 5 notes up", () => {
+    expect(isMassChange(1, 1)).toBe(false);
+    expect(isMassChange(4, 10)).toBe(false);
+    expect(isMassChange(5, 10)).toBe(true);
+    expect(isMassChange(5, 60)).toBe(false);
+    expect(isMassChange(50, 10_000)).toBe(false);
+    expect(isMassChange(51, 10_000)).toBe(true);
+  });
+});
+
+describe("other sync tools", () => {
+  let dir = "";
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("finds Dropbox above the vault and Obsidian Sync in either plugin format", () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "brainiac-tools-")));
+    const vault = join(dir, "Dropbox", "vault");
+    mkdirSync(join(vault, ".obsidian"), { recursive: true });
+    expect(otherSyncTools(vault)).toEqual([]);
+    writeFileSync(join(dir, "Dropbox", ".dropbox"), "");
+    writeFileSync(join(vault, ".obsidian", "core-plugins.json"), JSON.stringify(["file-explorer", "sync"]));
+    expect(otherSyncTools(vault)).toHaveLength(2);
+    writeFileSync(join(vault, ".obsidian", "core-plugins.json"), JSON.stringify({ sync: false }));
+    expect(otherSyncTools(vault)).toHaveLength(1);
+  });
+});
+
+describe("brainiac daemon install", () => {
+  const program = ["/Users/nadia/My Apps/brainiac", "daemon", "run"];
+
+  it("writes a launchd agent that keeps the daemon running", () => {
+    const unit = service({ platform: "darwin", home: "/Users/nadia", uid: 501, program });
+    expect(unit.path).toBe("/Users/nadia/Library/LaunchAgents/dev.brainiac.daemon.plist");
+    expect(unit.content).toContain("<string>/Users/nadia/My Apps/brainiac</string>");
+    expect(unit.content).toContain("<key>KeepAlive</key>");
+    expect(unit.start.at(-1)).toEqual(["launchctl", "bootstrap", "gui/501", unit.path]);
+  });
+
+  it("writes a systemd user unit, quoting every argument", () => {
+    const unit = service({
+      platform: "linux",
+      home: "/home/nadia",
+      uid: 1000,
+      program: [...program, "100%"],
+    });
+    expect(unit.path).toBe("/home/nadia/.config/systemd/user/brainiac.service");
+    expect(unit.content).toContain('ExecStart="/Users/nadia/My Apps/brainiac" "daemon" "run" "100%%"');
+    expect(unit.start.at(-1)).toEqual(["systemctl", "--user", "enable", "--now", "brainiac.service"]);
+  });
+
+  it("says so on a platform without a daemon yet", () => {
+    expect(() => service({ platform: "win32", home: "C:\\Users\\nadia", uid: 0, program })).toThrow(/win32/);
+  });
+});
+
+describe("the config folder", () => {
+  it("is the OS's, never the vault", () => {
+    expect(configDir({}, "darwin", "/Users/nadia")).toBe("/Users/nadia/Library/Application Support/brainiac");
+    expect(configDir({}, "linux", "/home/nadia")).toBe("/home/nadia/.config/brainiac");
+    expect(configDir({ XDG_CONFIG_HOME: "/xdg" }, "linux", homedir())).toBe("/xdg/brainiac");
+  });
+});

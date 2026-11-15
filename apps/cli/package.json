@@ -1,0 +1,22 @@
+{
+  "name": "@brainiac/cli",
+  "private": true,
+  "bin": {
+    "brainiac": "./src/main.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "bun build --compile src/main.ts --outfile dist/brainiac",
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  },
+  "dependencies": {
+    "@brainiac/base": "workspace:*",
+    "@brainiac/core": "workspace:*",
+    "@brainiac/sync": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "bun": "1.4.4"
+  }
+}
