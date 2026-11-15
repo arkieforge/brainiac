@@ -31,6 +31,9 @@ export interface Env {
   GITHUB_APP_CLIENT_SECRET?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
+  /** The ORCID API client (connectors/orcid.ts); the connector is off until both exist. */
+  ORCID_CLIENT_ID?: string;
+  ORCID_CLIENT_SECRET?: string;
   /** treg (docs/operations/services.md), for drift checks of the person's own profiles; off until it exists. */
   TREG_TOKEN?: string;
   /** Browser Rendering, for a saved link's PDF snapshot (connectors/links.ts); a stage without it takes none. */

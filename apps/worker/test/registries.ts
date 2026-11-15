@@ -16,7 +16,15 @@ const CROSSREF = {
     published: { "date-parts": [[2026, 3, 14]] },
     issued: { "date-parts": [[2026, 3, 14]] },
     author: [
-      { given: "Nadia", family: "Karim", sequence: "first", affiliation: [] },
+      // Her iD is outside the ranges ORCID issues, so nobody's.
+      {
+        ORCID: "https://orcid.org/0000-0000-0000-0001",
+        "authenticated-orcid": false,
+        given: "Nadia",
+        family: "Karim",
+        sequence: "first",
+        affiliation: [],
+      },
       { given: "Amara", family: "Okafor", sequence: "additional", affiliation: [] },
     ],
     "is-referenced-by-count": 1,

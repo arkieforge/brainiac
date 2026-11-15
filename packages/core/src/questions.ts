@@ -4,7 +4,7 @@
 // about, so it spreads like any edit, and the question is gone everywhere once the gap is: nothing stores
 // whether a found question is open.
 import { deepEqual, type PatchOp, type YamlValue } from "./patch.ts";
-import { resolver, show, usedBy, type ReviewNote } from "./review.ts";
+import { fieldOf, resolver, show, usedBy, type ReviewNote } from "./review.ts";
 import { BUILT_IN_TYPES, type Manifest } from "./schema.ts";
 
 /** A note as questions read it: its front-matter, and whether it's sensitive. */
@@ -195,7 +195,7 @@ export function findQuestions(
     if (!spec || type === "Question" || type === "InboxItem" || superseded.has(note.id)) continue;
     const skipped = notApplicable(note);
     for (const [field, fieldSpec] of Object.entries(spec.fields)) {
-      if (!(fieldSpec.ask ?? fieldSpec.required) || !empty(note.data[field])) continue;
+      if (!(fieldSpec.ask ?? fieldSpec.required) || !empty(fieldOf(note.data, field))) continue;
       if (skipped.includes(field) || covered.has(`${note.id}.${field}`)) continue;
       const input = inputOf(fieldSpec);
       if (!input) continue;

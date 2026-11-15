@@ -15,6 +15,8 @@ it("reads the paper from Crossref and its citations from OpenAlex, sending them 
     venue: "Journal of Fictional Linguistics",
     published: "2026-03-14",
     authors: ["Nadia Karim", "Amara Okafor"],
+    // Each author's iD where Crossref names one, for the record to match against the person's linked iD.
+    orcids: ["https://orcid.org/0000-0000-0000-0001", null],
     citations: 3,
   };
   expect(await lookupDoi(FIXTURE_DOI, web)).toEqual(found);

@@ -1,7 +1,7 @@
 // The DOI connector's lookup (docs/product/features/projects-profiles-links.md): what a paper's registry says
 // about it, from Crossref, and how often it is cited, from OpenAlex. Both are free and need no key. The DOI is the
 // only thing either one is sent.
-import type { Found } from "@brainiac/base";
+import { bareDoi, type Found } from "@brainiac/base";
 import { type } from "arktype";
 
 /** Who is asking, as both services ask clients to say. Generic on purpose: never the person's details. */
@@ -9,12 +9,6 @@ const USER_AGENT = "Brainiac (https://github.com/arkieforge/brainiac)";
 
 /** How a lookup reaches the outside world: `fetch`, or a test answering in its place. */
 export type Web = (url: string, init: RequestInit) => Promise<Response>;
-
-/** A DOI as the services take it (`10.5555/12345678`), from a bare DOI, `doi:` or a doi.org link. */
-function bareDoi(text: string): string | undefined {
-  const doi = text.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, "");
-  return /^10\.\d{4,9}\/\S+$/.test(doi) ? doi : undefined;
-}
 
 // Crossref writes `[[null]]` for a date it doesn't have.
 const DateParts = type({ "date-parts": "(number.integer | null)[][]" });
@@ -28,7 +22,13 @@ const CrossrefWork = type({
     "institution?": type({ "name?": "string" }).array(),
     "published?": DateParts,
     "issued?": DateParts,
-    "author?": type({ "given?": "string", "family?": "string", "name?": "string" }).array(),
+    /** `ORCID` is a link (`https://orcid.org/0000-0002-1825-0097`), when the publisher sent one. */
+    "author?": type({
+      "given?": "string",
+      "family?": "string",
+      "name?": "string",
+      "ORCID?": "string",
+    }).array(),
   },
 });
 
@@ -83,6 +83,8 @@ export async function lookupDoi(text: string, web: Web = fetch): Promise<Found> 
   const authors = work.author
     ?.map((author) => plain(author.name ?? [author.given, author.family].join(" ")))
     .filter((name) => name !== undefined);
+  // In Crossref's order, every author kept, so a position counts the same authors the paper does.
+  const orcids = work.author?.map((author) => author.ORCID ?? null);
   const title = plain(work.title?.[0]);
   const venue = plain(work["container-title"]?.[0] ?? work.institution?.[0]?.name);
   const published = dateOf((work.published ?? work.issued)?.["date-parts"][0]);
@@ -91,6 +93,7 @@ export async function lookupDoi(text: string, web: Web = fetch): Promise<Found> 
     ...(venue && { venue }),
     ...(published && { published }),
     ...(authors?.length && { authors }),
+    ...(orcids?.some((id) => id !== null) && { orcids }),
     ...(openalex !== undefined && { citations: OpenAlexWork.assert(openalex).cited_by_count }),
   };
 }

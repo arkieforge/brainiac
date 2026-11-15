@@ -17,8 +17,8 @@ Each person's record lives in **its own Durable Object with its own SQLite datab
 - **Transactional outbox**: any mutation that needs follow-up work (extract, embed, reindex, render) writes a `jobs` row in the same transaction. A DO alarm dispatches pending jobs to the Queue and sends a job again if nobody acknowledges it within its lease, up to 5 times, after which it is marked failed. After a restart, pending jobs are dispatched again.
 - **Inbox filing is a job too**: the item waits in the DO until an agent (your Claude) claims it with a lease, so two agents never file the same item.
 - **Revision-checked results**: a job carries the note revision it was made for. Its result is installed only if the note is still at that revision; otherwise it's dropped and a job for the new revision runs.
-- **Connector lookups are jobs too**: the alarm enqueues one for each paper whose DOI has no `synced:` block yet, or
-  whose block is a week old, and the result is written through the mutation path as `connector:doi`. A result the
+- **Connector lookups are jobs too**: the alarm enqueues one for each paper whose DOI has no `synced:` block yet,
+  whose block is a week old, or whose block is older than the last change to the linked ORCID iD, and the result is written through the mutation path as `connector:doi`. A result the
   record refuses (it would change a value the person verified) leaves the job failed, and a failed lookup waits a
   week like a successful one, so a DOI is never fetched in a loop.
 - **Profile reads are paid, so the person starts them**: the alarm enqueues a `drift` job only for a Profile never

@@ -89,6 +89,7 @@ export {
   type Snapshot,
 } from "./links.ts";
 export { DOI_ACTOR, installLookup, LOOKUP_MS, type Found } from "./papers.ts";
+export { bareDoi, bareOrcid, linkedOrcid, linkOrcid, ORCID_ACTOR, unlinkOrcid, type Work } from "./orcid.ts";
 export {
   CHECK_CACHE_MS,
   installProfile,

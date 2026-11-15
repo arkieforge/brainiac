@@ -145,6 +145,7 @@ export function accountPage(
   apps: readonly ConnectedApp[],
   connections: readonly Activity[] = [],
   github?: GithubSection,
+  orcid?: OrcidSection,
   now = new Date(),
 ): Response {
   const step = nextPasskeyStep(passkeys);
@@ -212,6 +213,16 @@ export function accountPage(
     ? `<section><h2>GitHub</h2>${outcome ? `<p role="status">${outcome}</p>` : ""}${githubRows ? `<ul>${githubRows}</ul>` : ""}<a href="/connectors/github/install">${githubRows ? "Connect more repos" : "Connect GitHub repos"}</a>
 <p class="note">You pick the repos on GitHub. Each one becomes a project for you to accept, private repos as sensitive notes. Stars, language and archived status stay up to date; everything else on a project is yours. On an organization, only the repos you can see there are read, checked again each day.</p></section>`
     : "";
+  const orcidOutcome = orcid?.outcome ? ORCID_OUTCOMES[orcid.outcome] : undefined;
+  const orcidSection = orcid
+    ? `<section><h2>ORCID</h2>${orcidOutcome ? `<p role="status">${orcidOutcome}</p>` : ""}${
+        orcid.linked
+          ? `<ul><li><span><a href="${escape(orcid.profile)}">${escape(orcid.linked)}</a><br><span class="note">Your verified iD</span></span>
+<button type="button" class="quiet" id="orcid-unlink">Unlink</button></li></ul><a href="/connectors/orcid/link">Link again to bring in new works</a>`
+          : `<a href="/connectors/orcid/link">Link your ORCID iD</a>`
+      }
+<p class="note">You sign in to ORCID to prove the iD is yours. Each of your works that isn't in your record yet becomes a paper for you to accept, and a paper whose registry names your iD shows which author you are.</p></section>`
+    : "";
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
@@ -220,6 +231,7 @@ ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" 
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
 ${githubSection}
+${orcidSection}
 ${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, when it used your approval, and which calls background filing made with nobody there.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `if (new URLSearchParams(location.search).has("signed-out")) {
@@ -271,6 +283,13 @@ for (const button of document.querySelectorAll("[data-github]")) {
     location.reload();
   });
 }
+const orcidUnlink = document.getElementById("orcid-unlink");
+if (orcidUnlink) orcidUnlink.onclick = run(async () => {
+  if (!confirm("Unlink your ORCID iD? Your papers stay, without the author positions it gave them.")) return;
+  const res = await fetch("/connectors/orcid/unlink", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  if (!res.ok) throw new Error("Couldn't unlink. Try again.");
+  location.href = "/account";
+});
 document.getElementById("sign-out").onclick = run(async () => {
   await api("/sign-out", { method: "POST", body: "{}" });
   // The site's copy of the record (apps/web/src/record.ts) leaves with the session. Every open tab of the site
@@ -296,6 +315,22 @@ const GITHUB_OUTCOMES: Readonly<Record<string, string>> = {
   failed:
     "That didn't connect. Start again from Connect GitHub repos, signed in to GitHub as the account that has the repos.",
 };
+
+const ORCID_OUTCOMES: Readonly<Record<string, string>> = {
+  linked: "ORCID is linked. Works that aren't in your record yet wait for you as papers to accept.",
+  denied: "ORCID wasn't linked: you didn't allow it on ORCID.",
+  failed: "That didn't link. Start again from Link your ORCID iD.",
+};
+
+/** The account page's ORCID section: shown only on a stage with an ORCID client. */
+export interface OrcidSection {
+  /** The iD the person proved, if they did. */
+  readonly linked: string | null;
+  /** Its page on ORCID (the sandbox's, off prod). */
+  readonly profile: string;
+  /** How linking just went, from the callback's redirect (`?orcid=`). */
+  readonly outcome?: string | null;
+}
 
 /** The account page's GitHub section: shown only on a stage with the GitHub App set up. */
 export interface GithubSection {

@@ -3,20 +3,11 @@
 // does, with no I/O. Like every connector (contract §3), it proposes new notes and refreshes only its own
 // `synced:` block directly. A repo is known by GitHub's node id (`repo_id`), so a rename changes the block, never
 // which note it belongs to.
-import {
-  BUILT_IN_TYPES,
-  deepEqual,
-  findClash,
-  patch,
-  ulid,
-  type PlanItem,
-  type YamlValue,
-} from "@brainiac/core";
+import { deepEqual, patch, ulid, type YamlValue } from "@brainiac/core";
 
 import type { Connection } from "./connections.ts";
-import { manifestOf } from "./hold.ts";
 import { mutate, type Context } from "./mutate.ts";
-import { getNote, type NoteRow } from "./notes.ts";
+import { freePath, getNote, type NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 /** Who the connector's changes are recorded as. Not a connection: nothing can grant it more. */
@@ -91,35 +82,11 @@ function refresh(sql: Sql, note: NoteRow, values: Readonly<Record<string, YamlVa
   return mutate(sql, { op: "patch", noteId: note.id, baseRev: note.rev, ops }, ctx).status === "applied";
 }
 
-// Split, not trimmed with `-+$`, which runs in quadratic time on a name of many dashes.
-const slug = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-    .join("-")
-    .slice(0, 60)
-    .replace(/-$/, "");
-
-/** Paths taken by live notes and by notes open proposals would create, so two new projects never collide. */
-function takenPaths(sql: Sql): string[] {
-  const live = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL").map((r) => r.path);
-  const proposed = sql
-    .all<{ patch: string }>("SELECT patch FROM proposals WHERE status = 'open' AND kind = 'change'")
-    .flatMap((row) => (JSON.parse(row.patch) as PlanItem[]).map((item) => item.path));
-  return [...live, ...proposed];
-}
-
 /** Proposes a Project note for a repo; a private repo's is sensitive. Returns the proposal's id. */
 function proposeProject(sql: Sql, repo: Repo, now: number): string | undefined {
   const id = ulid(now);
   const shortName = repo.name.split("/").pop() ?? repo.name;
-  const folder = { ...BUILT_IN_TYPES, ...manifestOf(sql)?.types }["Project"]?.folder ?? "facts/projects";
-  const base = `${folder}/${slug(shortName) || id.toLowerCase()}`;
-  const path =
-    findClash(takenPaths(sql), `${base}.md`) === undefined
-      ? `${base}.md`
-      : `${base}-${id.slice(-6).toLowerCase()}.md`;
+  const path = freePath(sql, "Project", shortName, id);
   const raw = patch("", [
     { op: "set", path: ["id"], value: id },
     { op: "set", path: ["type"], value: "Project" },

@@ -125,6 +125,22 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       synced: { kind: "mapping", example: "{repo_id: R_kgDOJx, stars: 214}" },
     },
   },
+  // A paper, which the ORCID connector proposes from the person's works (packages/base/src/orcid.ts). The DOI
+  // connector owns `synced` (packages/base/src/papers.ts), with the author position when the person's linked ORCID
+  // iD names them; `position` is the person's own, and wins.
+  Paper: {
+    version: 1,
+    held: true,
+    folder: "facts/papers",
+    headline: "{title} · {synced.venue} · {synced.published|year} · author {position}",
+    key: ["doi"],
+    fields: {
+      doi: { kind: "text", example: "10.5555/12345678" },
+      position: { kind: "number", example: 1, ask: "Which author are you on {title}? 1 is the first." },
+      sources: { kind: "list" },
+      synced: { kind: "mapping", example: "{doi: 10.5555/12345678, position: 2}" },
+    },
+  },
   // One of the person's own public profiles, checked for drift (packages/core/src/profiles.ts). `name`, `headline`,
   // `about` and `location` are what the person wants it to say; `synced` is what the profiles connector last saw.
   Profile: {

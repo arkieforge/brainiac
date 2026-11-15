@@ -77,6 +77,11 @@ describe("headlines", () => {
     expect(headline(edited(PAPER, { synced }), manifest)).toBe(
       `${title} · Journal of Fictional Linguistics · 2026 · author 1`,
     );
+    // The person left the position empty and their linked ORCID iD says which author they are; their own wins.
+    expect(headline(edited(PAPER, { position: undefined, synced: { position: 2 } }), manifest)).toBe(
+      `${title} · author 2`,
+    );
+    expect(headline(edited(PAPER, { synced: { position: 2 } }), manifest)).toBe(`${title} · author 1`);
   });
 });
 

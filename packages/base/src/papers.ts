@@ -1,13 +1,15 @@
 // Papers fill from their DOI (docs/product/features/projects-profiles-links.md). A Paper note with a `doi` gets a
 // `synced:` block the DOI connector owns: a `doi` job looks the DOI up outside the record (Crossref for the paper,
 // OpenAlex for its citations), the record writes what came back through the mutation path, and the same happens
-// again a week later so the citation count stays current. Everything else on the note stays the person's.
+// again a week later so the citation count stays current. Everything else on the note stays the person's. When the
+// person linked their ORCID iD (orcid.ts), the block says which author they are, matched by that iD alone.
 import type { PatchOp, YamlValue } from "@brainiac/core";
 
 import { DAY_MS } from "./hold.ts";
 import { finishJob } from "./jobs.ts";
 import { mutate } from "./mutate.ts";
 import { getNote } from "./notes.ts";
+import { bareOrcid, linkedOrcid, orcidChangedAt } from "./orcid.ts";
 import type { Sql } from "./sql.ts";
 
 /** A paper is looked up again this long after its last lookup, and a failed lookup is tried again after it too. */
@@ -28,6 +30,11 @@ export type Found =
       readonly published?: string;
       /** Every author's name, in the paper's order. */
       readonly authors?: readonly string[];
+      /**
+       * Each author's ORCID iD as the registry names it, in the paper's order, null where it names none. Only
+       * matched against the person's linked iD, never kept.
+       */
+      readonly orcids?: readonly (string | null)[];
       readonly citations?: number;
     }
   | "missing";
@@ -41,13 +48,14 @@ interface Lookup {
 
 /**
  * Every live Paper with a text `doi` and no lookup on its way, with when it is next due. A block filled for another
- * DOI (the person changed it) is due at once. A failed lookup waits a week, like a successful one, so a DOI that
- * keeps failing is never fetched in a loop.
+ * DOI (the person changed it), or before the linked ORCID iD last changed, is due at once. A failed lookup waits a
+ * week, like a successful one, so a DOI that keeps failing is never fetched in a loop.
  */
 const lookups = (sql: Sql) =>
   sql.all<Lookup>(
     `SELECT id, rev, max(
        CASE WHEN fm ->> '$.synced.doi' IS fm ->> '$.doi'
+           AND coalesce(strftime('%s', fm ->> '$.synced.checked') * 1000, 0) >= ?
          THEN coalesce(strftime('%s', fm ->> '$.synced.checked') * 1000, 0) + ? ELSE 0 END,
        coalesce((SELECT max(dispatchedAt) FROM jobs
          WHERE jobs.kind = 'doi' AND jobs.noteId = notes.id AND jobs.status = 'failed'), -?) + ?
@@ -56,6 +64,7 @@ const lookups = (sql: Sql) =>
      WHERE type = 'Paper' AND deletedAt IS NULL AND json_type(fm, '$.doi') = 'text'
        AND NOT EXISTS (SELECT 1 FROM jobs
          WHERE jobs.kind = 'doi' AND jobs.noteId = notes.id AND jobs.status != 'failed')`,
+    orcidChangedAt(sql),
     LOOKUP_MS,
     LOOKUP_MS,
     LOOKUP_MS,
@@ -80,12 +89,29 @@ export function nextLookup(sql: Sql, now: number): number | null {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/**
+ * Which author `orcid` is, 1 for the first, when exactly one author has that iD. A name never stands in for an iD:
+ * two people share names, and the wrong position is worse than none.
+ */
+function positionOf(orcids: readonly (string | null)[] | undefined, orcid: string | undefined) {
+  const matches = (orcids ?? []).flatMap((id, i) => (orcid && id && bareOrcid(id) === orcid ? [i + 1] : []));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** The patch that sets the note's `synced:` block to `found`, key by key, so the rest of the note keeps its bytes. */
-function syncedOps(data: Readonly<Record<string, unknown>>, found: Found, now: number): PatchOp[] {
+function syncedOps(
+  data: Readonly<Record<string, unknown>>,
+  found: Found,
+  orcid: string | undefined,
+  now: number,
+): PatchOp[] {
+  const { orcids, ...facts } = found === "missing" ? {} : found;
   const block: Record<string, YamlValue | undefined> = {
     // As the person wrote it, so the block says which DOI it was filled for even when they change it.
     doi: String(data["doi"]),
-    ...(found === "missing" ? { missing: true } : { ...found, authors: found.authors && [...found.authors] }),
+    ...(found === "missing"
+      ? { missing: true }
+      : { ...facts, authors: facts.authors && [...facts.authors], position: positionOf(orcids, orcid) }),
     checked: new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z"),
   };
   const old = isRecord(data["synced"]) ? Object.keys(data["synced"]) : [];
@@ -109,7 +135,7 @@ export function installLookup(sql: Sql, jobId: string, found: Found, now: number
   return finishJob(sql, jobId, (job) => {
     const note = getNote(sql, job.noteId);
     if (!note) return "failed";
-    const ops = syncedOps(JSON.parse(note.fm), found, now);
+    const ops = syncedOps(JSON.parse(note.fm), found, linkedOrcid(sql), now);
     const result = mutate(
       sql,
       { op: "patch", noteId: note.id, baseRev: job.rev, ops },
