@@ -104,6 +104,11 @@ export interface Query {
   readonly vector?: readonly number[];
   /** At most this many hits (20 by default, never more than 100), and as many neighbors. */
   readonly limit?: number;
+  /**
+   * Match chunks holding any of the words, best BM25 first, instead of all of them: for a question in the person's
+   * own words (`ask`), where "what was my writing score" shares only some words with the note that answers it.
+   */
+  readonly anyWord?: boolean;
 }
 
 /** A chunk the principal may see, as a ranking found it. */
@@ -153,7 +158,7 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
   const limit = Math.min(Math.max(Math.trunc(query.limit ?? 20) || 0, 0), POOL);
   const words = fold(text).split(/\s+/).filter(Boolean);
   if (words.length === 0) return { mode: "keyword", hits: [], neighbors: [] };
-  const match = words.map((word) => `"${word.replaceAll('"', '""')}"`).join(" ");
+  const match = words.map((word) => `"${word.replaceAll('"', '""')}"`).join(query.anyWord ? " OR " : " ");
   const families: readonly Family[] = principal.sensitive ? ["normal", "sensitive"] : ["normal"];
   const types = principal.types ? JSON.stringify(principal.types) : null;
   // BM25 from two tables isn't one scale, so each family is its own ranking, of notes and pages: a note's best
@@ -176,7 +181,8 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
     );
     for (const row of rows) {
       if (kept.length === POOL) break;
-      if (project(row, principal) && (!row.stale || holdsNow(sql, row.owner, words))) kept.push(row);
+      if (project(row, principal) && (!row.stale || holdsNow(sql, row.owner, words, query.anyWord ?? false)))
+        kept.push(row);
     }
     return kept;
   });
@@ -307,17 +313,18 @@ function snippetOf(
 }
 
 /**
- * Whether a section of the note's current text holds every word of the question as FTS5 matches a chunk: each one
- * a whole word, and one that cuts into several (`transit-apps`) as those words in a row.
+ * Whether a section of the note's current text holds every word of the question (or, with `any`, one of them) as
+ * FTS5 matches a chunk: each one a whole word, and one that cuts into several (`transit-apps`) as those words in a row.
  */
-function holdsNow(sql: Sql, noteId: string, words: readonly string[]): boolean {
+function holdsNow(sql: Sql, noteId: string, words: readonly string[], any: boolean): boolean {
   const note = getNote(sql, noteId);
   if (!note) return false;
   const phrases = words.map(tokens).filter((phrase) => phrase.length > 0);
   // A phrase stays inside one column, header or text, as in FTS5.
   return chunkNote(note).some((s) => {
     const columns = [tokens(s.header), tokens(s.text)];
-    return phrases.every((phrase) => columns.some((have) => phraseAt(have, phrase) >= 0));
+    const holds = (phrase: readonly string[]) => columns.some((have) => phraseAt(have, phrase) >= 0);
+    return any ? phrases.some(holds) : phrases.every(holds);
   });
 }
 
@@ -424,7 +431,12 @@ const fileName = (path: string) => path.normalize("NFC").toLowerCase().split("/"
  * approvals resolve relations (`relationResolver`), so they are always the current revision's. Every neighbor
  * passes `project`.
  */
-function neighbors(sql: Sql, principal: Principal, hits: readonly string[], limit: number): Neighbor[] {
+export function neighbors(
+  sql: Sql,
+  principal: Principal,
+  hits: readonly string[],
+  limit: number,
+): Neighbor[] {
   if (hits.length === 0) return [];
   const resolve = relationResolver(sql);
   const isHit = new Set(hits);

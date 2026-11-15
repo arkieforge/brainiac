@@ -22,6 +22,7 @@ import {
 } from "@brainiac/core";
 import { type, type Type } from "arktype";
 
+import { datesIn, uncited } from "./answers.ts";
 import type { NeedsApproval } from "./approvals.ts";
 import { recordAudit } from "./audit.ts";
 import { inBackground, principalOf } from "./connections.ts";
@@ -42,6 +43,7 @@ import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
 import { withdraw, type Decided } from "./proposals.ts";
 import { requestFill, type FillField } from "./secrets.ts";
+import { fileOwner, neighbors, search } from "./search.ts";
 import type { Sql } from "./sql.ts";
 import { currentSeq } from "./sync.ts";
 
@@ -79,6 +81,8 @@ export interface ToolContext extends Context {
     /** The device keeps sensitive notes ("keep sensitive notes on this laptop"). */
     readonly holdsSensitive: boolean;
   };
+  /** The embedding of the call's question (`questionOf`), which only the cloud makes; without it, search is keyword-only. */
+  readonly vector?: readonly number[];
 }
 
 /** One tool call as its connection, collecting the notes its answer shows for the call's audit row. */
@@ -487,6 +491,21 @@ const describe = tool(
   },
 );
 
+/** Every live note's path, which `atPath` matches a path against. */
+const livePaths = (sql: Sql) =>
+  sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL").map((r) => r.path);
+
+/** The live note at `path` the caller may see, matched as the vault matches paths (case and Unicode form aside). */
+function atPath(sql: Sql, ctx: Context, live: readonly string[], path: string): NoteRow | undefined {
+  let found: string | undefined;
+  try {
+    found = findClash(live, normalizePath(path));
+  } catch (error) {
+    if (!(error instanceof PathError)) throw error;
+  }
+  return found === undefined ? undefined : project(getNoteByPath(sql, found), principal(ctx));
+}
+
 const get = tool(
   `One or more notes by id or path, with their fields, body and rev (send rev back with update). verified lists the fields the person checked; treat every other value as unverified and say so when you quote it. history: the last 20 revisions. Notes you can't see are listed in missing, like notes that don't exist.`,
   type({
@@ -501,23 +520,11 @@ const get = tool(
     if (refs.length === 0) return fail("Name the notes to get with ids or paths.");
     if (refs.length > 100) return fail("Get at most 100 notes at a time.");
     if (args.history && ctx.offline) return fail(offlineLacks("Revision history isn't"));
-    const live = sql
-      .all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL")
-      .map((r) => r.path);
+    const live = livePaths(sql);
     const found: Record<string, unknown>[] = [];
     const missing: string[] = [];
     for (const ref of refs) {
-      let note: NoteRow | undefined;
-      if ("id" in ref) note = visible(sql, ctx, ref.id);
-      else {
-        let path: string | undefined;
-        try {
-          path = findClash(live, normalizePath(ref.path));
-        } catch (error) {
-          if (!(error instanceof PathError)) throw error;
-        }
-        note = path === undefined ? undefined : project(getNoteByPath(sql, path), principal(ctx));
-      }
+      const note = "id" in ref ? visible(sql, ctx, ref.id) : atPath(sql, ctx, live, ref.path);
       if (!note) {
         missing.push("id" in ref ? ref.id : ref.path);
         continue;
@@ -1251,11 +1258,309 @@ const OFFLINE_READS: ReadonlySet<string> = new Set(["describe", "query", "get"])
 const offlineLacks = (what: string) =>
   `${what} kept on this laptop, and your Brainiac record can't be reached right now. Ask again once it's back online.`;
 
+// Retrieval (docs/internals/retrieval.md): search, the graph around a note, and what an answer needs. The cloud
+// embeds a call's question before the call (`questionOf`), so these stay one synchronous transaction like the rest.
+
+/** The words a call asks about, which the cloud embeds into `ToolContext.vector` before running it. */
+export function questionOf(name: string, args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const question =
+    name === "search" && "text" in args
+      ? args.text
+      : name === "ask" && "question" in args
+        ? args.question
+        : undefined;
+  return typeof question === "string" ? question : undefined;
+}
+
+/** The caller as search sees it, narrowed to one type when the call names one. */
+function scoped(ctx: Context, noteType: string | undefined): Principal {
+  const reader = principal(ctx);
+  if (noteType === undefined) return reader;
+  return { ...reader, types: reader.types ? reader.types.filter((t) => t === noteType) : [noteType] };
+}
+
+/** A file's page as the audit row names it, so the person's log shows a connection read it. */
+const pageOf = (hit: { readonly fileSha: string; readonly page: number }) =>
+  `${fileOwner(hit.fileSha)}#p${hit.page}`;
+
+const summary = (note: NoteRow) => ({ id: note.id, path: note.path, type: note.type, title: note.title });
+
+const KEYWORD_ONLY =
+  "Keyword-only: meaning took no part (offline, or nothing is embedded yet), so a miss may only mean the record uses other words.";
+
+const searchTool = tool(
+  `Search the record's notes and the text of its cleared files, by words and by meaning, when query can't name the fields. A hit found by words holds every word; matched says whether it holds the words, only their meaning, or both. mode "keyword" means meaning took no part (offline, or nothing embedded yet), so a miss may only mean other words. type narrows to one type. related lists notes one link away from a hit, with the field that links them (direction "out": the hit's field names it; "in": its field names the hit). Snippets are from the current text; get a note before you quote its values.`,
+  type({
+    "+": "reject",
+    text: "string",
+    "type?": "string | null",
+    "limit?": "1 <= number.integer <= 100 | null",
+  }),
+  (sql, args, ctx) => {
+    if (args.text.trim() === "") return fail("text is empty: say what to search for.");
+    const results = search(sql, scoped(ctx, args.type), args.text, {
+      limit: args.limit ?? 20,
+      ...(ctx.vector && { vector: ctx.vector }),
+    });
+    const hits = results.hits.flatMap((hit): Record<string, unknown>[] => {
+      const found = { snippet: hit.snippet, matched: hit.matched };
+      if (!("noteId" in hit)) {
+        ctx.shown.add(pageOf(hit));
+        return [{ file: hit.fileSha, page: hit.page, ...found }];
+      }
+      const note = visible(sql, ctx, hit.noteId);
+      return note ? [{ ...summary(note), ...found }] : [];
+    });
+    const related = results.neighbors.flatMap(({ noteId, via }) => {
+      const note = visible(sql, ctx, noteId);
+      return note
+        ? [{ ...summary(note), via: { id: via.noteId, field: via.field, direction: via.direction } }]
+        : [];
+    });
+    return ok({
+      mode: results.mode,
+      hits,
+      related,
+      ...(results.mode === "keyword" && { message: KEYWORD_ONLY }),
+    });
+  },
+);
+
+const related = tool(
+  `Every note linked to one note, up to depth links away (default 1, at most 3): the notes its relations and body links name (direction "out") and the notes whose relations or links name it ("in"), grouped by the field that links them, like supersedes, proves or sources. Each note says which note it was reached from (from) and how far (depth), so a chain reads back to the start.`,
+  type({
+    "+": "reject",
+    id: "string",
+    "depth?": "1 <= number.integer <= 3 | null",
+    "limit?": "1 <= number.integer <= 100 | null",
+  }),
+  (sql, args, ctx) => {
+    const start = visible(sql, ctx, args.id);
+    if (!start) return fail(`No note with id ${args.id}.`);
+    const limit = args.limit ?? 50;
+    const seen = new Set([start.id]);
+    const groups = new Map<string, { field: string; direction: string; notes: Record<string, unknown>[] }>();
+    let reached = 0;
+    let more = false;
+    let frontier = [start.id];
+    for (let depth = 1; depth <= (args.depth ?? 1) && frontier.length > 0; depth++) {
+      const next: string[] = [];
+      // Every neighbor of the hop, so a cut at limit always says more.
+      for (const { noteId, via } of neighbors(sql, principal(ctx), frontier, Number.POSITIVE_INFINITY)) {
+        const found = getNote(sql, noteId);
+        const note = found && found.deletedAt === null ? project(found, principal(ctx)) : undefined;
+        if (seen.has(noteId) || !note) continue;
+        if (reached === limit) {
+          more = true;
+          break;
+        }
+        // Audited only once it's in the answer, not when the limit cut it.
+        ctx.shown.add(note.id);
+        seen.add(noteId);
+        next.push(noteId);
+        reached++;
+        const key = `${via.direction} ${via.field}`;
+        const group = groups.get(key) ?? { field: via.field, direction: via.direction, notes: [] };
+        group.notes.push({ ...summary(note), depth, from: via.noteId });
+        groups.set(key, group);
+      }
+      frontier = next;
+    }
+    return ok({ note: summary(start), groups: [...groups.values()], ...(more && { more: true }) });
+  },
+);
+
+/** About this many characters of notes go into one `ask` context (some 15k tokens), best first. */
+const CONTEXT_CHARS = 60_000;
+
+/** Front-matter that describes a note rather than holding its facts: not offered as values to quote. */
+const NOT_VALUES = new Set(["id", "type", "verified", "sources"]);
+
+/** Where a value is quoted from: the note, the field and the revision it was read at. */
+const citeOf = (note: NoteRow, field: string) => `${note.id}#${field}@${note.rev}`;
+
+const isMapping = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Whether the person checked this field: it, or the field it sits in, is in the note's `verified` block. */
+const isVerified = (checked: readonly string[], field: string) =>
+  checked.some((f) => field === f || field.startsWith(`${f}.`));
+
+/**
+ * A note as `ask` hands it to the model: each value at its own dotted path with its cite and whether the person
+ * verified it, then the body and sources. A list of mappings is cut per item (`awards.0.title`); a plain list stays
+ * one value.
+ */
+function contextOf(note: NoteRow) {
+  const data = fieldsOf(note);
+  const checked = verifiedOf(data);
+  const values: Record<string, { value: unknown; cite: string; verified: boolean }> = {};
+  const walk = (value: unknown, field: string) => {
+    if (isMapping(value)) for (const [key, inner] of Object.entries(value)) walk(inner, `${field}.${key}`);
+    else if (Array.isArray(value) && value.some(isMapping))
+      value.forEach((item, i) => walk(item, `${field}.${i}`));
+    else values[field] = { value, cite: citeOf(note, field), verified: isVerified(checked, field) };
+  };
+  for (const [key, value] of Object.entries(data)) if (!NOT_VALUES.has(key)) walk(value, key);
+  return {
+    ...summary(note),
+    rev: note.rev,
+    values,
+    body: splitNote(note.raw).body,
+    ...(data["sources"] !== undefined && { sources: data["sources"] }),
+  };
+}
+
+const Claim = type({ "+": "reject", note: "string", field: "string", value: "unknown" });
+
+function context(sql: Sql, ctx: Call, question: string, limit: number): Answer {
+  if (question.trim() === "") return fail("question is empty: send what the person asked.");
+  const reader = principal(ctx);
+  const results = search(sql, reader, question, {
+    anyWord: true,
+    limit,
+    ...(ctx.vector && { vector: ctx.vector }),
+  });
+  const me = project(getNoteByPath(sql, "me.md"), reader);
+  const picked = [
+    ...(me ? [{ id: me.id, why: { me: true } }] : []),
+    ...results.hits.flatMap((hit) =>
+      "noteId" in hit ? [{ id: hit.noteId, why: { matched: hit.matched } }] : [],
+    ),
+    ...results.neighbors.map(({ noteId, via }) => ({
+      id: noteId,
+      why: { linked: { from: via.noteId, field: via.field, direction: via.direction } },
+    })),
+  ];
+  const notes: Record<string, unknown>[] = [];
+  const taken = new Set<string>();
+  let chars = 0;
+  let left = 0;
+  for (const { id, why } of picked) {
+    if (taken.has(id)) continue;
+    taken.add(id);
+    const note = project(getNote(sql, id), reader);
+    if (!note || note.deletedAt !== null) continue;
+    const entry = { ...contextOf(note), why };
+    const size = JSON.stringify(entry).length;
+    if (notes.length > 0 && chars + size > CONTEXT_CHARS) {
+      left++;
+      continue;
+    }
+    ctx.shown.add(note.id);
+    chars += size;
+    notes.push(entry);
+  }
+  const pages = results.hits.flatMap((hit) => {
+    if (!("fileSha" in hit)) return [];
+    ctx.shown.add(pageOf(hit));
+    return [{ file: hit.fileSha, page: hit.page, text: hit.snippet, cite: pageOf(hit) }];
+  });
+  return ok({
+    mode: results.mode,
+    notes,
+    pages,
+    ...(left > 0 && { left }),
+    message: `Answer only from these notes, best match first. Quote each value exactly as given and cite it; say "unverified" next to any value whose verified is false. If they don't answer the question, say it isn't in the person's record; never fill it from memory. Before you reply with numbers or dates, check your draft with ask {mode: "verify"}.${results.mode === "keyword" ? ` ${KEYWORD_ONLY}` : ""}`,
+  });
+}
+
+/** A number, or text that is only a number ("7.0"), as a number. */
+const asNumber = (value: unknown) =>
+  typeof value === "number"
+    ? value
+    : typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim())
+      ? Number(value)
+      : undefined;
+
+/** Whether a value the draft claims is the record's: equal, or the same number or text written another way. */
+function holds(current: unknown, claimed: unknown): boolean {
+  if (sameValue(current, claimed)) return true;
+  const [a, b] = [asNumber(current), asNumber(claimed)];
+  if (a !== undefined && b !== undefined) return a === b;
+  // A date claimed as people write it ("2 November 2028") is the stored one when it reads as exactly that.
+  if (typeof current === "string" && typeof claimed === "string") {
+    const [date, ...more] = datesIn(claimed).dates;
+    if (date && more.length === 0 && date.text === claimed.trim() && date.iso === current) return true;
+  }
+  return (
+    typeof current === "string" &&
+    typeof claimed === "string" &&
+    current.normalize("NFC").trim() === claimed.normalize("NFC").trim()
+  );
+}
+
+function verifyDraft(sql: Sql, ctx: Call, text: string, claims: readonly (typeof Claim.infer)[]): Answer {
+  let live: readonly string[] | undefined;
+  const checked = claims.map((claim) => {
+    const note = visible(sql, ctx, claim.note) ?? atPath(sql, ctx, (live ??= livePaths(sql)), claim.note);
+    if (!note) return { ...claim, status: "missing", message: `No note ${claim.note}.` };
+    ctx.shown.add(note.id);
+    const current = valueAt(fieldsOf(note), claim.field);
+    if (current === undefined)
+      return { ...claim, status: "missing", message: `${note.path} has no field ${claim.field}.` };
+    const cite = citeOf(note, claim.field);
+    const verified = isVerified(verifiedOf(fieldsOf(note)), claim.field);
+    return holds(current, claim.value)
+      ? { ...claim, status: "match", cite, verified, stored: current }
+      : { ...claim, status: "mismatch", record: current, cite, verified };
+  });
+  // A matched claim covers the text in its own spelling and in the record's ("2 November 2028" and 2028-11-02).
+  const loose = uncited(
+    text,
+    checked.flatMap((c) => ("stored" in c ? [[c.value, c.stored]] : [])),
+  );
+  const fine = checked.every((c) => c.status === "match") && loose.length === 0;
+  return ok({
+    status: fine ? "ok" : "fix",
+    claims: checked.map((c) => {
+      if (!("stored" in c)) return c;
+      const { stored: _stored, ...claim } = c;
+      return claim;
+    }),
+    uncited: loose,
+    message: fine
+      ? "Every claim matches the record now, and every number and date in the text matches a value you claimed. Say which values are unverified."
+      : "Fix the draft before you send it: use the record's value for each mismatch, drop or correct each missing claim, and for each uncited number or date add a claim, or remove it if the record doesn't hold it. A value from a file's page stays uncited: name its file and page instead. Then verify again.",
+  });
+}
+
+const ask = tool(
+  `What an answer about the person's record needs, and a check of it, so every value you give is the record's own.
+mode "context" with question (the person's words): the notes that answer it, best first, whole (each value with its cite, note#field@rev, and whether the person verified it, then body and sources), with notes linked to them. Quote values exactly as given and say "unverified" by any value whose verified is false. If the notes don't answer the question, say it isn't in their record; never answer from memory.
+mode "verify" with text (your draft answer) and claims: one {note, field, value} for each value the draft states (note is an id or path). Each claim is checked against the note's current value: a mismatch gives the record's value to use instead, and uncited lists numbers and dates in text that no matching claim covers. A value read from a file's page (a file:<sha256>#p<n> cite) can't be claimed: say which file and page it comes from instead. A claim covers one mention of its number, wherever the text says it, so a value the draft states twice (two sections both 7.0) takes a claim each, and saying it of the right field is yours to get right. Verify before you give the person numbers or dates.`,
+  type({
+    "+": "reject",
+    mode: "'context' | 'verify'",
+    "question?": "string | null",
+    "limit?": "1 <= number.integer <= 20 | null",
+    // Bounded, so one draft can't hold the record's object for long.
+    "text?": "string <= 20000 | null",
+    "claims?": Claim.array().atMostLength(100).or("null"),
+  }),
+  (sql, args, ctx) => {
+    if (args.mode === "context") {
+      if (args.text !== undefined || args.claims !== undefined)
+        return fail('text and claims go with mode "verify"; context takes question.');
+      if (args.question === undefined) return fail("context needs question: what the person asked.");
+      return context(sql, ctx, args.question, args.limit ?? 8);
+    }
+    if (args.question !== undefined || args.limit !== undefined)
+      return fail('question and limit go with mode "context"; verify takes text and claims.');
+    if (args.text === undefined) return fail("verify needs text: your draft answer.");
+    return verifyDraft(sql, ctx, args.text, args.claims ?? []);
+  },
+);
+
 /** Every tool, by the name agents call it. */
 export const TOOLS = {
   describe,
   query,
   get,
+  search: searchTool,
+  related,
+  ask,
   add,
   create,
   update,

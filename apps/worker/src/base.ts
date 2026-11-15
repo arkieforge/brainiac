@@ -2,6 +2,7 @@ import {
   activity,
   authenticate,
   callTool,
+  questionOf,
   canSee,
   changesSince,
   classifyFile,
@@ -248,20 +249,28 @@ export class Base extends DurableObject<Env> {
    * One MCP tool call, as the connection it comes through: an MCP client's, found by its OAuth client id (and
    * connected at the floor on its first call), or the CLI connection whose token the Worker checked here. Which
    * record answers is the Worker's choice from the token; nothing in the call names one. A background call
-   * (nobody there) runs narrowed: normal notes only, and every change waits for the person.
+   * (nobody there) runs narrowed: normal notes only, and every change waits for the person. A call that asks a
+   * question (`questionOf`) has it embedded first, and its grants are read after, so a scope narrowed while the
+   * model works applies to the answer.
    */
-  tool(
+  async tool(
     via: ({ readonly oauthClientId: string } | { readonly connectionId: string }) & {
       readonly background?: boolean;
     },
     name: string,
     args: unknown,
-  ): Answer {
-    const now = Date.now();
-    const connection =
+  ): Promise<Answer> {
+    const found =
       "oauthClientId" in via
-        ? connect(this.sql, { kind: "oauth", oauthClientId: via.oauthClientId }, now)
+        ? connect(this.sql, { kind: "oauth", oauthClientId: via.oauthClientId }, Date.now())
         : getConnection(this.sql, via.connectionId);
+    if (!found) return { ok: false, error: "This connection was disconnected." };
+    const question = questionOf(name, args);
+    const vector = question === undefined ? undefined : await this.#embed(question);
+    // Read again after the model call, by id: a grant narrowed meanwhile applies, and an app disconnected meanwhile
+    // stays disconnected (`connect` would make it a new connection).
+    const now = Date.now();
+    const connection = question === undefined ? found : getConnection(this.sql, found.id);
     if (!connection) return { ok: false, error: "This connection was disconnected." };
     const before = currentSeq(this.sql);
     const answer = callTool(this.sql, name, args, {
@@ -269,6 +278,7 @@ export class Base extends DurableObject<Env> {
       connection,
       now,
       ...(via.background && { background: true }),
+      ...(vector && { vector }),
     });
     this.changed(before);
     return answer;

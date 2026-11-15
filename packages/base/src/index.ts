@@ -175,6 +175,7 @@ export {
 export {
   callTool,
   INBOX_LEASE_MS,
+  questionOf,
   SCAN_LIMIT,
   TOOLS,
   type Answer,

@@ -8,12 +8,14 @@ import { parseNote, type PlanItem } from "@brainiac/core";
 import {
   auditOf,
   callTool,
+  chunkNote,
   connect,
   digest,
   getNote,
   grant,
   migrate,
   mutate,
+  putChunks,
   putNote,
   recordApproval,
   releaseDue,
@@ -129,6 +131,14 @@ const rows = (sql: Sql, ctx: Context, args: Record<string, unknown>) =>
 const ids = (sql: Sql, ctx: Context, args: Record<string, unknown>) =>
   rows(sql, ctx, args).map((row) => row.id);
 const revOf = (sql: Sql, id: string) => getNote(sql, id)?.rev ?? -1;
+
+/** Every live note in the search index, as the jobs after each change leave it on a laptop: keyword only. */
+const indexed = (sql: Sql) => {
+  for (const note of listNotes(sql)) putChunks(sql, note.id, note.rev, chunkNote(note));
+};
+
+/** The note ids in a search, related or ask answer's list. */
+const idsIn = (list: unknown) => (list as { id: string }[]).map((item) => item.id);
 const fieldsOf = (sql: Sql, id: string) => parseNote(getNote(sql, id)?.raw ?? "").data;
 
 export const toolCases: Record<string, Case> = {
@@ -917,8 +927,276 @@ export const toolCases: Record<string, Case> = {
     match(refused(sql, agent, "nope", {}), /No tool named nope/);
   },
 
+  "search finds notes by their words, narrows by type, follows one link, and says when it's keyword-only": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    indexed(sql);
+    const scoped = as(connection(sql, { sensitive: true }));
+    const found = call(sql, scoped, "search", { text: "writing held" });
+    equal(found["mode"], "keyword");
+    match(String(found["message"]), /Keyword-only/);
+    same(idsIn(found["hits"]), [n.oldIelts]);
+    same(found["hits"], [
+      {
+        id: n.oldIelts,
+        path: PATHS.oldIelts,
+        type: "TestScore",
+        title: "IELTS Academic, March 2025",
+        snippet:
+          "test ielts-academic, overall 7.0, sections: listening 7.5, reading 7.0, writing 6.5, speaking 6.5, date 2025-03-15, expires 2027-03-15 First attempt. Writing held the score back.",
+        matched: "words",
+      },
+    ]);
+    // The newer attempt names it in supersedes, so it comes along one link away.
+    same(found["related"], [
+      {
+        id: n.ielts,
+        path: PATHS.ielts,
+        type: "TestScore",
+        title: "IELTS Academic, November 2026",
+        via: { id: n.oldIelts, field: "supersedes", direction: "in" },
+      },
+    ]);
+    same(idsIn(call(sql, scoped, "search", { text: "IELTS", type: "Document" })["hits"]), [n.trf]);
+    same(call(sql, scoped, "search", { text: "IELTS", type: "Nothing" })["hits"], []);
+
+    // Without the sensitive scope, test scores are no hit and no neighbor.
+    const floor = as(connection(sql));
+    same(call(sql, floor, "search", { text: "writing held" })["hits"], []);
+    const ielts = call(sql, floor, "search", { text: "IELTS" });
+    ok(idsIn(ielts["hits"]).includes(n.trf));
+    const text = JSON.stringify(ielts);
+    ok(!text.includes(n.ielts) && !text.includes(n.oldIelts), text);
+    match(refused(sql, floor, "search", { text: " " }), /empty/);
+  },
+
+  "related walks links both ways up to depth, grouped by field, and only to notes the connection may see": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const scoped = as(connection(sql, { sensitive: true }));
+    const note = (key: keyof Ids, depth: number, from: string) => ({
+      id: n[key],
+      path: PATHS[key],
+      type: getNote(sql, n[key])?.type,
+      title: getNote(sql, n[key])?.title,
+      depth,
+      from,
+    });
+    same(call(sql, scoped, "related", { id: n.trf })["groups"], [
+      { field: "proves", direction: "out", notes: [note("ielts", 1, n.trf)] },
+    ]);
+    same(call(sql, scoped, "related", { id: n.trf, depth: 3 })["groups"], [
+      { field: "proves", direction: "out", notes: [note("ielts", 1, n.trf)] },
+      { field: "supersedes", direction: "out", notes: [note("oldIelts", 2, n.ielts)] },
+    ]);
+    // Linked both ways (it proves the BSc, which cites it), the transcript is listed once.
+    same(call(sql, scoped, "related", { id: n.bsc })["groups"], [
+      { field: "proves", direction: "in", notes: [note("transcript", 1, n.bsc)] },
+    ]);
+    const capped = call(sql, scoped, "related", { id: n.trf, depth: 3, limit: 1 });
+    same([idsIn((capped["groups"] as { notes: unknown }[])[0]?.notes), capped["more"]], [[n.ielts], true]);
+
+    const floor = as(connection(sql));
+    same(call(sql, floor, "related", { id: n.trf, depth: 3 })["groups"], []);
+    match(refused(sql, floor, "related", { id: n.ielts }), /No note/);
+    match(refused(sql, floor, "related", { id: n.trf, depth: 4 }), /depth/);
+  },
+
+  "ask context hands over whole notes, each value with its cite and whether the person verified it": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    indexed(sql);
+    const scoped = as(connection(sql, { sensitive: true }));
+    const answer = call(sql, scoped, "ask", {
+      mode: "context",
+      question: "What was my IELTS writing score?",
+    });
+    equal(answer["mode"], "keyword");
+    match(String(answer["message"]), /unverified.*isn't in the person's record.*verify/s);
+    const notes = answer["notes"] as {
+      id: string;
+      rev: number;
+      values: Record<string, unknown>;
+      body: string;
+      why: unknown;
+    }[];
+    const latest = notes.find((note) => note.id === n.ielts);
+    ok(latest, JSON.stringify(notes));
+    same(latest.values["sections.writing"], {
+      value: 7,
+      cite: `${n.ielts}#sections.writing@${latest.rev}`,
+      verified: true,
+    });
+    // Only overall and sections were checked by the person.
+    same(latest.values["expires"], {
+      value: "2028-11-02",
+      cite: `${n.ielts}#expires@${latest.rev}`,
+      verified: false,
+    });
+    ok(!("id" in latest.values) && !("verified" in latest.values));
+    match(latest.body, /computer-delivered/);
+    ok(notes.some((note) => note.id === n.oldIelts));
+
+    // A note it can't see is no part of the context, by match or by link.
+    const floor = as(connection(sql));
+    const hidden = JSON.stringify(
+      call(sql, floor, "ask", { mode: "context", question: "What was my IELTS writing score?" }),
+    );
+    ok(!hidden.includes(n.ielts) && !hidden.includes(n.oldIelts) && !hidden.includes("computer-delivered"));
+    same(call(sql, floor, "ask", { mode: "context", question: "GRE quantitative", limit: 3 })["notes"], []);
+    match(refused(sql, floor, "ask", { mode: "context" }), /question/);
+    match(refused(sql, floor, "ask", { mode: "context", question: "x", text: "y" }), /verify/);
+  },
+
+  "ask verify checks each claim against the note's current value and flags uncited numbers and dates": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const scoped = as(connection(sql, { sensitive: true }));
+    const verify = (text: string, claims: unknown[], ctx: Context = scoped) =>
+      call(sql, ctx, "ask", { mode: "verify", text, claims });
+    const draft =
+      "Your writing was 7.0 and your overall 8.5, valid until 2 November 2028. CGPA 3.82 (unverified). TUM closes 2027-05-31.";
+    const checked = verify(draft, [
+      { note: n.ielts, field: "sections.writing", value: "7.0" },
+      { note: PATHS.ielts, field: "overall", value: 8.5 },
+      { note: n.ielts, field: "sections.maths", value: 1 },
+      { note: n.bsc, field: "cgpa", value: 3.82 },
+    ]);
+    equal(checked["status"], "fix");
+    same(
+      (checked["claims"] as Record<string, unknown>[]).map((c) => [c["status"], c["record"], c["verified"]]),
+      [
+        ["match", undefined, true],
+        ["mismatch", 8, true],
+        ["missing", undefined, undefined],
+        ["match", undefined, false],
+      ],
+    );
+    equal((checked["claims"] as Record<string, unknown>[])[0]?.["cite"], `${n.ielts}#sections.writing@1`);
+    // A mismatched claim covers nothing; the expiry and the deadline were never claimed.
+    same(checked["uncited"], [
+      { text: "8.5", kind: "number" },
+      { text: "2 November 2028", kind: "date" },
+      { text: "2027-05-31", kind: "date" },
+    ]);
+
+    const fixed = verify(
+      "Overall 8.0, writing 7, valid until November 2, 2028 (Nov 2028). The TUM MSc Informatics, Winter 2027 deadline is 31st May 2027.",
+      [
+        { note: n.ielts, field: "overall", value: 8 },
+        { note: n.ielts, field: "sections.writing", value: 7 },
+        { note: n.ielts, field: "expires", value: "2028-11-02" },
+        { note: n.tum, field: "title", value: "TUM MSc Informatics, Winter 2027" },
+        { note: n.tum, field: "deadline", value: "2027-05-31" },
+      ],
+    );
+    same([fixed["status"], fixed["uncited"]], ["ok", []]);
+
+    // A whole mapping matches but covers none of its numbers: "8.5" could be any section, or a misquote.
+    const broad = verify("Your writing was 8.5.", [
+      { note: n.ielts, field: "sections", value: { listening: 8.5, reading: 8, writing: 7, speaking: 7.5 } },
+    ]);
+    same([broad["status"], broad["uncited"]], ["fix", [{ text: "8.5", kind: "number" }]]);
+    // A cite's revision is no number, a sign is part of one, and "decision 2027" is no date.
+    const writing = [{ note: n.ielts, field: "sections.writing", value: 7 }];
+    same(verify(`Writing: 7.0 [${n.ielts}#sections.writing@1].`, writing)["uncited"], []);
+    same(verify("Writing: -7.0, pages 3-5.", writing)["uncited"], [
+      { text: "-7.0", kind: "number" },
+      { text: "3", kind: "number" },
+      { text: "5", kind: "number" },
+    ]);
+    same(verify("The TUM decision 2027 is open.", [])["uncited"], [{ text: "2027", kind: "number" }]);
+    // Council round 2: a number claimed as text covers only that number, and a cite only its own characters.
+    const asText = [{ note: n.ielts, field: "sections.writing", value: "7" }];
+    same(verify("Writing 7, overall 7.5.", asText)["uncited"], [{ text: "7.5", kind: "number" }]);
+    same(verify(`Writing [7.5](${n.ielts}#sections.writing@1).`, writing)["uncited"], [
+      { text: "7.5", kind: "number" },
+    ]);
+    same(verify("Writing:-7.0.", writing)["uncited"], [{ text: "-7.0", kind: "number" }]);
+    // Council round 3: a claimed date covers its year and its day and month, never a day the record doesn't hold.
+    const expires = [{ note: n.ielts, field: "expires", value: "2028-11-02" }];
+    same(verify("Valid until 2028, so on 2 November it lapses: 2 November 2028.", expires)["uncited"], []);
+    // Council round 4: "the 3rd of November" is a date, and a wrong day; a claim may spell the date out.
+    same(verify("It expires on the 3rd of November 2028.", expires)["uncited"], [
+      { text: "3rd of November 2028", kind: "date" },
+    ]);
+    const spelled = verify("It expires on 2 November 2028.", [
+      { note: n.ielts, field: "expires", value: "2 November 2028" },
+    ]);
+    same([spelled["status"], spelled["uncited"]], ["ok", []]);
+    // Council round 5: a spelled claim covers the record's spelling too; grouped thousands, ordinals, path cites.
+    const other = verify("It expires November 2, 2028, that is 2028-11-02.", [
+      { note: n.ielts, field: "expires", value: "2 November 2028" },
+    ]);
+    same([other["status"], other["uncited"]], ["ok", []]);
+    same(
+      verify("Overall 8, from 1,234 takers; ranked 3rd.", [{ note: n.ielts, field: "overall", value: 8 }])[
+        "uncited"
+      ],
+      [
+        { text: "1,234", kind: "number" },
+        { text: "3rd", kind: "number" },
+      ],
+    );
+    same(verify(`Writing 7 (${PATHS.ielts}#sections.writing@1).`, writing)["uncited"], []);
+    // Council round 6: a dotted date is a date, and a unit stuck to a number doesn't hide it.
+    same(verify("It ended on 30.09.2025, with 50k in stipends.", [])["uncited"], [
+      { text: "30.09.2025", kind: "date" },
+      { text: "50", kind: "number" },
+    ]);
+    match(refused(sql, scoped, "ask", { mode: "verify", text: "x".repeat(20_001), claims: [] }), /text/);
+    // Council round 8: a decimal without its leading zero is a number.
+    same(verify("Your CGPA is .5.", [])["uncited"], [{ text: ".5", kind: "number" }]);
+    // Council round 7: a claim covers one mention of its number, so a second section at the same band needs its own.
+    same(verify("Writing 7.0, speaking 7.0.", writing)["uncited"], [{ text: "7.0", kind: "number" }]);
+    const month = [{ op: "set", path: ["left"], value: "2025-09" }] as const;
+    const human = { actor: "human", now: T0 };
+    equal(mutate(sql, { op: "patch", noteId: n.role, baseRev: 1, ops: [...month] }, human).status, "applied");
+    const ended = [{ note: n.role, field: "left", value: "2025-09" }];
+    same(verify("It ended in September 2025.", ended)["uncited"], []);
+    same(verify("It ended September 29, 2025.", ended)["uncited"], [
+      { text: "September 29, 2025", kind: "date" },
+    ]);
+    // A path resolves as get resolves it, case aside.
+    const byPath = verify("Overall 8.0", [
+      { note: "FACTS/tests/ielts-2026-11.md", field: "overall", value: 8 },
+    ]);
+    same((byPath["claims"] as Record<string, unknown>[])[0]?.["status"], "match");
+
+    // Claims are checked against the current revision: a value changed since the draft no longer matches.
+    const person = { actor: "human", now: T0 };
+    const ops = [{ op: "set", path: ["cgpa"], value: 3.9 }] as const;
+    equal(mutate(sql, { op: "patch", noteId: n.bsc, baseRev: 1, ops: [...ops] }, person).status, "applied");
+    same((verify("CGPA 3.82", [{ note: n.bsc, field: "cgpa", value: 3.82 }])["claims"] as unknown[])[0], {
+      note: n.bsc,
+      field: "cgpa",
+      value: 3.82,
+      status: "mismatch",
+      record: 3.9,
+      cite: `${n.bsc}#cgpa@2`,
+      verified: false,
+    });
+
+    // A note the connection can't see reads as missing, and its value never comes back.
+    const floor = as(connection(sql));
+    const hidden = verify("Overall 8.5", [{ note: n.ielts, field: "overall", value: 8.5 }], floor);
+    same((hidden["claims"] as Record<string, unknown>[])[0]?.["status"], "missing");
+    ok(!JSON.stringify(hidden).includes('"record"'));
+    match(refused(sql, floor, "ask", { mode: "verify", claims: [] }), /text/);
+    match(refused(sql, floor, "ask", { mode: "verify", text: "x", question: "y" }), /context/);
+  },
+
   "no tool answer carries a secret, a hidden note's values or another record's": (sql, fixtures) => {
     const n = record(sql, fixtures);
+    indexed(sql);
     sql.all(
       "INSERT INTO secrets (name, ciphertext, policy, domain) VALUES ('portal.tum', 'CANARY-SECRET-9137', 'allow', 'campus.tum.de')",
     );
@@ -940,6 +1218,16 @@ export const toolCases: Record<string, Case> = {
         sql,
         "update",
         { where: { title: { text: "ielts" } }, set: { note: 1 }, dry_run: true },
+        agent,
+      ),
+      callTool(sql, "search", { text: "computer-delivered" }, agent),
+      callTool(sql, "search", { text: "IELTS writing" }, agent),
+      callTool(sql, "related", { id: n.trf, depth: 3 }, agent),
+      callTool(sql, "ask", { mode: "context", question: "IELTS writing held computer-delivered" }, agent),
+      callTool(
+        sql,
+        "ask",
+        { mode: "verify", text: "x", claims: [{ note: PATHS.ielts, field: "trf_number", value: "y" }] },
         agent,
       ),
     ];
@@ -1040,6 +1328,24 @@ export const toolCases: Record<string, Case> = {
     throws(() => callTool(sql, "update", { id: n.role, rev, set: { org: "Acme GmbH" } }, as(writer)));
     equal(revOf(sql, n.role), rev);
     sql.all("ALTER TABLE audit_gone RENAME TO audit");
+
+    // A cleared file's page that search or ask showed is on record too, named by its page.
+    sql.all(
+      "INSERT INTO files (sha256, r2Key, mime, bytes, pages, class, encrypted) VALUES ('abc1', 'k', 'application/pdf', 1, 1, 'normal', 0)",
+    );
+    putChunks(sql, "file:abc1", 0, [
+      {
+        family: "normal",
+        header: "[transcript · page 1]",
+        text: "Semester GPA 3.4",
+        fileSha: "abc1",
+        page: 1,
+      },
+    ]);
+    call(sql, as(floor), "search", { text: "semester" });
+    same(auditOf(sql, floor.id)[0]?.notes, [{ id: "file:abc1#p1", path: "file:abc1#p1" }]);
+    call(sql, as(floor), "ask", { mode: "context", question: "semester GPA" });
+    ok(auditOf(sql, floor.id)[0]?.notes.some((note) => note.id === "file:abc1#p1"));
 
     // Each connection sees only its own calls.
     ok(auditOf(sql, floor.id).every((c) => !c.notes.some((note) => note.id === n.ielts)));

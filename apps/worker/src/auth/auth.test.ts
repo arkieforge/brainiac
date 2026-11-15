@@ -1168,6 +1168,18 @@ describe("MCP clients", () => {
           { paths: ["facts/tests/ielts-2026-11.md", "facts/roles/acme-intern-2025.md"], history: true },
         ],
         ["query", { type: "Role", bogus: true }],
+        ["search", { text: "IELTS" }],
+        // The test report form, which proves the November score.
+        ["related", { id: "01M6AV2ZR0XCK1MFKF8AQ91WD2", depth: 2 }],
+        ["ask", { mode: "context", question: "What was my IELTS writing score?" }],
+        [
+          "ask",
+          {
+            mode: "verify",
+            text: "Overall 8.0, until 2028-11-02.",
+            claims: [{ note: "facts/tests/ielts-2026-11.md", field: "overall", value: 8 }],
+          },
+        ],
       ] as const;
       const same = async () => {
         for (const [name, args] of calls) {

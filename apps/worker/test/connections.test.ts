@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   grantHash,
+  type Answer,
   type Connection,
   type Forbidden,
   type GrantPlan,
@@ -144,6 +145,37 @@ describe("connections", () => {
     await base.setGrants(connection.id, { ...grants, sensitive: false });
     await base.releaseEmbedding();
     expect(found(await asked)).toEqual([tum]);
+
+    // The MCP tools ask the same way: the question is embedded before the call, the grants read after it.
+    await base.setGrants(connection.id, { ...grants, sensitive: true });
+    const tool = async (name: string, args: unknown) => {
+      const answer = (await base.tool({ connectionId: connection.id }, name, args)) as Answer;
+      if (!answer.ok) throw new Error(answer.error);
+      return answer.value as { mode: string; hits?: { id: string }[]; notes?: { id: string }[] };
+    };
+    const searched = await tool("search", { text: "held the score back" });
+    expect([searched.mode, searched.hits?.map((hit) => hit.id)]).toEqual(["hybrid", [ielts, tum]]);
+    const context = await tool("ask", { mode: "context", question: "held the score back" });
+    // Each family ranks on its own, so only who is in the context matters here, not the order.
+    expect([context.mode, context.notes?.map((note) => note.id).toSorted()]).toEqual([
+      "hybrid",
+      [ielts, tum].toSorted(),
+    ]);
+    await base.holdEmbedding();
+    const pending = tool("ask", { mode: "context", question: "held the score back" });
+    await base.setGrants(connection.id, { ...grants, sensitive: false });
+    await base.releaseEmbedding();
+    expect((await pending).notes?.map((note) => note.id)).toEqual([tum]);
+
+    // An app disconnected while its question is with the model gets no answer, and no new connection.
+    const app = { oauthClientId: "https://client.example/oauth/metadata.json" };
+    expect(await base.tool(app, "describe", {})).toHaveProperty("ok", true);
+    await base.holdEmbedding();
+    const late = base.tool(app, "search", { text: "held the score back" });
+    await base.disconnectApp(app.oauthClientId);
+    await base.releaseEmbedding();
+    expect(await late).toEqual({ ok: false, error: "This connection was disconnected." });
+    expect(await base.connectionFor(app.oauthClientId)).toBeNull();
 
     // Workers AI fails: keyword-only, and the answer says so.
     await base.failEmbedding();

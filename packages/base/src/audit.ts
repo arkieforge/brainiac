@@ -29,7 +29,7 @@ export function recordAudit(sql: Sql, entry: AuditEntry): void {
   );
 }
 
-/** One call as the person sees it: each note by its path now, or null once it's gone. */
+/** One call as the person sees it: each note by its path now, or null once it's gone, and each file page it read. */
 export interface AuditCall {
   readonly at: number;
   readonly tool: string;
@@ -64,9 +64,11 @@ export function auditOf(sql: Sql, connectionId: string, limit = AUDIT_PAGE): Aud
       tool: row.tool,
       notes: ids.map((id) => ({
         id,
-        path:
-          sql.all<{ path: string }>("SELECT path FROM notes WHERE id = ? AND deletedAt IS NULL", id)[0]
-            ?.path ?? null,
+        // A file's page (`file:<sha256>#p2`, from search and ask) has no note path: it is named as it is.
+        path: id.startsWith("file:")
+          ? id
+          : (sql.all<{ path: string }>("SELECT path FROM notes WHERE id = ? AND deletedAt IS NULL", id)[0]
+              ?.path ?? null),
       })),
       approvalId: row.approvalId,
       secretName: row.secretName,
