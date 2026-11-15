@@ -121,12 +121,22 @@ export function linkOrcid(
     const doi = bareDoi(work.doi ?? "");
     const keys = keysOf(work, doi);
     if (doi === undefined ? titles.has(plain(work.title)) : dois.has(doi.toLowerCase())) continue;
-    if (keys.some((key) => sql.all("SELECT 1 FROM orcid_works WHERE key = ?", key).length > 0)) continue;
+    const remember = (proposalId: string) => {
+      for (const key of keys)
+        sql.all("INSERT OR IGNORE INTO orcid_works (key, proposalId) VALUES (?, ?)", key, proposalId);
+    };
+    const [seen] = keys.flatMap((key) =>
+      sql.all<{ proposalId: string }>("SELECT proposalId FROM orcid_works WHERE key = ?", key),
+    );
+    // Seen under one of its keys: the others it has now are the same work too, wherever they turn up next.
+    if (seen) {
+      remember(seen.proposalId);
+      continue;
+    }
     sql.transaction(() => {
       const proposalId = proposePaper(sql, work, doi, now);
       if (proposalId === undefined) return;
-      for (const key of keys)
-        sql.all("INSERT OR IGNORE INTO orcid_works (key, proposalId) VALUES (?, ?)", key, proposalId);
+      remember(proposalId);
       proposed++;
     });
   }
