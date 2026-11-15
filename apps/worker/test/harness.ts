@@ -117,6 +117,11 @@ export class TestBase extends Base {
     return getNote(this.sql, noteId)?.rev ?? null;
   }
 
+  /** A note's text, tombstones included. */
+  noteRaw(noteId: string): string | null {
+    return getNote(this.sql, noteId)?.raw ?? null;
+  }
+
   /**
    * Loads notes as the person made them, ids in order. A verified one is approved as if the person signed: real
    * signatures are tested in approvals.test.ts.

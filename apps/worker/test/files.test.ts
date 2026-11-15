@@ -145,6 +145,32 @@ describe("files", () => {
     expect((await mf.dispatchFetch(await tokenUrl("passkey", transcript, false))).status).toBe(200);
   });
 
+  it("keeps the uploader's filename for the person, and opens the file from its sidecar note", async () => {
+    // A fictional student id in the name, as a real one might print a passport number.
+    const name = "Ada Okafor transcript 2019331001.pdf";
+    const res = await mf.dispatchFetch(`${SITE}/api/files`, {
+      method: "POST",
+      headers: {
+        ...tab("named"),
+        "content-type": "application/pdf",
+        "x-file-name": encodeURIComponent(name),
+      },
+      body: new TextEncoder().encode("%PDF-Northvale University transcript\n"),
+    });
+    const body = (await res.json()) as {
+      file: { sha256: string; name: string; path: string };
+      sidecar: string;
+    };
+    expect(res.status).toBe(200);
+    expect(body.file).toMatchObject({ name, class: "unclassified" });
+    expect(body.file.path).toMatch(
+      new RegExp(`^documents/files/upload-[0-9-]{10}-${body.file.sha256.slice(0, 12)}\\.pdf$`),
+    );
+    const note = await (await record("named")).noteRaw(body.sidecar);
+    expect(note).toContain(`file: files/${body.file.path.split("/").at(-1)}`);
+    expect(note).not.toContain("2019331001");
+  });
+
   it("never gives a connection a file token", async () => {
     const sha256 = await upload("agent", TRANSCRIPT, "text/plain");
     const base = await record("agent");

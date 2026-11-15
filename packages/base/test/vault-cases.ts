@@ -3,9 +3,10 @@
 // cases.ts runs them on both engines; apps/worker/test/vault.test.ts runs the DO's sealing and R2 half.
 import { deepStrictEqual as same, equal, notEqual, ok, throws } from "node:assert/strict";
 
-import { parseNote } from "@brainiac/core";
+import { parseNote, resolveFile } from "@brainiac/core";
 
 import {
+  callTool,
   classifyFile,
   connect,
   dataKey,
@@ -13,6 +14,7 @@ import {
   getFile,
   getNote,
   grant,
+  listFiles,
   kindHash,
   migrate,
   mutate,
@@ -69,7 +71,14 @@ function connectionFor(sql: Sql, grants: Partial<Pick<Connection, "level" | "sen
   return result.connection;
 }
 
-function upload(sql: Sql, key: Uint8Array, content: string | Uint8Array, ctx: Context, kind?: string) {
+function upload(
+  sql: Sql,
+  key: Uint8Array,
+  content: string | Uint8Array,
+  ctx: Context,
+  kind?: string,
+  name?: string,
+) {
   const bytes = typeof content === "string" ? Buffer.from(content) : content;
   const { sha256 } = sealFile(key, bytes);
   const result = recordUpload(
@@ -82,11 +91,26 @@ function upload(sql: Sql, key: Uint8Array, content: string | Uint8Array, ctx: Co
       bytes: bytes.length,
       text: readText(bytes, "text/plain"),
       ...(kind && { kind }),
+      ...(name && { name }),
     },
     ctx,
   );
   return { sha256, result };
 }
+
+// The fixture student's own name for her transcript, with her student id in it.
+const FILENAME = "Nadia_Karim_transcript_2019331001.txt";
+
+/** The live Document notes whose `file:` names the file at `path`. */
+const sidecarsOf = (sql: Sql, path: string | null | undefined) =>
+  sql
+    .all<{ id: string; path: string; raw: string }>(
+      "SELECT id, path, raw FROM notes WHERE deletedAt IS NULL AND type = 'Document'",
+    )
+    .filter((note) => {
+      const file = parseNote(note.raw).data["file"];
+      return typeof file === "string" && resolveFile(note.path, file) === path;
+    });
 
 const plain = (text: string, mime = "text/plain") => readText(Buffer.from(text), mime);
 
@@ -112,6 +136,92 @@ export const vaultCases: Record<string, Case> = {
     // Nor can it confirm the kind itself.
     equal((classifyFile(sql, sha256, "transcript", via(agent)) as { status: string }).status, "forbidden");
     equal(classOf(sql, sha256), "unclassified");
+  },
+
+  "an upload gets a place in the record and a sidecar note there, named for neither its filename nor its text":
+    (sql, fixtures) => {
+      const key = record(sql, fixtures);
+      const { sha256, result } = upload(sql, key, TRANSCRIPT, human, undefined, FILENAME);
+      const path = `documents/files/upload-2026-11-15-${sha256.slice(0, 12)}.txt`;
+      const file = fileOf(result);
+      ok("name" in file);
+      // The person sees their own name for it, and where it sits.
+      same([file.name, file.path], [FILENAME, path]);
+      ok("sidecar" in result && result.sidecar);
+      const note = getNote(sql, result.sidecar);
+      same(
+        [note?.path, note?.class, note?.type],
+        [`documents/upload-2026-11-15-${sha256.slice(0, 12)}.md`, "sensitive", "Document"],
+      );
+      // Its `file:` resolves to the file's path, as it does on a laptop copy.
+      same(
+        sidecarsOf(sql, path).map((n) => n.id),
+        [result.sidecar],
+      );
+      // Nothing of the filename, or what the file says, is in the note: no kind until the person says what it is.
+      ok(note && !note.raw.includes("Nadia") && !note.raw.includes("2019331001"), note?.raw);
+      equal(parseNote(note?.raw ?? "").data["kind"], undefined);
+      // Its extension comes from its type alone: a filename the uploader made up names nothing.
+      const odd = upload(sql, key, "Scan, page 2\n", human, undefined, "scan.A1234567");
+      equal(
+        getFile(sql, odd.sha256)?.path,
+        `documents/files/upload-2026-11-15-${odd.sha256.slice(0, 12)}.txt`,
+      );
+    },
+
+  "an agent sees an unclassified upload's sidecar, never its filename": (sql, fixtures) => {
+    const key = record(sql, fixtures);
+    const { sha256, result } = upload(sql, key, TRANSCRIPT, human, undefined, FILENAME);
+    ok("sidecar" in result && result.sidecar);
+    const agent = connectionFor(sql, { sensitive: true });
+    const ctx = via(agent);
+    const answer = callTool(sql, "get", { ids: [result.sidecar] }, ctx);
+    ok(answer.ok, JSON.stringify(answer));
+    const seen = JSON.stringify(answer.value);
+    ok(seen.includes("Uploaded document") && !seen.includes(FILENAME) && !seen.includes("2019331001"), seen);
+    // The file itself is the summary only, and stays nameless to agents once cleared.
+    same(listFiles(sql, agent), [
+      { sha256, class: "unclassified", summary: "Unclassified document, waiting for you." },
+    ]);
+    classifyFile(sql, sha256, "transcript", human);
+    ok(!JSON.stringify(listFiles(sql, agent)).includes(FILENAME));
+    // An agent without the sensitive scope doesn't learn the sidecar exists.
+    const floor = via(connectionFor(sql));
+    const hidden = callTool(sql, "get", { ids: [result.sidecar] }, floor);
+    ok(!JSON.stringify(hidden).includes("Uploaded document"), JSON.stringify(hidden));
+    same(upload(sql, key, TRANSCRIPT, floor).result, { file: undefined });
+  },
+
+  "uploading a file again never makes it a second sidecar, and gives back one it lost": (sql, fixtures) => {
+    const key = record(sql, fixtures);
+    const first = upload(sql, key, TRANSCRIPT, human, undefined, FILENAME);
+    ok("sidecar" in first.result && first.result.sidecar);
+    const again = upload(sql, key, TRANSCRIPT, human, "transcript", "another-name.txt");
+    ok("sidecar" in again.result);
+    equal(again.result.sidecar, first.result.sidecar);
+    const path = getFile(sql, first.sha256)?.path;
+    same(sidecarsOf(sql, path).length, 1);
+    // The first name the person gave it stays.
+    equal(getFile(sql, first.sha256)?.name, FILENAME);
+    // Deleted, its sidecar comes back with the next upload, where it was.
+    const note = getNote(sql, first.result.sidecar);
+    ok(note);
+    equal(mutate(sql, { op: "delete", noteId: note.id, baseRev: note.rev }, human).status, "applied");
+    const restored = upload(sql, key, TRANSCRIPT, human);
+    ok("sidecar" in restored.result && restored.result.sidecar);
+    notEqual(restored.result.sidecar, note.id);
+    same(
+      sidecarsOf(sql, path).map((n) => [n.id, n.path]),
+      [[restored.result.sidecar, note.path]],
+    );
+    // An upload from before files had places gets one, and its note.
+    sql.all("UPDATE files SET path = NULL, name = NULL WHERE sha256 = ?", first.sha256);
+    const old = getNote(sql, restored.result.sidecar);
+    ok(old);
+    mutate(sql, { op: "delete", noteId: old.id, baseRev: old.rev }, human);
+    const placed = upload(sql, key, TRANSCRIPT, human, undefined, FILENAME);
+    ok("sidecar" in placed.result && placed.result.sidecar);
+    same([getFile(sql, first.sha256)?.path, getFile(sql, first.sha256)?.name], [path, FILENAME]);
   },
 
   "the person's confirmation clears a file the checks found clean": (sql, fixtures) => {

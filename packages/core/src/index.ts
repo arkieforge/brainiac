@@ -33,6 +33,7 @@ export {
   PathError,
   pathKey,
   relationTo,
+  resolveFile,
   resolveRelation,
 } from "./paths.ts";
 export {

@@ -74,6 +74,22 @@ const EXAMPLES = {
  * type of the same name wins.
  */
 export const BUILT_IN_TYPES: Manifest["types"] = {
+  // Every upload's sidecar note (packages/base/src/vault.ts), so a record can hold one whatever its manifest says.
+  // `kind` is optional: an upload's is unknown until the person says what it is.
+  Document: {
+    version: 1,
+    folder: "documents",
+    headline: "{title} · {kind} · issued {issued}",
+    fields: {
+      kind: { kind: "text", example: "transcript" },
+      issuer: { kind: "text" },
+      issued: { kind: "date" },
+      expires: { kind: "date" },
+      file: { kind: "text", example: "files/transcript-bsc.pdf" },
+      proves: { kind: "list" },
+      extracted: { kind: "mapping", example: "{cgpa: 3.82, scale: 4}" },
+    },
+  },
   InboxItem: {
     version: 1,
     folder: "inbox",

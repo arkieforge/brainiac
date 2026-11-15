@@ -130,7 +130,8 @@ function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }
   return <p className="muted">There is no viewer for {mime} files yet.</p>;
 }
 
-function KindForm({ file }: { readonly file: FileItem }) {
+/** What the person says a file is. */
+export function KindForm({ file }: { readonly file: FileItem }) {
   const [kind, setKind] = useState(file.kind ?? "");
   const [message, setMessage] = useState<string>();
   /** The kind change waiting for the person's passkey, and the challenge the record gave for it. */
@@ -196,68 +197,83 @@ function KindForm({ file }: { readonly file: FileItem }) {
   );
 }
 
-/** One upload: what the record knows about it, what the person says it is, and the file itself. */
-export function FilePane({ fileId }: { readonly fileId: string }) {
-  const { files } = useRecord();
-  const file = files.find((f) => f.sha256 === fileId);
+/** The file itself, once the record hands this page a link to it; an unclassified or vault one after a passkey check. */
+export function FileView({ file }: { readonly file: FileItem }) {
   const [opened, setOpened] = useState<Opened>({ state: "loading" });
   const [checking, setChecking] = useState<string>();
-  const cls = file?.class;
+  const { sha256, class: cls } = file;
   useEffect(() => {
-    if (!cls) return;
     setOpened({ state: "loading" });
     let current = true;
-    void open(fileId).then((result) => current && setOpened(result));
+    void open(sha256).then((result) => current && setOpened(result));
     return () => {
       current = false;
     };
-  }, [fileId, cls]);
-  if (!file) return <p className="empty">Loading</p>;
+  }, [sha256, cls]);
   const unlock = async () => {
     setChecking(undefined);
     try {
       await checkPasskey();
-      setOpened(await open(fileId));
+      setOpened(await open(sha256));
     } catch (cause) {
       setChecking(cause instanceof Error ? cause.message : "The passkey check failed.");
     }
   };
   return (
+    <div className="file-view">
+      {opened.state === "loading" && <p className="muted">Loading</p>}
+      {opened.state === "error" && <p role="alert">{opened.message}</p>}
+      {opened.state === "locked" && (
+        <div className="locked">
+          <p>
+            {file.class === "vault" ? "This is a vault document." : "This file isn't classified yet."} Viewing
+            the original needs a passkey check.
+          </p>
+          <button type="button" onClick={() => void unlock()}>
+            Check with your passkey
+          </button>
+          {checking && <p role="alert">{checking}</p>}
+        </div>
+      )}
+      {opened.state === "open" && <Viewer key={opened.url} file={file} url={opened.url} />}
+    </div>
+  );
+}
+
+/** What the checks made of a file and what agents may see of it. */
+export function FileFacts({ file }: { readonly file: FileItem }) {
+  return (
+    <>
+      <span className={`badge ${file.class}`}>{file.class}</span>
+      <span className="badge">{file.mime}</span>
+      <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
+      <p className="small muted">
+        {file.checks === "found"
+          ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
+          : file.checks === "unreadable"
+            ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
+            : file.confirmed
+              ? "The checks found nothing secret, and you confirmed what it is."
+              : "The checks found nothing secret. Confirm what it is to clear it."}
+      </p>
+    </>
+  );
+}
+
+/** An upload from before files had sidecar notes: what the record knows about it, its kind, and the file. */
+export function FilePane({ fileId }: { readonly fileId: string }) {
+  const { files } = useRecord();
+  const file = files.find((f) => f.sha256 === fileId);
+  if (!file) return <p className="empty">Loading</p>;
+  return (
     <article>
       <header className="pane-head">
         <div className="path">{file.sha256}</div>
         <h1>{fileLabel(file)}</h1>
-        <span className={`badge ${file.class}`}>{file.class}</span>
-        <span className="badge">{file.mime}</span>
-        <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
-        <p className="small muted">
-          {file.checks === "found"
-            ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
-            : file.checks === "unreadable"
-              ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
-              : file.confirmed
-                ? "The checks found nothing secret, and you confirmed what it is."
-                : "The checks found nothing secret. Confirm what it is to clear it."}
-        </p>
+        <FileFacts file={file} />
       </header>
       <div className="note-grid">
-        <div className="file-view">
-          {opened.state === "loading" && <p className="muted">Loading</p>}
-          {opened.state === "error" && <p role="alert">{opened.message}</p>}
-          {opened.state === "locked" && (
-            <div className="locked">
-              <p>
-                {file.class === "vault" ? "This is a vault document." : "This file isn't classified yet."}{" "}
-                Viewing the original needs a passkey check.
-              </p>
-              <button type="button" onClick={() => void unlock()}>
-                Check with your passkey
-              </button>
-              {checking && <p role="alert">{checking}</p>}
-            </div>
-          )}
-          {opened.state === "open" && <Viewer key={opened.url} file={file} url={opened.url} />}
-        </div>
+        <FileView file={file} />
         <KindForm key={file.sha256} file={file} />
       </div>
     </article>

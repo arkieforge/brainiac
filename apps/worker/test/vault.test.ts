@@ -29,6 +29,11 @@ const found = (results: Results | Forbidden) =>
   "hits" in results
     ? results.hits.map((hit) => ("noteId" in hit ? hit.noteId : `${hit.fileSha}#p${hit.page}`))
     : results;
+/** The file pages among the hits: with the stand-in's embeddings every note comes up by meaning, sidecars too. */
+const pages = (results: Results | Forbidden) => {
+  const hits = found(results);
+  return Array.isArray(hits) ? hits.filter((hit) => hit.includes("#p")) : hits;
+};
 // The fixture student's passport, issued by ICAO's specimen state Utopia (UTO): nobody real.
 const PASSPORT = new TextEncoder().encode(
   "P<UTOKARIM<<NADIA<<<<<<<<<<<<<<<<<<<<<<<<<<<\nXK12345679UTO0103141F3105043<<<<<<<<<<<<<<04\n",
@@ -130,8 +135,9 @@ describe("vault", () => {
     await base.dispatch();
     expect(await installed).toBe("installed");
     expect(await base.file(sha256, human)).toMatchObject({ class: "sensitive", checks: "clean" });
-    expect(found(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
-    expect(await base.vectorModels()).toEqual(["@cf/baai/bge-m3", "@cf/baai/bge-m3"]);
+    expect(pages(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
+    // Its two pages, and its sidecar note.
+    expect(await base.vectorModels()).toEqual(Array(3).fill("@cf/baai/bge-m3"));
     // A cleared file is sensitive: a connection without the scope finds nothing.
     const agent = await base.addConnection({ kind: "cli" });
     expect(found(await base.search("transit", { actor: "agent", connectionId: agent.id }))).toEqual([]);
@@ -152,7 +158,7 @@ describe("vault", () => {
     const indexed = base.nextInstall();
     await base.dispatch();
     expect(await indexed).toBe("installed");
-    expect(found(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
+    expect(pages(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
   });
 
   it("stores nothing for an upload it refuses", async () => {

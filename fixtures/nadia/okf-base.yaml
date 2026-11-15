@@ -73,7 +73,7 @@ types:
     folder: documents
     headline: "{title} · {kind} · issued {issued}"
     fields:
-      kind: {values: [transcript, test-report, certificate, id], required: true}
+      kind: {values: [transcript, test-report, certificate, id]}   # unknown on an upload until you say
       issuer: {kind: text}
       issued: {kind: date}
       expires: {kind: date}

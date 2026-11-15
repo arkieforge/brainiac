@@ -588,15 +588,18 @@ export const cases: Record<string, Case> = {
     ok(note);
     putChunks(sql, id, 1, chunkNote(note));
     // Back to the version before the tokenizer migration, without what the ones after it added (the leases' rev,
-    // the fills table, the sync clients' owners, the secrets' proposals).
+    // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names).
     sql.all("ALTER TABLE inbox_leases DROP COLUMN rev");
     sql.all("DROP TABLE fills");
     sql.all("ALTER TABLE clients DROP COLUMN actor");
     sql.all("ALTER TABLE secrets DROP COLUMN proposalId");
-    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 5));
+    sql.all("DROP INDEX files_path");
+    sql.all("ALTER TABLE files DROP COLUMN path");
+    sql.all("ALTER TABLE files DROP COLUMN name");
+    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 6));
     // The bug: a fragment matched inside other words.
     same(hitIds(search(sql, AGENT, "কম")), [id]);
-    same(migrate(sql), { from: SCHEMA_VERSION - 5, to: SCHEMA_VERSION });
+    same(migrate(sql), { from: SCHEMA_VERSION - 6, to: SCHEMA_VERSION });
     same(hitIds(search(sql, AGENT, "কম্পিউটার")), [id]);
     same(hitIds(search(sql, AGENT, "কম")), []);
   },

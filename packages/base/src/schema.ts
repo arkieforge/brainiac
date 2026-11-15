@@ -340,6 +340,14 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   // The proposal that brought each secret in (a passport's number, waiting with its note's proposal), so turning
   // the proposal down takes the secret with it. The person's own saves have none.
   ["ALTER TABLE secrets ADD COLUMN proposalId TEXT"],
+  // Each upload's place in the record (`documents/files/<name>`, which its sidecar note's `file:` resolves to in
+  // the cloud and on a laptop alike) and the person's own name for it, which only they ever see. Uploads from
+  // before have neither until they are uploaded again.
+  [
+    "ALTER TABLE files ADD COLUMN path TEXT",
+    "ALTER TABLE files ADD COLUMN name TEXT",
+    "CREATE UNIQUE INDEX files_path ON files (path)",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

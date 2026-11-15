@@ -486,12 +486,13 @@ export class Base extends DurableObject<Env> {
   // unclassified; only the person confirms what a file is. The site's file routes (files.ts) call these.
 
   /**
-   * Seals a file into R2, then records it and runs the checks over its text, in one transaction after the only
-   * awaits. `kind` from the person is their confirmation; from a connection, a suggestion.
+   * Seals a file into R2, then records it, runs the checks over its text and writes its sidecar note, in one
+   * transaction after the only awaits. `kind` from the person is their confirmation; from a connection, a
+   * suggestion. `name` is the uploader's filename, which only the person is ever shown.
    */
   async upload(
     bytes: Uint8Array,
-    input: { readonly mime: string; readonly kind?: string },
+    input: { readonly mime: string; readonly kind?: string; readonly name?: string },
     caller: Caller,
   ): Promise<Uploaded> {
     const allowed = this.context(caller);
@@ -508,13 +509,16 @@ export class Base extends DurableObject<Env> {
     if ("status" in ctx) return ctx;
     const before = currentSeq(this.sql);
     const text = readText(bytes, input.mime);
-    const upload = { sha256, r2Key, mime: input.mime, bytes: bytes.byteLength, text };
-    const result = recordUpload(
-      this.sql,
-      key,
-      input.kind === undefined ? upload : { ...upload, kind: input.kind },
-      ctx,
-    );
+    const upload = {
+      sha256,
+      r2Key,
+      mime: input.mime,
+      bytes: bytes.byteLength,
+      text,
+      ...(input.kind !== undefined && { kind: input.kind }),
+      ...(input.name !== undefined && { name: input.name }),
+    };
+    const result = recordUpload(this.sql, key, upload, ctx);
     this.changed(before);
     return result;
   }

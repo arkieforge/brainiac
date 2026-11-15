@@ -6,11 +6,22 @@
 // single-use file token for the usercontent origin (`mintFileToken`).
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
-import { parsePassport, scan, ulid, type Finding, type Passport } from "@brainiac/core";
+import {
+  parsePassport,
+  PathError,
+  pathKey,
+  relationTo,
+  resolveFile,
+  scan,
+  ulid,
+  type Finding,
+  type Passport,
+} from "@brainiac/core";
 
 import { advance, canonical, type Signature } from "./approvals.ts";
 import { canSee, connectionOf, type Connection } from "./connections.ts";
 import { enqueue, finishJob } from "./jobs.ts";
+import { getNote } from "./notes.ts";
 import { mutate, type Context, type Forbidden, type MutationResult } from "./mutate.ts";
 import { extracts, mediaType, needsReading, PIPELINE } from "./pages.ts";
 import { chunkFile, fileOwner, putChunks } from "./search.ts";
@@ -147,10 +158,14 @@ export interface FileRow {
   readonly pipelineVersion: number;
   /** Who uploaded it (a revision's actor): a passport parsed later writes its note as them. */
   readonly uploadedBy: string | null;
+  /** Where it sits in the record (`documents/files/<name>`): what its sidecar note's `file:` resolves to. */
+  readonly path: string | null;
+  /** The person's own name for it, as they uploaded it. Only they see it: it can print a secret. */
+  readonly name: string | null;
 }
 
 const COLUMNS =
-  "sha256, r2Key, mime, bytes, pages, class, checks, findings, kind, confirmedAt, noteId, rev, pipelineVersion, uploadedBy";
+  "sha256, r2Key, mime, bytes, pages, class, checks, findings, kind, confirmedAt, noteId, rev, pipelineVersion, uploadedBy, path, name";
 
 export const getFile = (sql: Sql, sha256: string): FileRow | undefined =>
   sql.all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE sha256 = ?`, sha256)[0];
@@ -189,6 +204,8 @@ export type FileView =
       readonly findings: readonly Finding[];
       readonly confirmed: boolean;
       readonly noteId: string | null;
+      readonly path: string | null;
+      readonly name: string | null;
     }
   /** For agents, a file still unclassified or in the vault: the summary, and (with the sensitive scope) its kind and note. */
   | {
@@ -227,6 +244,8 @@ export function viewFile(connection: Connection | undefined, file: FileRow): Fil
       findings: JSON.parse(file.findings),
       confirmed: file.confirmedAt !== null,
       noteId: file.noteId,
+      path: file.path,
+      name: file.name,
     };
   }
   if (file.class === "unclassified") return { sha256, class: file.class, summary: UNCLASSIFIED };
@@ -248,6 +267,8 @@ export interface Upload {
   readonly text: string | undefined;
   /** What the uploader says it is. From the person this is their confirmation; from an agent, a suggestion. */
   readonly kind?: string;
+  /** The uploader's name for the file (`cleanName`): kept for the person, never in the record's notes. */
+  readonly name?: string;
 }
 
 export type Uploaded =
@@ -255,72 +276,182 @@ export type Uploaded =
       readonly file: FileView | undefined;
       /** The note written from a passport's MRZ; left out for a connection that can't see sensitive notes. */
       readonly note?: MutationResult;
+      /** The file's sidecar note, once written; left out for a connection that can't see it. */
+      readonly sidecar?: string;
     }
   | Forbidden
   | { readonly error: string };
 
 /**
- * Records an upload the DO has sealed into R2: runs the checks over its text, and writes a passport's MRZ into
- * an IdDocument note, its number into the vault. Uploading a file the record has again changes nothing but
- * the person's confirmation.
+ * Records an upload the DO has sealed into R2: runs the checks over its text, gives it a place in the record and
+ * a sidecar note there, and writes a passport's MRZ into an IdDocument note, its number into the vault. Uploading
+ * a file the record has again changes nothing but the person's confirmation, and a sidecar it lost.
  */
 export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Context): Uploaded {
   const kind = upload.kind;
   const refused = refuseUpload(ctx, kind);
   if (refused) return refused;
-  return sql.transaction((): Uploaded => {
-    const existing = getFile(sql, upload.sha256);
-    if (existing) {
-      if (ctx.connection === undefined && kind !== undefined && existing.confirmedAt === null) {
-        return confirm(sql, existing, kind, ctx.now);
+  try {
+    return sql.transaction((): Uploaded => {
+      const existing = getFile(sql, upload.sha256);
+      if (existing) {
+        if (ctx.connection === undefined && kind !== undefined && existing.confirmedAt === null)
+          confirm(sql, existing, kind, ctx.now);
+        const sidecar = placed(sql, existing, upload, ctx);
+        return withSidecar(
+          { file: viewFile(ctx.connection, getFile(sql, upload.sha256) ?? existing) },
+          sidecar,
+        );
       }
-      return { file: viewFile(ctx.connection, existing) };
+      const passport = upload.text === undefined ? undefined : parsePassport(upload.text, ctx.now);
+      // A passport that parses is an MRZ, whatever the pattern check made of it.
+      const scanned = upload.text === undefined ? [] : scan(upload.text);
+      const findings = passport && !scanned.includes("mrz") ? (["mrz", ...scanned] as const) : scanned;
+      const checks: Checks =
+        upload.text === undefined ? "unreadable" : findings.length > 0 ? "found" : "clean";
+      const confirmedAt = ctx.connection === undefined && kind !== undefined ? ctx.now : null;
+      const written = passport && writePassport(sql, key, upload.sha256, passport, ctx);
+      const row: FileRow = {
+        sha256: upload.sha256,
+        r2Key: upload.r2Key,
+        mime: upload.mime,
+        bytes: upload.bytes,
+        pages: null,
+        class: classOf({ checks, kind: kind ?? null, confirmedAt }),
+        checks,
+        findings: JSON.stringify(findings),
+        kind: kind ?? null,
+        confirmedAt,
+        noteId: written?.noteId ?? null,
+        rev: 0,
+        pipelineVersion: extracts(upload.mime) ? 0 : PIPELINE,
+        uploadedBy: ctx.actor,
+        path: null,
+        name: null,
+      };
+      sql.all(
+        `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        row.sha256,
+        row.r2Key,
+        row.mime,
+        row.bytes,
+        row.pages,
+        row.class,
+        row.checks,
+        row.findings,
+        row.kind,
+        row.confirmedAt,
+        row.noteId,
+        row.rev,
+        row.pipelineVersion,
+        row.uploadedBy,
+        row.path,
+        row.name,
+      );
+      followUp(sql, row);
+      const sidecar = placed(sql, row, upload, ctx);
+      const file = viewFile(ctx.connection, getFile(sql, row.sha256) ?? row);
+      const seesNote = canSee(ctx.connection, PASSPORT_NOTE);
+      return withSidecar(written && seesNote ? { file, note: written.result } : { file }, sidecar);
+    });
+  } catch (error) {
+    if (!(error instanceof NotWritten)) throw error;
+    const { result } = error;
+    // Every file has its sidecar: without one the upload isn't kept at all.
+    const why = result.status === "invalid" ? result.issues.map((issue) => issue.message).join(" ") : "";
+    return { error: `This file's note couldn't be written. ${why}`.trim() };
+  }
+}
+
+const withSidecar = <U extends { readonly file: FileView | undefined }>(
+  uploaded: U,
+  sidecar: string | undefined,
+) => (sidecar === undefined ? uploaded : { ...uploaded, sidecar });
+
+/**
+ * The person's name for a file, made safe to keep and show: its last path segment, NFC, on one line, at most 200
+ * characters; `undefined` when nothing is left.
+ */
+function cleanName(name: string): string | undefined {
+  const base = (name.normalize("NFC").split(/[/\\]/).at(-1) ?? "").replaceAll(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  return base === "" ? undefined : [...base].slice(0, 200).join("");
+}
+
+// The extensions a file's place in the record may have, by type. Never taken from the filename or an unlisted type,
+// both the uploader's text: `scan.A1234567` would put a passport number in the sidecar's `file:`.
+const EXTENSIONS: Readonly<Record<string, string>> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/heic": "heic",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/csv": "csv",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+};
+
+/**
+ * Gives a file its place in the record, if it has none yet, and its sidecar note there, if no live note names it:
+ * `documents/files/upload-<day>-<id>.<ext>` beside `documents/upload-<day>-<id>.md`. The place is named for the
+ * upload, never for the person's filename, which can print a secret and is kept only on the file. Returns the
+ * sidecar's id when the caller may see it. Throws `NotWritten` when the sidecar can't be written.
+ */
+function placed(sql: Sql, file: FileRow, upload: Upload, ctx: Context): string | undefined {
+  const name = upload.name === undefined ? undefined : cleanName(upload.name);
+  if (file.name === null && name !== undefined)
+    sql.all("UPDATE files SET name = ? WHERE sha256 = ?", name, file.sha256);
+  let path = file.path;
+  if (path === null) {
+    const stem = `upload-${new Date(ctx.now).toISOString().slice(0, 10)}-${file.sha256.slice(0, 12)}`;
+    path = `documents/files/${stem}.${EXTENSIONS[mediaType(file.mime)] ?? "bin"}`;
+    sql.all("UPDATE files SET path = ? WHERE sha256 = ?", path, file.sha256);
+  }
+  const found = sidecarOf(sql, path);
+  if (found) return canSee(ctx.connection, found) ? found.id : undefined;
+  const stem = path.slice(path.lastIndexOf("/") + 1, path.lastIndexOf("."));
+  const notePath = `documents/${stem}.md`;
+  const id = ulid(ctx.now);
+  // Nothing an agent shouldn't read: no filename, no kind until the person says what it is.
+  const raw = [
+    "---",
+    `id: ${id}`,
+    "type: Document",
+    "title: Uploaded document",
+    `file: ${relationTo(notePath, path)}`,
+    "---",
+    "",
+  ].join("\n");
+  const result = mutate(sql, { op: "create", path: notePath, raw, class: "sensitive" }, ctx);
+  if (!kept(result)) throw new NotWritten(result);
+  return result.status === "applied" && canSee(ctx.connection, SIDECAR) ? id : undefined;
+}
+
+// What every sidecar starts as: a sensitive Document note.
+const SIDECAR = { class: "sensitive", type: "Document" } as const;
+
+/**
+ * The live note whose `file:` names the file at `path`, resolved from the note like a relation. The same rule
+ * finds a laptop copy's file on disk, so the cloud and a copy agree on which file a sidecar means.
+ */
+function sidecarOf(sql: Sql, path: string) {
+  const key = pathKey(path);
+  const notes = sql.all<{ id: string; path: string; fm: string }>(
+    "SELECT id, path, fm FROM notes WHERE deletedAt IS NULL AND type = 'Document'",
+  );
+  for (const note of notes) {
+    const file: unknown = JSON.parse(note.fm)["file"];
+    if (typeof file !== "string") continue;
+    try {
+      if (pathKey(resolveFile(note.path, file)) === key) return getNote(sql, note.id);
+    } catch (error) {
+      if (!(error instanceof PathError)) throw error;
     }
-    const passport = upload.text === undefined ? undefined : parsePassport(upload.text, ctx.now);
-    // A passport that parses is an MRZ, whatever the pattern check made of it.
-    const scanned = upload.text === undefined ? [] : scan(upload.text);
-    const findings = passport && !scanned.includes("mrz") ? (["mrz", ...scanned] as const) : scanned;
-    const checks: Checks = upload.text === undefined ? "unreadable" : findings.length > 0 ? "found" : "clean";
-    const confirmedAt = ctx.connection === undefined && kind !== undefined ? ctx.now : null;
-    const written = passport && writePassport(sql, key, upload.sha256, passport, ctx);
-    const row: FileRow = {
-      sha256: upload.sha256,
-      r2Key: upload.r2Key,
-      mime: upload.mime,
-      bytes: upload.bytes,
-      pages: null,
-      class: classOf({ checks, kind: kind ?? null, confirmedAt }),
-      checks,
-      findings: JSON.stringify(findings),
-      kind: kind ?? null,
-      confirmedAt,
-      noteId: written?.noteId ?? null,
-      rev: 0,
-      pipelineVersion: extracts(upload.mime) ? 0 : PIPELINE,
-      uploadedBy: ctx.actor,
-    };
-    sql.all(
-      `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      row.sha256,
-      row.r2Key,
-      row.mime,
-      row.bytes,
-      row.pages,
-      row.class,
-      row.checks,
-      row.findings,
-      row.kind,
-      row.confirmedAt,
-      row.noteId,
-      row.rev,
-      row.pipelineVersion,
-      row.uploadedBy,
-    );
-    followUp(sql, row);
-    const file = viewFile(ctx.connection, row);
-    const seesNote = canSee(ctx.connection, PASSPORT_NOTE);
-    return written && seesNote ? { file, note: written.result } : { file };
-  });
+  }
+  return undefined;
 }
 
 /**
