@@ -89,6 +89,8 @@ async function serveApi(
     if (typeof on !== "boolean") return failed(400, "Say whether the weekly email is on.");
     return json({ on: await record.questionEmails(on) });
   }
+  // Drift checks of the person's own profiles: paid, so only the signed-in person starts one.
+  if (pathname === "/api/profiles/check" && post) return json(await record.checkProfiles());
   const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
   if (note !== undefined && post) return saveNote(body, record, note);
   if (pathname === "/api/review" && post) {

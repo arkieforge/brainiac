@@ -6,6 +6,7 @@ import type { PatchOp, YamlValue } from "./patch.ts";
 import { PathError, pathKey, resolveRelation } from "./paths.ts";
 import type { Manifest } from "./schema.ts";
 import { isUlid } from "./ids.ts";
+import { driftChecks } from "./profiles.ts";
 
 /** A note as the detectors read it: its front-matter, parsed. */
 export interface ReviewNote {
@@ -33,7 +34,11 @@ export type Detector =
   /** An item an open application relies on runs out before the date it must be valid on. */
   | "expired"
   /** Checked, but over a year ago. */
-  | "stale";
+  | "stale"
+  /** One of the person's own profiles (LinkedIn, X, Google Scholar) says something else than the record. */
+  | "drift"
+  /** A profile couldn't be read, or isn't shown to be the person's yet, so nothing was compared. */
+  | "unchecked";
 
 export interface Check {
   readonly noteId: string;
@@ -45,6 +50,8 @@ export interface Check {
   readonly related: readonly string[];
   /** The fix the record itself suggests: set this field to this value. */
   readonly fix?: { readonly field: string; readonly value: YamlValue };
+  /** For drift, the record's text to paste into the outside profile so it says the same. */
+  readonly paste?: string;
 }
 
 export interface Item {
@@ -265,6 +272,7 @@ export function detect(notes: readonly ReviewNote[], manifest: Manifest | null, 
   sameItems(current, manifest, verified, add);
   spellings(current, manifest, verified, add);
   expiries(notes, current, resolve, now, add);
+  for (const check of driftChecks(notes)) add(check);
   const order = new Map(notes.map((note, i) => [note.id, i]));
   return checks.toSorted((a, b) => (order.get(a.noteId) ?? 0) - (order.get(b.noteId) ?? 0));
 }
@@ -726,7 +734,7 @@ function expiries(
   }
 }
 
-const WRONG = new Set<Detector>(["document", "duplicate", "impossible", "spelling", "expired"]);
+const WRONG = new Set<Detector>(["document", "duplicate", "impossible", "spelling", "expired", "drift"]);
 
 /** How bad a check is: a conflict, then a value that looks wrong, then staleness, then missing proof. */
 const rankOf = (check: Check) =>
@@ -736,7 +744,8 @@ function markOf(checks: readonly Check[], verified: readonly string[]): Mark {
   if (checks.some((c) => c.detector === "conflict")) return "conflict";
   if (checks.some((c) => WRONG.has(c.detector))) return "wrong";
   if (checks.some((c) => c.detector === "stale")) return "stale";
-  if (verified.length === 0 || checks.some((c) => c.detector === "proof")) return "unproven";
+  if (verified.length === 0 || checks.some((c) => c.detector === "proof" || c.detector === "unchecked"))
+    return "unproven";
   return "checked";
 }
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ulid } from "./ids.ts";
 import { parseNote } from "./note.ts";
 import { patch } from "./patch.ts";
+import { ownershipCode } from "./profiles.ts";
 import {
   detect,
   headline,
@@ -38,6 +39,7 @@ const OLD_IELTS = at("facts/tests/ielts-2025-03.md");
 const TUM = at("applications/tum-msc-informatics-2027/application.md");
 const TRF = at("documents/ielts-trf-2026.md");
 const PAPER = at("facts/papers/swahili-ner-2026.md");
+const LINKEDIN = at("profiles/linkedin.md");
 
 /** A fictional note at `path`, of the fixture's types. */
 const note = (path: string, data: Record<string, unknown>): ReviewNote => {
@@ -452,6 +454,142 @@ const SEEDS: Seed[] = [
     expect: none,
   },
 ];
+
+const drift = (notes: readonly ReviewNote[]) =>
+  detect(notes, manifest, NOW)
+    .filter((c) => c.detector === "drift" || c.detector === "unchecked")
+    .map(({ noteId, detector, field, evidence, paste }) => ({ noteId, detector, field, evidence, paste }));
+
+describe("drift", () => {
+  const URL = String(LINKEDIN.data["url"]);
+  const CODE = ownershipCode(LINKEDIN.id);
+  const read = (synced: Record<string, unknown>) =>
+    replace(
+      fixture,
+      edited(LINKEDIN, { synced: { url: URL, code: CODE, checked: "2026-11-15T00:00:00Z", ...synced } }),
+    );
+
+  it("names the exact field LinkedIn shows differently, what it says, and the record's text to paste", () => {
+    const notes = read({
+      owned: true,
+      says: {
+        name: "Nadia Karim",
+        // The ownership code is the person's to leave in or take out; it is never drift.
+        headline: `BSc student at Northvale   ${CODE}`,
+        location: "Dhaka, Bangladesh",
+      },
+    });
+    expect(drift(notes)).toEqual([
+      {
+        noteId: LINKEDIN.id,
+        detector: "drift",
+        field: "headline",
+        evidence: 'LinkedIn says "BSc student at Northvale"',
+        paste: "MSc Informatics applicant · NLP for low-resource languages",
+      },
+    ]);
+    expect(overview(notes, manifest, NOW).items.find((i) => i.noteId === LINKEDIN.id)).toMatchObject({
+      mark: "wrong",
+      aside: 'LinkedIn says "BSc student at Northvale"',
+    });
+  });
+
+  it("a field the profile leaves empty is drift; one the record leaves empty is never compared", () => {
+    const notes = read({ owned: true, says: { name: "Nadia Karim", about: "Anything at all" } });
+    expect(drift(notes).map((c) => [c.field, c.evidence, c.paste])).toEqual([
+      [
+        "headline",
+        "LinkedIn shows no headline",
+        "MSc Informatics applicant · NLP for low-resource languages",
+      ],
+      ["location", "LinkedIn shows no location", "Dhaka, Bangladesh"],
+    ]);
+  });
+
+  it("compares nothing until the profile shows its code, and gives the code to paste", () => {
+    const notes = read({ owned: false });
+    expect(drift(notes)).toEqual([
+      {
+        noteId: LINKEDIN.id,
+        detector: "unchecked",
+        field: undefined,
+        evidence: `Not shown to be yours yet: add ${CODE} to your LinkedIn about, then check again`,
+        paste: CODE,
+      },
+    ]);
+    expect(overview(notes, manifest, NOW).items.find((i) => i.noteId === LINKEDIN.id)?.mark).toBe("unproven");
+  });
+
+  it("a blocked read is unchecked, never drift; a block read for another link says nothing", () => {
+    expect(drift(read({ owned: true, unchecked: "the read was refused (403)" }))).toEqual([
+      {
+        noteId: LINKEDIN.id,
+        detector: "unchecked",
+        field: undefined,
+        evidence: "LinkedIn couldn't be checked: the read was refused (403)",
+        paste: undefined,
+      },
+    ]);
+    const moved = read({
+      url: "https://www.linkedin.com/in/someone-else",
+      owned: true,
+      says: { headline: "x" },
+    });
+    expect(drift(moved)).toEqual([]);
+  });
+
+  it("Google Scholar: a different year, a paper it doesn't list, and nothing for a paper retitled since", () => {
+    const paper = edited(PAPER, {
+      synced: {
+        published: "2026-03-14",
+        venue: "Journal of Fictional Linguistics",
+        authors: ["Nadia Karim", "Amara Okafor"],
+      },
+    });
+    const scholar = note("profiles/scholar.md", {
+      type: "Profile",
+      site: "scholar",
+      url: "https://scholar.google.com/citations?user=fixture",
+    });
+    const title = String(PAPER.data["title"]);
+    const searched = (says: unknown, searchedFor = title) =>
+      edited(scholar, {
+        synced: {
+          url: scholar.data["url"],
+          papers: { [PAPER.id]: { title: searchedFor, says } },
+          checked: "2026-11-15T00:00:00Z",
+        },
+      });
+    const notes = (says: unknown, searchedFor?: string) => [
+      ...replace(fixture, paper),
+      searched(says, searchedFor),
+    ];
+
+    expect(drift(notes(2025))).toEqual([
+      {
+        noteId: PAPER.id,
+        detector: "drift",
+        field: "synced.published",
+        evidence: "Google Scholar says 2025; the record says 2026",
+        paste: "2026",
+      },
+    ]);
+    expect(drift(notes(2026))).toEqual([]);
+    expect(drift(notes("listed"))).toEqual([]);
+    expect(drift(notes("missing"))).toEqual([
+      {
+        noteId: PAPER.id,
+        detector: "drift",
+        field: undefined,
+        evidence: "Google Scholar has no paper with this title",
+        paste: `Nadia Karim, Amara Okafor. ${title}. Journal of Fictional Linguistics, 2026.`,
+      },
+    ]);
+    expect(drift(notes("unchecked"))[0]).toMatchObject({ noteId: PAPER.id, detector: "unchecked" });
+    // Searched under its old title: that answer isn't this paper's.
+    expect(drift(notes(2025, "An older working title"))).toEqual([]);
+  });
+});
 
 describe("seeded errors", () => {
   it("are found with precision and recall of at least 0.90", () => {

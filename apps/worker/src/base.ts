@@ -9,6 +9,9 @@ import {
   getFile,
   installFile,
   installLookup,
+  installProfile,
+  profileWork,
+  requestChecks,
   kindHash,
   repoDeleted,
   syncRepos,
@@ -88,6 +91,8 @@ import {
   type Principal,
   type Results,
   type Sql,
+  type ProfileSeen,
+  type ProfileWork,
 } from "@brainiac/base";
 import { decodeClientMessage, type Manifest, type PlanItem, type ServerMessage } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
@@ -116,11 +121,13 @@ interface Socket {
 
 /**
  * What a job works on, for the jobs consumer: a note to index, a file to extract (and index once cleared), or a
- * paper's DOI to look up. A lookup leaves with the DOI alone, never the note.
+ * paper's DOI to look up, or a profile to read. A lookup leaves with the DOI alone, and a profile read with its
+ * link (and for Google Scholar, paper titles), never the note.
  */
 export type JobWork =
   | { readonly kind: "index"; readonly note: NoteRow }
   | { readonly kind: "doi"; readonly doi: string }
+  | { readonly kind: "drift"; readonly work: ProfileWork }
   | {
       readonly kind: "file";
       readonly sha256: string;
@@ -265,6 +272,16 @@ export class Base extends DurableObject<Env> {
   questionEmails(on?: boolean): boolean {
     if (on !== undefined) setQuestionEmails(this.sql, on);
     return questionEmails(this.sql);
+  }
+
+  /**
+   * The person asks for their profiles to be checked for drift (packages/base/src/profiles.ts). Only the site's
+   * signed-in person reaches it: a check is paid, so no connection starts one.
+   */
+  checkProfiles(): { readonly checking: number; readonly cached: number } {
+    const asked = requestChecks(this.sql, Date.now());
+    this.wake();
+    return asked;
   }
 
   // The GitHub connector (connectors/github.ts reads GitHub; packages/base/src/github.ts decides). The Worker calls
@@ -662,10 +679,14 @@ export class Base extends DurableObject<Env> {
       this.wake();
       return null;
     }
-    if ("note" in input)
-      return input.job.kind === "doi"
-        ? { kind: "doi", doi: String(JSON.parse(input.note.fm)["doi"]) }
-        : { kind: "index", note: input.note };
+    if ("note" in input) {
+      if (input.job.kind === "doi") return { kind: "doi", doi: String(JSON.parse(input.note.fm)["doi"]) };
+      if (input.job.kind === "index") return { kind: "index", note: input.note };
+      const work = profileWork(this.sql, input.note);
+      if (work) return { kind: "drift", work };
+      // Only a profile with a site and a link gets a job, at a revision that still has them; this can't happen.
+      throw new Error(`drift job ${jobId} has no profile to read`);
+    }
     const { file } = input;
     const object = await this.env.BLOBS.get(file.r2Key);
     // Gone from R2 is a bug, not a state: fail the job loudly rather than mark the file read.
@@ -696,6 +717,14 @@ export class Base extends DurableObject<Env> {
   installLookup(jobId: string, found: Found): "installed" | "dropped" {
     const before = currentSeq(this.sql);
     const result = installLookup(this.sql, jobId, found, Date.now());
+    this.changed(before);
+    return result;
+  }
+
+  /** Writes what a profile showed into its `synced:` block, as the profiles connector (packages/base/src/profiles.ts). */
+  installProfile(jobId: string, seen: ProfileSeen): "installed" | "dropped" {
+    const before = currentSeq(this.sql);
+    const result = installProfile(this.sql, jobId, seen, Date.now());
     this.changed(before);
     return result;
   }

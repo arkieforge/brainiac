@@ -35,5 +35,18 @@ synced: {repo_id: R_kgDOJx..., repo: nadia-karim/library-seat-finder, url: "http
 - **Papers**: a Paper note with a `doi` gets a `synced:` block (title, venue, published, authors, citations,
   checked), refreshed weekly; a DOI no registry knows says `missing: true`. Which author you are is your own
   `position` field, asked until it is set, until ORCID (#112) can tell from your verified iD.
-- **Ownership is verified** before a profile counts (OAuth, a code in your bio, or a `rel="me"` link), and private-repo projects default to private.
+- **Drift checks** (`packages/core/src/profiles.ts` compares; `packages/base/src/profiles.ts` decides when to read;
+  `apps/worker/src/connectors/profiles.ts` reads through treg): a `Profile` note in `profiles/` names a site
+  (`linkedin`, `x` or `scholar`), its `url`, and what it should say (`name`, `headline`, `about`, `location`). A new
+  profile, or a new link, is read once; after that only **Check now** (on the overview's Profile group or the
+  profile's page) reads again, and a profile read less than a day ago keeps its answer. What the site showed goes in
+  the note's `synced:` block, written as `connector:profiles`. Each field that differs is a "looks wrong" check
+  naming the field, what the site says, and the record's text to paste (`LinkedIn says "BSc student at
+  Northvale"`, paste `MSc Informatics applicant · ...`). Google Scholar is searched for your papers' titles, never a
+  sensitive paper's, up to 20: a different year (`Google Scholar says 2025; the record says 2026`) or a paper it
+  doesn't list is drift, with the year or the citation to paste. A read that fails (blocked, not found, no treg
+  token) says `unchecked` and why, and nothing from it is compared. Agents read drift through `query` with
+  `type: "Check"` (each with `paste`) and can add profiles, but never start a paid re-check; the laptop shows the
+  same checks from its copy; the extension has no part in it.
+- **Ownership is verified** before a profile counts (OAuth, a code in your bio, or a `rel="me"` link), and private-repo projects default to private. For LinkedIn and X it is a code (`brainiac-` and the end of the note's id) anywhere in the profile's text: until it shows up, nothing the profile says is kept, since it may be someone else's. Once shown at a link, the profile stays yours there, so the code can come out. Google Scholar needs none: it is searched for your own papers, not for a person.
 - **Links**: saved from the extension, the phone, the CLI or MCP `add`. Text via treg `web.extract`, a PDF snapshot via Browser Rendering, a weekly health check, and a signal when an application depends on a dead link.

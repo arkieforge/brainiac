@@ -34,6 +34,17 @@ export {
   resolveRelation,
 } from "./paths.ts";
 export {
+  isSite,
+  ownershipCode,
+  paperTitle,
+  PROFILE_FIELDS,
+  SITES,
+  titleKey,
+  type ProfileField,
+  type ScholarSays,
+  type Site,
+} from "./profiles.ts";
+export {
   BUILT_IN_TYPES,
   ManifestError,
   parseManifest,

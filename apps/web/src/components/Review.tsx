@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 
 import { reviewBase, saveReviewed, useRecord } from "../record.ts";
 import { endSession, openSession, overviewOf, sessionFor, SESSION_ITEMS } from "../review.ts";
+import { Paste } from "./Drift.tsx";
 import { MARKS } from "./Overview.tsx";
 
 type Base = { readonly rev: number; readonly raw: string };
@@ -247,6 +248,12 @@ export function Review() {
                     {" "}
                     Fix: set {check.fix.field} to {show(check.fix.value)}.
                   </span>
+                )}
+                {check.paste !== undefined && (
+                  <>
+                    {" "}
+                    <Paste text={check.paste} />
+                  </>
                 )}
               </li>
             ))}

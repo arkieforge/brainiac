@@ -107,6 +107,21 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       synced: { kind: "mapping", example: "{repo_id: R_kgDOJx, stars: 214}" },
     },
   },
+  // One of the person's own public profiles, checked for drift (packages/core/src/profiles.ts). `name`, `headline`,
+  // `about` and `location` are what the person wants it to say; `synced` is what the profiles connector last saw.
+  Profile: {
+    version: 1,
+    folder: "profiles",
+    fields: {
+      site: { values: ["linkedin", "x", "scholar"], required: true },
+      url: { kind: "text", required: true, example: "https://www.linkedin.com/in/nadia-karim" },
+      name: { kind: "text" },
+      headline: { kind: "text" },
+      about: { kind: "text" },
+      location: { kind: "text" },
+      synced: { kind: "mapping", example: "{url: https://x.com/nadia, owned: true}" },
+    },
+  },
 };
 
 // Every note has these, whatever its type.
