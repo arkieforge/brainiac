@@ -18,6 +18,8 @@
     "packages/base": { "entry": ["test/bun.ts", "test/workerd.ts"], "ignoreDependencies": ["bun"] },
     "packages/sync": { "entry": ["test/bun.ts"], "ignoreDependencies": ["bun"] },
     "apps/cli": { "entry": ["test/bun.ts"] },
+    // vite is there for its `vite/client` types (tsconfig "types"), which the PDF viewer's `?url` imports need.
+    "packages/render": { "ignoreDependencies": ["vite"] },
     // TanStack Start loads its routes by file name.
     "apps/web": { "entry": ["src/routes/**/*.tsx"] },
     // test/harness.ts is bundled into workerd by base.test.ts.

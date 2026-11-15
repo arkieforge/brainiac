@@ -32,7 +32,7 @@ export {
   type Granted,
   type Level,
 } from "./connections.ts";
-export { DAY_MS, type Proposed } from "./hold.ts";
+export { DAY_MS, manifestOf, type Proposed } from "./hold.ts";
 export {
   CHANGES_MS,
   dueJobs,
@@ -80,15 +80,21 @@ export { doSql, type DurableObjectSql, type Sql, type SqlValue } from "./sql.ts"
 export {
   classifyFile,
   dataKey,
+  FILE_TOKEN_MS,
+  fileTokenBase,
   getFile,
   kindHash,
+  listFiles,
+  mintFileToken,
   readText,
   recordUpload,
   refuseUpload,
   sealFile,
+  takeFileToken,
   unseal,
   viewFile,
   type Classified,
+  type FileToken,
   type FileRow,
   type FileView,
   type Uploaded,

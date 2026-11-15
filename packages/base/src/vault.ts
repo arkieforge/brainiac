@@ -2,7 +2,8 @@
 // key and starts unclassified, which agents see only as a one-line summary. A file is cleared only when the
 // server's checks read all of it and found nothing, and the person confirmed what it is; anything the checks
 // find stays in the vault whatever kind anyone chose. Nothing here returns a secret's value or a vault file's
-// bytes, text or URL: secrets leave only by the fill path (#37), originals only to the person (#16).
+// bytes, text or URL: secrets leave only by the fill path (#37), originals only to the person, through a
+// single-use file token for the usercontent origin (`mintFileToken`).
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
 import { parsePassport, scan, ulid, type Finding, type Passport } from "@brainiac/core";
@@ -142,6 +143,13 @@ const COLUMNS = "sha256, r2Key, mime, bytes, class, checks, findings, kind, conf
 
 export const getFile = (sql: Sql, sha256: string): FileRow | undefined =>
   sql.all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE sha256 = ?`, sha256)[0];
+
+/** Every file in the record, as `connection` may know it (`viewFile`); the person sees them all. */
+export const listFiles = (sql: Sql, connection: Connection | undefined): FileView[] =>
+  sql
+    .all<FileRow>(`SELECT ${COLUMNS} FROM files ORDER BY rowid`)
+    .map((file) => viewFile(connection, file))
+    .filter((file) => file !== undefined);
 
 /** Where a file belongs, from what the checks found and what the person confirmed. */
 function classOf(file: Pick<FileRow, "checks" | "kind" | "confirmedAt">): FileClass {
@@ -421,4 +429,75 @@ function confirm(sql: Sql, file: FileRow, kind: string, now: number): { file: Fi
     file.sha256,
   );
   return { file: viewFile(undefined, updated) };
+}
+
+// A file token opens one file's bytes once, on the usercontent origin, for a minute. Like a CLI token it names its
+// record (`brf_<base id>_<secret>`), so the usercontent route needs no lookup to find the record, and the record
+// keeps only a hash of the whole token, so the same secret under another record's id opens nothing.
+const FILE_TOKEN = /^brf_([0-9a-f]{1,128})_([\w-]{43})$/;
+/** How long a file token works: long enough for a page to load what it asked for, never long enough to share. */
+export const FILE_TOKEN_MS = 60_000;
+
+const fileTokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+
+/** The record a file token names, for routing only: the record itself decides whether it opens anything. */
+export const fileTokenBase = (token: string): string | undefined => FILE_TOKEN.exec(token)?.[1];
+
+export type FileToken =
+  | { readonly token: string; readonly expiresAt: number }
+  /** The file is unclassified or in the vault: its original opens only after a passkey check (contract §5). */
+  | { readonly status: "needsPasskey" }
+  | Forbidden
+  | { readonly error: string };
+
+/**
+ * A token that opens `sha256` once from the usercontent origin, for the person only: connections never get a
+ * file's bytes or URL. An unclassified or vault file needs `passkey`, the site's proof that the person checked a
+ * passkey in the last few minutes. `origin` is the site page that asked; only it may read the bytes.
+ */
+export function mintFileToken(
+  sql: Sql,
+  baseId: string,
+  sha256: string,
+  ctx: Context,
+  opts: { readonly origin: string; readonly passkey: boolean },
+): FileToken {
+  if (ctx.connection !== undefined) return { status: "forbidden", reason: "Files open only on the site." };
+  if (!/^[0-9a-f]{1,128}$/.test(baseId)) throw new Error(`Not a record id: ${baseId}`);
+  if (!/^https?:\/\/[^/?#\s]+$/.test(opts.origin)) return { error: "Not a site origin." };
+  const file = getFile(sql, sha256);
+  if (!file) return { error: "No such file." };
+  if ((file.class === "unclassified" || file.class === "vault") && !opts.passkey)
+    return { status: "needsPasskey" };
+  const token = `brf_${baseId}_${randomBytes(32).toString("base64url")}`;
+  const expiresAt = ctx.now + FILE_TOKEN_MS;
+  sql.transaction(() => {
+    sql.all("DELETE FROM file_tokens WHERE expiresAt <= ?", ctx.now);
+    sql.all(
+      "INSERT INTO file_tokens (hash, sha256, origin, expiresAt) VALUES (?, ?, ?, ?)",
+      fileTokenHash(token),
+      sha256,
+      opts.origin,
+      expiresAt,
+    );
+  });
+  return { token, expiresAt };
+}
+
+/** Uses up a file token: the file it opens and the origin that may read it, once, before it expires. */
+export function takeFileToken(
+  sql: Sql,
+  token: string,
+  now: number,
+): { readonly file: FileRow; readonly origin: string } | undefined {
+  if (!FILE_TOKEN.test(token)) return undefined;
+  return sql.transaction(() => {
+    const [row] = sql.all<{ sha256: string; origin: string; expiresAt: number }>(
+      "DELETE FROM file_tokens WHERE hash = ? RETURNING sha256, origin, expiresAt",
+      fileTokenHash(token),
+    );
+    if (!row || row.expiresAt <= now) return undefined;
+    const file = getFile(sql, row.sha256);
+    return file && { file, origin: row.origin };
+  });
 }

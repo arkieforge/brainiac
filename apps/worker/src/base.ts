@@ -7,12 +7,18 @@ import {
   dataKey,
   getFile,
   kindHash,
+  listFiles,
+  manifestOf,
+  mintFileToken,
   readText,
   recordUpload,
   refuseUpload,
   sealFile,
+  takeFileToken,
+  unseal,
   viewFile,
   type Classified,
+  type FileToken,
   type FileView,
   type Uploaded,
   connect,
@@ -66,7 +72,7 @@ import {
   type Principal,
   type Sql,
 } from "@brainiac/base";
-import { decodeClientMessage, type PlanItem, type ServerMessage } from "@brainiac/core";
+import { decodeClientMessage, type Manifest, type PlanItem, type ServerMessage } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
@@ -197,6 +203,11 @@ export class Base extends DurableObject<Env> {
     if (connection) this.disconnect(connection.id);
   }
 
+  /** The record's manifest (its types and their fields), for the site's forms; null until it has one. */
+  manifest(): Manifest | null {
+    return manifestOf(this.sql) ?? null;
+  }
+
   /** Keyword search over the families the caller may see. */
   search(text: string, caller: Caller): string[] | Forbidden {
     const ctx = this.context(caller);
@@ -289,7 +300,7 @@ export class Base extends DurableObject<Env> {
 
   // Approvals. Only the site's session route may call these, with the record owner's passkey loaded from Neon
   // (`Approver`); no agent, token or MCP tool reaches them, so none can approve.
-  // shortcut: no route calls them yet; the site's approval page lands with the editor (#16).
+  // shortcut: no route calls them yet; the site's approval page arrives with #99.
 
   /**
    * Checks a passkey signature over `planHash(items)` and records it, for the change with that exact effect to
@@ -332,8 +343,7 @@ export class Base extends DurableObject<Env> {
   }
 
   // The vault (contract §5). Every upload is sealed with the record's data key before it reaches R2 and starts
-  // unclassified; only the person confirms what a file is.
-  // shortcut: no route calls these yet; the site's upload (#16) and the MCP `add` tool (#17) arrive with them.
+  // unclassified; only the person confirms what a file is. The site's file routes (files.ts) call these.
 
   /**
    * Seals a file into R2, then records it and runs the checks over its text, in one transaction after the only
@@ -399,6 +409,42 @@ export class Base extends DurableObject<Env> {
     ctx = this.context(caller);
     if ("status" in ctx) return ctx;
     return classifyFile(this.sql, sha256, kind, ctx, { challenge, signature });
+  }
+
+  /** Every file, as the caller may know it. */
+  files(caller: Caller): FileView[] | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : listFiles(this.sql, ctx.connection);
+  }
+
+  /**
+   * A single-use token that opens a file's original from the usercontent origin, for the person only. The Worker
+   * says whether their session proved a passkey lately (`passkey`), which an unclassified or vault file needs.
+   */
+  fileToken(
+    sha256: string,
+    caller: Caller,
+    opts: { readonly origin: string; readonly passkey: boolean },
+  ): FileToken {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    return mintFileToken(this.sql, this.ctx.id.toString(), sha256, ctx, opts);
+  }
+
+  /**
+   * The original a file token opens, once: the token is used up before the read, so a second request gets
+   * nothing even while the first is still loading. Null for a token that is unknown, used or expired.
+   */
+  async openFile(
+    token: string,
+  ): Promise<{ readonly bytes: Uint8Array; readonly mime: string; readonly origin: string } | null> {
+    const taken = takeFileToken(this.sql, token, Date.now());
+    if (!taken) return null;
+    const { file, origin } = taken;
+    const [key, object] = await Promise.all([this.dataKey(), this.env.BLOBS.get(file.r2Key)]);
+    if (!object) throw new Error(`The record's file ${file.sha256} is missing from R2.`);
+    const bytes = unseal(key, new Uint8Array(await object.arrayBuffer()), `file:${file.sha256}`);
+    return { bytes, mime: file.mime, origin };
   }
 
   private dataKey(): Promise<Uint8Array> {

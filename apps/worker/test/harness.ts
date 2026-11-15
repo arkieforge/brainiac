@@ -19,6 +19,7 @@ import { Base } from "../src/base.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts";
 import type { Env } from "../src/env.ts";
 import { consume } from "../src/jobs.ts";
+import { routeSite, type Session } from "../src/site.ts";
 
 export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
@@ -118,6 +119,11 @@ export class TestBase extends Base {
     this.sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", yaml);
   }
 
+  /** Moves every file token past its expiry, as if a minute went by. */
+  expireFileTokens(): void {
+    this.sql.all("UPDATE file_tokens SET expiresAt = 0");
+  }
+
   /** The record's data key, for a test to open what the vault sealed. */
   async key(): Promise<Uint8Array> {
     return dataKey(this.sql, await this.env.VAULT_KEY.get());
@@ -166,9 +172,29 @@ const fakeSession =
     return { email: "ada.okafor@example.edu", baseId: env.BASE.idFromName(user).toString() };
   };
 
+/**
+ * The site routes' session, faked the same way: `user=<name>` names the record, and `passkey=1` says the session
+ * proved a passkey lately (Better Auth's part, tested in auth.test.ts).
+ */
+const fakeSiteSession =
+  (request: Request, env: Env): Session =>
+  async (opts) => {
+    const cookie = request.headers.get("cookie") ?? "";
+    const user = /(?:^|; )user=([\w-]+)/.exec(cookie)?.[1];
+    if (user === undefined) return undefined;
+    const proved = /(?:^|; )passkey=1(?:;|$)/.test(cookie);
+    return {
+      userId: user,
+      baseId: env.BASE.idFromName(user).toString(),
+      passkey: Boolean(opts?.passkey) && proved,
+    };
+  };
+
 export default {
   queue: consume,
   fetch: (request: Request, env: Env) => {
+    const site = routeSite(request, env, fakeSiteSession(request, env));
+    if (site) return site;
     const { pathname } = new URL(request.url);
     if (pathname === "/sync") return openSync(request, env, fakeSession(request, env));
     if (pathname === "/cli/login") return cliLogin(request, env, fakeSession(request, env));

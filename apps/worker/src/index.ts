@@ -8,7 +8,7 @@ import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
 import { accountPage, landing, signInPage } from "./auth/pages.ts";
-import { vouchedUntil } from "./auth/recovery.ts";
+import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
 import { serveDev } from "./dev.ts";
@@ -16,6 +16,7 @@ import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
 import { consume } from "./jobs.ts";
 import { serveMcp, type Records } from "./mcp/handler.ts";
 import { baseOf } from "./registry.ts";
+import { routeSite, type Session } from "./site.ts";
 
 export { Base } from "./base.ts";
 export type { Env } from "./env.ts";
@@ -134,6 +135,31 @@ const signedIn =
       return baseId === undefined ? undefined : { email: session.user.email, baseId };
     });
 
+/**
+ * The signed-in person for the site's routes (site.ts). Proving a passkey reads the session fresh from Neon, as
+ * minting any credential does, and lists the person's passkeys to see whether the session proved one lately.
+ */
+const siteSession =
+  (request: Request, env: Env, ctx: ExecutionContext): Session =>
+  ({ passkey = false } = {}) =>
+    withAuth(request, env, ctx, async (auth, pool) => {
+      const found = await auth.api.getSession({
+        headers: request.headers,
+        query: { disableCookieCache: passkey },
+      });
+      if (!found) return undefined;
+      const baseId = await baseOf(pool, found.user.id, () => env.BASE.newUniqueId().toString());
+      if (baseId === undefined) return undefined;
+      const passkeys: ApprovingPasskey[] = passkey
+        ? await auth.api.listPasskeys({ headers: request.headers })
+        : [];
+      return {
+        userId: found.user.id,
+        baseId,
+        passkey: passkey && vouchedUntil(found.session, passkeys) >= Date.now(),
+      };
+    });
+
 async function account(request: Request, auth: ReturnType<typeof createAuth>): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
   const session = await auth.api.getSession({
@@ -160,18 +186,23 @@ const OPENID_METADATA = new Set([
   "/api/auth/.well-known/openid-configuration",
 ]);
 
-// Local dev (`vp run dev`) is the only place Brainiac is served over plain HTTP.
+// Local dev (`vp run dev`) is the only place Brainiac is served over plain HTTP. Browsers resolve every
+// `*.localhost` name to loopback, which is how dev gets its own usercontent origin.
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const isLoopback = (hostname: string) => LOOPBACK.has(hostname) || hostname.endsWith(".localhost");
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     // Auth's base URL is the request's origin, and over http the MCP plugin refuses it, so every /api/auth
     // request would 500. Passkeys and Secure cookies need HTTPS anyway.
-    if (url.protocol === "http:" && !LOOPBACK.has(url.hostname)) {
+    if (url.protocol === "http:" && !isLoopback(url.hostname)) {
       url.protocol = "https:";
       return Response.redirect(url.toString(), 308);
     }
+    // First, so the usercontent origin answers nothing but its files.
+    const site = routeSite(request, env, siteSession(request, env, ctx));
+    if (site) return site;
     const { pathname } = url;
     if (pathname === "/health") return Response.json({ ok: true });
     if (pathname === "/health/db") return checkDb(env, ctx);

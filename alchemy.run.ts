@@ -36,6 +36,7 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
+    const { dev } = yield* Alchemy.AlchemyContext;
     const prod = stage === "prod";
 
     // The names Alchemy 0.94 gave (`brainiac-<id>-<stage>`), so 2.0 adopted prod in place and every stage
@@ -110,6 +111,15 @@ export default Alchemy.Stack(
       // change. The workers.dev URL keeps working beside it. Passkeys are bound to the hostname they were
       // made on, so a passkey from one won't sign in on the other.
       const domain = yield* optional("DOMAIN");
+      // Uploaded files are served only from their own origin, never the site's (apps/worker/src/usercontent.ts).
+      // Under `vp run dev` that is usercontent.localhost, which browsers resolve to loopback; a stage without a
+      // custom domain has none, and the site says it can't show files there.
+      const usercontent = domain ? `usercontent.${domain}` : undefined;
+      const usercontentOrigin = usercontent
+        ? `https://${usercontent}`
+        : dev
+          ? "http://usercontent.localhost:1337"
+          : undefined;
 
       // The site (apps/web), built to static files: its shell and assets. Rebuilt only when its files change.
       const web = yield* Command.Build("web", {
@@ -120,7 +130,7 @@ export default Alchemy.Stack(
 
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
-        ...(domain && { domain }),
+        ...(domain && usercontent && { domain: { name: domain, aliases: [usercontent] } }),
         main: "apps/worker/src/index.ts",
         // A path that is a built file is served straight from the edge; every other one runs the Worker, which
         // answers its own routes and hands the rest of the pages the web app's shell (apps/worker/src/index.ts).
@@ -138,6 +148,7 @@ export default Alchemy.Stack(
           HYPERDRIVE: hyperdrive,
           BETTER_AUTH_SECRET: authSecret,
           STAGE: stage,
+          ...(usercontentOrigin && { USERCONTENT_ORIGIN: usercontentOrigin }),
           // Dev sign-in as the fixture student (apps/worker/src/dev.ts); prod never gets it.
           ...(prod ? {} : yield* secretIf("DEV_SIGN_IN_TOKEN")),
           TURNSTILE_SITE_KEY: turnstileSite,

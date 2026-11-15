@@ -1,0 +1,207 @@
+import { ImageViewer, SandboxedFrame } from "@brainiac/render";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+import { api, refresh, useRecord, type FileItem } from "../record.ts";
+import { fileLabel } from "./Files.tsx";
+
+const PdfViewer = lazy(() => import("@brainiac/render/pdf").then((m) => ({ default: m.PdfViewer })));
+
+const KINDS = [
+  "transcript",
+  "test-report",
+  "certificate",
+  "letter",
+  "cv",
+  "photo",
+  "passport",
+  "national-id",
+  "visa",
+  "bank-statement",
+];
+
+/**
+ * A passkey check, as the account page does it: Better Auth's passkey sign-in, which marks this session as having
+ * proved a passkey for the next 10 minutes (apps/worker/src/auth/recovery.ts).
+ */
+async function checkPasskey() {
+  const options = await (await api("/api/auth/passkey/generate-authenticate-options")).json();
+  const credential = await navigator.credentials.get({
+    publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
+  });
+  if (!(credential instanceof PublicKeyCredential)) throw new Error("No passkey answered.");
+  const res = await api("/api/auth/passkey/verify-authentication", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ response: credential.toJSON() }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "The passkey check failed.");
+}
+
+type Opened =
+  | { readonly state: "loading" }
+  | { readonly state: "locked" }
+  | { readonly state: "error"; readonly message: string }
+  | { readonly state: "open"; readonly url: string };
+
+/** A single-use link for this file on the usercontent origin, or why there isn't one. */
+async function open(sha256: string): Promise<Opened> {
+  const res = await api(`/api/files/${sha256}/token`, { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) return { state: "open", url: body.url };
+  if (body.needsPasskey) return { state: "locked" };
+  return { state: "error", message: body.error ?? "This file can't be shown." };
+}
+
+function Bytes({
+  url,
+  children,
+}: {
+  readonly url: string;
+  readonly children: (bytes: Uint8Array) => React.ReactNode;
+}) {
+  const [bytes, setBytes] = useState<Uint8Array>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    // Once: the link works a single time. No cookies go to the usercontent origin.
+    fetch(url, { mode: "cors", credentials: "omit" })
+      .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error("This file is gone."))))
+      .then((buffer) => setBytes(new Uint8Array(buffer)))
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "This file can't load."));
+  }, [url]);
+  if (error) return <p role="alert">{error}</p>;
+  return bytes ? children(bytes) : <p className="muted">Loading</p>;
+}
+
+function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }) {
+  const mime = file.mime;
+  if (mime === "application/pdf")
+    return (
+      <Bytes url={url}>
+        {(bytes) => (
+          <Suspense fallback={<p className="muted">Loading the PDF viewer</p>}>
+            <PdfViewer bytes={bytes} />
+          </Suspense>
+        )}
+      </Bytes>
+    );
+  if (mime === "text/html" || mime === "image/svg+xml")
+    return <SandboxedFrame src={url} title={fileLabel(file)} />;
+  if (mime.startsWith("image/")) return <ImageViewer src={url} alt={fileLabel(file)} />;
+  if (mime.startsWith("text/"))
+    return (
+      <Bytes url={url}>{(bytes) => <pre className="value">{new TextDecoder().decode(bytes)}</pre>}</Bytes>
+    );
+  return <p className="muted">There is no viewer for {mime} files yet.</p>;
+}
+
+function KindForm({ file }: { readonly file: FileItem }) {
+  const [kind, setKind] = useState(file.kind ?? "");
+  const [message, setMessage] = useState<string>();
+  const save = async () => {
+    const res = await api(`/api/files/${file.sha256}/kind`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setMessage(
+      res.ok
+        ? undefined
+        : body.needsApproval
+          ? "Changing a kind you confirmed to one agents may read needs your passkey approval, which isn't on the site yet."
+          : (body.error ?? "That didn't save."),
+    );
+    await refresh();
+  };
+  return (
+    <form
+      className="fields"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <label>
+        What is this file?
+        <input list="file-kinds" value={kind} onChange={(event) => setKind(event.currentTarget.value)} />
+        <datalist id="file-kinds">
+          {KINDS.map((k) => (
+            <option key={k} value={k} />
+          ))}
+        </datalist>
+      </label>
+      <button type="submit" disabled={!kind}>
+        {file.confirmed ? "Change kind" : "Confirm kind"}
+      </button>
+      {message && <p role="alert">{message}</p>}
+    </form>
+  );
+}
+
+/** One upload: what the record knows about it, what the person says it is, and the file itself. */
+export function FilePane({ fileId }: { readonly fileId: string }) {
+  const { files } = useRecord();
+  const file = files.find((f) => f.sha256 === fileId);
+  const [opened, setOpened] = useState<Opened>({ state: "loading" });
+  const [checking, setChecking] = useState<string>();
+  const cls = file?.class;
+  useEffect(() => {
+    if (!cls) return;
+    setOpened({ state: "loading" });
+    let current = true;
+    void open(fileId).then((result) => current && setOpened(result));
+    return () => {
+      current = false;
+    };
+  }, [fileId, cls]);
+  if (!file) return <p className="empty">Loading</p>;
+  const unlock = async () => {
+    setChecking(undefined);
+    try {
+      await checkPasskey();
+      setOpened(await open(fileId));
+    } catch (cause) {
+      setChecking(cause instanceof Error ? cause.message : "The passkey check failed.");
+    }
+  };
+  return (
+    <article>
+      <header className="pane-head">
+        <div className="path">{file.sha256}</div>
+        <h1>{fileLabel(file)}</h1>
+        <span className={`badge ${file.class}`}>{file.class}</span>
+        <span className="badge">{file.mime}</span>
+        <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
+        <p className="small muted">
+          {file.checks === "found"
+            ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
+            : file.checks === "unreadable"
+              ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
+              : file.confirmed
+                ? "The checks found nothing secret, and you confirmed what it is."
+                : "The checks found nothing secret. Confirm what it is to clear it."}
+        </p>
+      </header>
+      <div className="note-grid">
+        <div className="file-view">
+          {opened.state === "loading" && <p className="muted">Loading</p>}
+          {opened.state === "error" && <p role="alert">{opened.message}</p>}
+          {opened.state === "locked" && (
+            <div className="locked">
+              <p>
+                {file.class === "vault" ? "This is a vault document." : "This file isn't classified yet."}{" "}
+                Viewing the original needs a passkey check.
+              </p>
+              <button type="button" onClick={() => void unlock()}>
+                Check with your passkey
+              </button>
+              {checking && <p role="alert">{checking}</p>}
+            </div>
+          )}
+          {opened.state === "open" && <Viewer key={opened.url} file={file} url={opened.url} />}
+        </div>
+        <KindForm key={file.sha256} file={file} />
+      </div>
+    </article>
+  );
+}
