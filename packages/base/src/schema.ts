@@ -322,10 +322,9 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   ]),
   // The revision of the item a lease handed out, so `done` deletes only what the agent read.
   ["ALTER TABLE inbox_leases ADD COLUMN rev INTEGER NOT NULL DEFAULT 0"],
-  // The fill path (secrets.ts): a secret's rev names the save a passkey signed, and each fill an agent asked for
-  // waits here, holding field names, the agent's own values and secrets' names, never a secret's value.
+  // The fill path (secrets.ts): each fill an agent asked for waits here, holding field names, the agent's own values
+  // and secrets' names, never a secret's value.
   [
-    "ALTER TABLE secrets ADD COLUMN rev INTEGER NOT NULL DEFAULT 0",
     `CREATE TABLE fills (
       id TEXT PRIMARY KEY,
       connectionId TEXT,

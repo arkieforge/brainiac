@@ -10,6 +10,7 @@ import {
   connect,
   dataKey,
   FILL_MS,
+  forgetSecret,
   grant,
   migrate,
   pendingFills,
@@ -281,6 +282,26 @@ export const fillCases: Record<string, Case> = {
       "forbidden",
     );
   },
+
+  "an allow signature can't be used again, even from a passkey that keeps no counter, after the secret is forgotten":
+    (sql) => {
+      const { key } = setUp(sql);
+      // Synced passkeys report counter 0 every time, so only the challenge can stop a replay.
+      const counterless = { credentialId: "synced-passkey", counter: 0, assertion: "{}" };
+      const input = { name: "portal.kth", value: "x", domain: "kth.se", policy: "allow" };
+      const first = saveSecret(sql, key, input, human);
+      ok("challenge" in first);
+      ok(
+        "secret" in
+          saveSecret(sql, key, input, human, { challenge: first.challenge, signature: counterless }),
+      );
+      forgetSecret(sql, "portal.kth", human);
+      ok(
+        "error" in saveSecret(sql, key, input, human, { challenge: first.challenge, signature: counterless }),
+      );
+      const again = saveSecret(sql, key, input, human);
+      ok("challenge" in again && again.challenge !== first.challenge);
+    },
 
   "a fill is judged again when the person presses Fill: a secret moved or removed since doesn't go": (
     sql,

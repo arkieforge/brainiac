@@ -32,8 +32,6 @@ interface SecretRow {
   readonly ciphertext: string;
   readonly policy: Policy;
   readonly domain: string | null;
-  /** Bumped by every save, so a passkey signature over one change can't be used for another. */
-  readonly rev: number;
 }
 
 /** A secret as the person sees it on the site: never its value. */
@@ -44,7 +42,7 @@ export interface SecretView {
 }
 
 const getSecret = (sql: Sql, name: string): SecretRow | undefined =>
-  sql.all<SecretRow>("SELECT name, ciphertext, policy, domain, rev FROM secrets WHERE name = ?", name)[0];
+  sql.all<SecretRow>("SELECT name, ciphertext, policy, domain FROM secrets WHERE name = ?", name)[0];
 
 const view = ({ name, domain, policy }: SecretRow): SecretView => ({ name, domain, policy });
 
@@ -53,19 +51,22 @@ const ONLY_YOU: Forbidden = { status: "forbidden", reason: "Only you can see or 
 /** Every secret's name, domain and policy, for the person. */
 export function listSecrets(sql: Sql, ctx: Context): SecretView[] | Forbidden {
   if (ctx.connection !== undefined) return ONLY_YOU;
-  return sql
-    .all<SecretRow>("SELECT name, ciphertext, policy, domain, rev FROM secrets ORDER BY name")
-    .map(view);
+  return sql.all<SecretRow>("SELECT name, ciphertext, policy, domain FROM secrets ORDER BY name").map(view);
 }
 
 const hash = (plan: unknown) => createHash("sha256").update(canonical(plan)).digest("base64url");
 
 /**
  * The challenge for letting a secret fill on `domain` without asking: tagged so it can't equal another plan's hash,
- * and over the secret's `rev` (-1 before it exists), so a signature is good for this one save.
+ * and over `save`, the record's count of secret saves so far plus one, so a signature is good for one save only.
+ * The count lives in `meta` and never goes back, even when a secret is forgotten and saved again: a passkey that
+ * keeps no counter would otherwise sign the same challenge twice.
  */
-export const secretHash = (name: string, domain: string | null, rev: number): string =>
-  hash({ secret: { name, domain, policy: "allow", rev } });
+export const secretHash = (name: string, domain: string | null, save: number): string =>
+  hash({ secret: { name, domain, policy: "allow", save } });
+
+const saves = (sql: Sql): number =>
+  Number(sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'secretSaves'")[0]?.value ?? 0);
 
 export interface SecretInput {
   readonly name: string;
@@ -106,6 +107,7 @@ export function saveSecret(
   }
   return sql.transaction((): SavedSecret => {
     const existing = getSecret(sql, input.name);
+    const save = saves(sql) + 1;
     if (!existing && input.value === undefined) return { error: "A new secret needs its value." };
     const next = {
       domain: domain === undefined ? (existing?.domain ?? null) : domain,
@@ -116,7 +118,7 @@ export function saveSecret(
       return { error: "A secret filled without asking needs the domain it's for." };
     // Filling without asking where it didn't before is the one change that hands the secret out more freely.
     if (next.policy === "allow" && (existing?.policy !== "allow" || existing.domain !== next.domain)) {
-      const challenge = secretHash(input.name, next.domain, existing?.rev ?? -1);
+      const challenge = secretHash(input.name, next.domain, save);
       if (!signed) return { status: "needsApproval", challenge };
       if (signed.challenge !== challenge)
         return { error: "This secret changed since you signed. Sign again." };
@@ -127,13 +129,17 @@ export function saveSecret(
         ? existing?.ciphertext
         : Buffer.from(seal(key, Buffer.from(input.value), `secret:${input.name}`)).toString("base64");
     sql.all(
-      `INSERT INTO secrets (name, ciphertext, policy, domain, rev) VALUES (?, ?, ?, ?, 0)
+      `INSERT INTO secrets (name, ciphertext, policy, domain) VALUES (?, ?, ?, ?)
        ON CONFLICT (name) DO UPDATE SET
-         ciphertext = excluded.ciphertext, policy = excluded.policy, domain = excluded.domain, rev = rev + 1`,
+         ciphertext = excluded.ciphertext, policy = excluded.policy, domain = excluded.domain`,
       input.name,
       ciphertext ?? null,
       next.policy,
       next.domain,
+    );
+    sql.all(
+      "INSERT INTO meta (key, value) VALUES ('secretSaves', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+      String(save),
     );
     return { secret: { name: input.name, ...next } };
   });
@@ -240,7 +246,7 @@ export function requestFill(
 /** The names of secrets that could fill on `host`: told to an agent that named one the record doesn't have. */
 const savedFor = (sql: Sql, host: string) =>
   sql
-    .all<SecretRow>("SELECT name, ciphertext, policy, domain, rev FROM secrets ORDER BY name")
+    .all<SecretRow>("SELECT name, ciphertext, policy, domain FROM secrets ORDER BY name")
     .filter((secret) => refusal(secret, host) === undefined)
     .map((secret) => secret.name);
 
