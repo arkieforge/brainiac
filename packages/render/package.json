@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./office": "./src/office/OpenXmlOfficeViewer.tsx",
     "./pdf": "./src/pdf.tsx"
   },
   "scripts": {
@@ -11,7 +12,13 @@
     "test": "vp test run --dir ."
   },
   "dependencies": {
+    "@betteroffice/docx": "0.5.1",
+    "@betteroffice/fonts": "0.4.0",
+    "@betteroffice/pptx": "0.5.1",
+    "@betteroffice/xlsx": "0.5.1",
+    "effect": "4.1.4",
     "hast-util-to-jsx-runtime": "2.3.6",
+    "jszip": "3.10.1",
     "katex": "0.18.10",
     "pdfjs-dist": "6.4.299",
     "rehype-sanitize": "6.0.0",
@@ -19,6 +26,7 @@
     "remark-math": "6.0.0",
     "remark-parse": "11.0.0",
     "remark-rehype": "11.1.2",
+    "saxes": "6.0.0",
     "unified": "11.0.5",
     "vfile": "6.0.3"
   },

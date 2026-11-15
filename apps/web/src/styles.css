@@ -518,3 +518,72 @@ kbd {
     animation: none !important;
   }
 }
+/* Files: audio and video, CSV tables. */
+video.media {
+  display: block;
+  width: 100%;
+  max-height: 75vh;
+  background: #000;
+}
+audio.media {
+  width: 100%;
+}
+.table-view {
+  display: grid;
+  gap: 4px;
+}
+.table-view > p {
+  margin: 0;
+}
+.table-scroller {
+  height: 75vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--small);
+}
+[role="table"] {
+  position: relative;
+}
+.table-head,
+.table-row {
+  height: 28px;
+  width: 100%;
+}
+.table-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.table-row {
+  position: absolute;
+  left: 0;
+  border-bottom: 1px solid var(--border);
+}
+.table-cell {
+  position: absolute;
+  top: 0;
+  width: 160px;
+  height: 28px;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.table-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 56px;
+  height: 100%;
+  padding: 4px 8px;
+  text-align: right;
+  color: var(--fg-muted);
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+}
