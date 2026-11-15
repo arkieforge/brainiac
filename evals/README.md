@@ -22,6 +22,27 @@ The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md
 - Graders are plain functions with a `cases.test.ts` beside them. CI runs those tests and each eval's
   `--dry-run`; paid runs stay on the team's own subscriptions.
 
+## The shared harness
+
+Every eval builds on [`shared/`](shared/), so a new one writes only its cases and graders:
+
+- `world.ts`: the fixture record in `packages/base` on node:sqlite, a connection at any level, inbox items, and
+  the record's `/mcp` on a local port, served by the Worker's own tool server.
+- `runners.ts`: the models users bring, on the runner's own sign-in. `--model gpt-*` runs `codex exec`, anything
+  else (or none) `claude -p`. Each run has Brainiac's `/mcp` as its only MCP server and the agent skill, and none
+  of the machine's settings, instructions, hooks, plugins or skills: Claude Code through `--restricted
+  --strict-mcp-config`, Codex through a throwaway `CODEX_HOME` that shares only the sign-in, with its plugins,
+  apps, web search and shell turned off. Both report tool calls under Claude Code's names (`mcp__brainiac__ask`,
+  `Bash`, `Edit` for Codex's `apply_patch`). A run whose harness reports a model other than the one asked for
+  throws rather than grading a cheaper model's answer.
+- `sampling.ts`: the verdict rule and the 3rd sample on disagreement.
+- `cli.ts`: the flags, `--dry-run` (prints the exact command, the token left out, and calls no model),
+  `--context` (the size of every tool's description and schema, the skill and the prompts, estimated at 4
+  characters a token), and the report: `results.ndjson` and `summary.md` with the model that answered, token use,
+  cost when the harness reports one (Codex doesn't), the gates, and with `--baseline <results.ndjson>` each
+  case's earlier pass rate, marking a case that passed every earlier sample and now fails as a regression.
+- `gates.ts`: the release gates below.
+
 ## Release gates
 
 A run checks the [release gates](../docs/operations/quality-bar.md#release-gates) its eval measures, through

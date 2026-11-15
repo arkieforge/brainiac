@@ -30,13 +30,15 @@ Guards fail on any failing sample; the control fails when half or more do.
 ```sh
 vp run eval:filing --out evals/runs/filing            # 2 samples, Claude Code's default model
 vp run eval:filing --out evals/runs/filing --model <id> --samples 3 --case inventory
-vp run eval:filing --out evals/runs/filing --dry-run  # no model: prints the cases and expected tools
+vp run eval:filing --out evals/runs/filing --dry-run  # no model: prints the daemon's command
+vp run eval:filing --out evals/runs/filing --context  # no model: the size of what the model sees
 ```
 
-It needs `claude` on PATH, signed in: runs bill the subscription or key that Claude Code uses. A sample files
-six items and costs about what its `summary.md` says (the cost of each run's result event). `--out` gets
-each sample's events (`sample-<n>.ndjson`), what the run said at the end, `results.ndjson` and `summary.md`.
-`--baseline` and `--context` arrive with the shared harness (#27).
+It needs `claude` on PATH, signed in: runs bill the subscription or key that Claude Code uses. The daemon's
+filer is Claude Code only, so a `gpt-*` model is refused. A sample files six items and costs about what its
+`summary.md` says (one sample on Claude Opus: $0.28). Every case checks the same run, so a sample is one run and
+none gets a 3rd. `--out` gets each sample's events (`sample-<n>.ndjson`), what the run said at the end,
+`results.ndjson` and `summary.md`; `--baseline` takes an earlier `results.ndjson`.
 
 ## Adding a case
 
