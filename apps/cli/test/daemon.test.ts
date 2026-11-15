@@ -13,7 +13,11 @@ const BUN = createRequire(import.meta.url).resolve("bun/bin/bun.exe");
 
 // A case that hangs (a save that never arrives) fails the whole run instead of holding CI forever.
 const results: Record<string, CaseResult> = JSON.parse(
-  execFileSync(BUN, [join(import.meta.dirname, "bun.ts")], { encoding: "utf8", timeout: 120_000 }),
+  execFileSync(BUN, [join(import.meta.dirname, "bun.ts")], {
+    encoding: "utf8",
+    timeout: 120_000,
+    stdio: ["ignore", "pipe", "inherit"],
+  }),
 );
 
 describe(`daemon on a real filesystem (${process.platform})`, () => {

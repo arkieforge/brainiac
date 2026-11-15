@@ -7,7 +7,11 @@ import { cases, folders, runCase, type CaseResult } from "./cases.ts";
 const only = Bun.argv.slice(2);
 const results: Record<string, CaseResult> = {};
 for (const name of Object.keys(cases)) {
-  if (only.length === 0 || only.some((part) => name.includes(part))) results[name] = await runCase(name);
+  if (only.length === 0 || only.some((part) => name.includes(part))) {
+    console.error(`DEBUG start ${name}`);
+    results[name] = await runCase(name);
+    console.error(`DEBUG done ${JSON.stringify(results[name])}`);
+  }
 }
 for (const folder of folders) rmSync(folder, { recursive: true, force: true });
 console.log(JSON.stringify(results));

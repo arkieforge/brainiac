@@ -1,6 +1,6 @@
 // `brainiac daemon install`: a login service that runs the daemon, so a sleeping or rebooted laptop catches
 // up when it wakes. launchd on macOS, a systemd user unit on Linux, a Task Scheduler task on Windows.
-import { join, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 const LABEL = "dev.brainiac.daemon";
 const TASK = "Brainiac daemon";
@@ -37,8 +37,8 @@ export function service(options: {
 }): Service {
   const { platform, home, uid, user, program } = options;
   if (platform === "darwin") {
-    const path = join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
-    const log = join(home, "Library", "Logs", "brainiac-daemon.log");
+    const path = posix.join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
+    const log = posix.join(home, "Library", "Logs", "brainiac-daemon.log");
     const args = program.map((arg) => `    <string>${xml(arg)}</string>`).join("\n");
     return {
       path,
@@ -70,7 +70,7 @@ ${args}
   }
   if (platform === "linux") {
     return {
-      path: join(home, ".config", "systemd", "user", "brainiac.service"),
+      path: posix.join(home, ".config", "systemd", "user", "brainiac.service"),
       content: `[Unit]
 Description=Brainiac daemon: keeps the vault folder in sync with your record
 
