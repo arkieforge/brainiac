@@ -19,7 +19,7 @@ links the main checkout's `.env`.
 | `vp test run [files]`               | Tests (Vitest through Vite+)                                                                        |
 | `vp run typecheck`                  | `effect-tsgo` type check in every workspace                                                         |
 | `vp run knip`                       | Unused files, exports and dependencies                                                              |
-| `vp run dev`                        | Local Worker on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)                     |
+| `vp run dev`                        | Local Worker and site on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)            |
 | `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
 | `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
 | `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
@@ -36,7 +36,10 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 | Path                     | Holds                                                                            |
 | ------------------------ | -------------------------------------------------------------------------------- |
 | `alchemy.run.ts`         | Every cloud resource, per stage. Alchemy 2.0, pinned to one beta                 |
-| `apps/worker`            | The one Worker and the `Base` Durable Object                                     |
+| `apps/worker`            | The one Worker: API, `/mcp`, queue consumer, and the `Base` Durable Object       |
+| `apps/web`               | The site (TanStack Start, SPA mode); the Worker serves its build                 |
+| `apps/cli`               | The `brainiac` CLI, daemon and stdio MCP (Bun)                                   |
+| `apps/marketing`         | The public Astro site; a placeholder for now                                     |
 | `packages/*`             | Shared code (`core`, `base`, `sync`, `render`), added by the issues that need it |
 | `oxlint-plugin-brainiac` | Repo-specific lint rules, each with tests                                        |
 | `evals/`                 | Model-behaviour evals ([README](../../evals/README.md))                          |
@@ -45,6 +48,8 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 | `assets/`                | Brand and icon sources                                                           |
 | `.agents/skills`         | Skills for agents working on this repo (`.claude/skills` links here)             |
 | `.repos/`                | Read-only reference checkouts, gitignored                                        |
+
+Apps never import each other; shared code goes in `packages/*` (lint rule `brainiac/no-cross-app-import`).
 
 Some folders T3 Code has don't exist here yet, on purpose: `native/` (no native code planned),
 `packaging/` (arrives with the CLI release, see the daemon issue), `patches/` (only when a dependency

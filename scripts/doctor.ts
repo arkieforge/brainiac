@@ -96,6 +96,16 @@ export const stageChecks = (
         (await get(`${origin}/health`)).ok || "The Worker isn't serving; check the deploy job.",
     },
     {
+      name: "Web app served on a deep link",
+      run: async () => {
+        const res = await get(`${origin}/doctor/deep-link`, { headers: { accept: "text/html" } });
+        return (
+          (res.ok && (await res.text()).includes("<title>Brainiac</title>")) ||
+          `A page answered ${res.status} without the web app's shell; check the web build in the deploy job.`
+        );
+      },
+    },
+    {
       // Auth over plain http used to 500 on every request (the MCP plugin refuses an http base URL).
       name: "Plain HTTP redirects to HTTPS",
       run: async () => {

@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 
 // Reference repos (`.repos/`) and generated state are read by agents, never linted, formatted or tested.
 // Fixture notes are kept the way people write them, which is what the core tests check we never reformat.
+// TanStack Router writes the route tree on every build, in its own format.
 const IGNORED = [
   ".repos/**",
   ".alchemy/**",
@@ -10,6 +11,7 @@ const IGNORED = [
   "**/dist/**",
   "pnpm-lock.yaml",
   "fixtures/**",
+  "**/routeTree.gen.ts",
 ];
 
 export default defineConfig({
@@ -34,6 +36,7 @@ export default defineConfig({
     jsPlugins: ["./oxlint-plugin-brainiac/index.ts"],
     categories: { correctness: "error", suspicious: "warn" },
     rules: {
+      "brainiac/no-cross-app-import": "error",
       "brainiac/no-em-dash-copy": "error",
       "brainiac/no-unreasoned-skip": "error",
     },

@@ -58,6 +58,24 @@ describe("worker", () => {
     expect(res.status).toBe(404);
   });
 
+  it("serves the web app's shell for any other page, but not for a missing file", async () => {
+    const asked: string[] = [];
+    const env = {
+      ASSETS: { fetch: async (req: Request) => (asked.push(req.url), new Response("shell")) },
+    } as Env;
+    const page = (path: string, accept: string) =>
+      worker.fetch(
+        new Request(`https://brainiac.test${path}`, { headers: { accept } }),
+        env,
+        {} as ExecutionContext,
+      );
+
+    const res = await page("/notes/abc?x=1", "text/html,application/xhtml+xml");
+    expect(await res.text()).toBe("shell");
+    expect(asked).toEqual(["https://brainiac.test/"]);
+    expect((await page("/assets/gone.js", "*/*")).status).toBe(404);
+  });
+
   it("sends plain HTTP to HTTPS before auth runs, keeping the method, path and query", async () => {
     // Over http, Better Auth's MCP plugin refused the http resource URL and every /api/auth request 500ed.
     const res = await worker.fetch(
@@ -168,7 +186,7 @@ describe("no route takes a base id from the request", () => {
       BASE: recorder(calls),
       BLOBS: recorder(calls),
       JOBS: recorder(calls),
-    } as unknown as Env;
+    } as Env;
     const headers = {
       upgrade: "websocket",
       authorization: `Bearer ${VICTIM}`,
