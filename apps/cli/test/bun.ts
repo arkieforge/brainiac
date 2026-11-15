@@ -8,11 +8,7 @@ const only = Bun.argv.slice(2);
 const results: Record<string, CaseResult> = {};
 for (const name of Object.keys(cases)) {
   if (process.platform === "win32" && NOT_ON_WINDOWS.has(name)) continue;
-  if (only.length === 0 || only.some((part) => name.includes(part))) {
-    console.error(`DEBUG start ${name}`);
-    results[name] = await runCase(name);
-    console.error(`DEBUG done ${JSON.stringify(results[name])}`);
-  }
+  if (only.length === 0 || only.some((part) => name.includes(part))) results[name] = await runCase(name);
 }
 for (const folder of folders) rmSync(folder, { recursive: true, force: true });
 console.log(JSON.stringify(results));
