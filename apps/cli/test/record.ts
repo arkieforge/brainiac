@@ -6,13 +6,18 @@ import { Database } from "bun:sqlite";
 import { bunSql } from "@brainiac/base/bun";
 import {
   changesSince,
+  connect,
   currentSeq,
+  getConnection,
   getNote,
   getNoteByPath,
   migrate,
   mutate,
   PERSON,
+  principalOf,
+  restrict,
   serve,
+  type Connection,
   type NoteClass,
   type NoteRow,
   type Principal,
@@ -34,11 +39,31 @@ export class TestRecord {
   readonly #events = new Set<() => void>();
 
   /** What every client may read: the person's view, or a connection's with fewer scopes. */
-  readonly reader: Principal;
+  reader: Principal;
+  /** Who every client syncs as. */
+  #actor = "laptop";
 
   constructor(reader: Principal = PERSON) {
     this.reader = reader;
     migrate(this.sql);
+  }
+
+  /** From now on every client syncs as a new CLI connection: at the floor, or with the sensitive scope. */
+  asConnection(sensitive = false): Connection {
+    const { id } = connect(this.sql, { kind: "cli" }, this.#now);
+    // As a passkey grant would leave it; the grant's own checks are packages/base's to test.
+    if (sensitive) this.sql.all("UPDATE connections SET sensitive = 1 WHERE id = ?", id);
+    const connection = getConnection(this.sql, id)!;
+    this.#actor = `connection:${id}`;
+    this.reader = principalOf(connection);
+    return connection;
+  }
+
+  /** Tightens the connection clients sync as, as the site would; they read with it from their next hello. */
+  restrict(connectionId: string, change: Parameters<typeof restrict>[2]): void {
+    const result = restrict(this.sql, connectionId, change);
+    if (!("connection" in result)) throw new Error(result.error);
+    this.reader = principalOf(result.connection);
   }
 
   /** A note made in the record directly, as the site would. */
@@ -104,7 +129,7 @@ export class TestRecord {
           const { replies, push } = serve(
             this.sql,
             message,
-            { actor: "laptop", now: ++this.#now },
+            { actor: this.#actor, now: ++this.#now },
             this.reader,
           );
           for (const reply of replies) this.#later(peer, () => peer.on.message(reply));

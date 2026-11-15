@@ -13,7 +13,6 @@
     "@better-auth/passkey": "1.7.22",
     "@brainiac/base": "workspace:*",
     "@brainiac/core": "workspace:*",
-    "@modelcontextprotocol/server": "2.4.0",
     "@simplewebauthn/server": "13.3.3",
     "arktype": "2.2.9",
     "better-auth": "1.7.22",

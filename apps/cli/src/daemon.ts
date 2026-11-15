@@ -61,6 +61,11 @@ export interface DaemonOptions {
   readonly connect: Connect;
   /** The person chose "keep sensitive notes on this laptop" for a device they marked as theirs. */
   readonly keepSensitive?: boolean;
+  /**
+   * `tokenKey` of the token `connect` syncs with. The record's grants for it are kept with the copy, so
+   * `brainiac mcp serve` with the same token can answer reads offline as that connection, never more.
+   */
+  readonly tokenKey?: string;
   /** Bring the vault back from the record: files are diffed against it, nothing local is assumed. */
   readonly repair?: boolean;
   readonly now?: () => number;
@@ -269,14 +274,36 @@ export class Daemon {
     this.#client.subscribe((ids) => this.#reflect(ids));
   }
 
+  /** Caught up on the open socket: the copy stays the record's until it drops (or the daemon stops). */
+  #live = false;
+
+  /** The copy was the record's until now, if it was caught up; offline answers say since when. */
+  #dropped(): void {
+    if (this.#live && !this.#gone) this.#state.synced(this.#now());
+    this.#live = false;
+  }
+
   #connect(): void {
     this.#link = this.#options.connect({
       open: () => this.#client.connect(),
-      close: () => this.#client.disconnect(),
+      close: () => {
+        this.#dropped();
+        this.#client.disconnect();
+      },
       message: (message) => {
+        const { tokenKey } = this.#options;
+        // Grants changed online close the socket, so every connect brings the current ones.
+        if (message.type === "welcome" && !this.#gone)
+          this.#state.setAccess(
+            message.connection && tokenKey !== undefined
+              ? { token: tokenKey, grants: message.connection, manifest: message.manifest ?? null }
+              : undefined,
+          );
         this.#client.receive(message);
         if (message.type !== "snapshot" && message.type !== "changes") return;
         if (this.#client.state.cursor === null) return;
+        this.#live = true;
+        if (!this.#gone) this.#state.synced(this.#now());
         // The first catch-up after a repair starts: now there is something to compare the files with.
         const first = !this.#caughtUp;
         this.#caughtUp = true; // before writing: writes wait for this
@@ -293,6 +320,7 @@ export class Daemon {
     clearTimeout(this.#timer);
     clearTimeout(this.#grace);
     this.#watcher?.close();
+    this.#dropped(); // before state.db closes: the socket's close event comes later
     this.#link?.close();
     this.#index.close();
     this.#state.close();

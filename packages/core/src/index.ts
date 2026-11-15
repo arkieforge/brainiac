@@ -8,6 +8,7 @@ export {
   decodeClientMessage,
   type Change,
   type Diff,
+  type Grants,
   type Hello,
   type Mutate,
   type NoteState,

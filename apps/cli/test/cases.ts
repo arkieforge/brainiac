@@ -23,7 +23,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { chunkNote, mutate, PERSON, putChunks, search, serve } from "@brainiac/base";
+import { Readable } from "node:stream";
+
+import { callTool, chunkNote, mutate, PERSON, putChunks, search, serve } from "@brainiac/base";
 import { decodeClientMessage, patch, type NoteState } from "@brainiac/core";
 
 import { doctor, lockVault, request, restore, watchRequests } from "../src/commands.ts";
@@ -31,7 +33,9 @@ import { Daemon, type DaemonOptions } from "../src/daemon.ts";
 import type { Step } from "../src/disk.ts";
 import { openIndex } from "../src/index-db.ts";
 import { socketLink } from "../src/link.ts";
-import { DISPLACED_MS } from "../src/state.ts";
+import { serveStdio } from "../src/mcp.ts";
+import { localCopy, tokenKey } from "../src/offline.ts";
+import { DISPLACED_MS, openState } from "../src/state.ts";
 import { exchange } from "../src/swap.ts";
 import { TestRecord } from "./record.ts";
 
@@ -1204,6 +1208,200 @@ const cases: Record<string, () => Promise<void>> = {
       index.close();
       v.daemon.stop();
     }
+  },
+
+  // Offline, `brainiac mcp serve` answers reads from the local copy as the connection last synced: the record's
+  // own answers for the notes the device holds, marked offline. Writes refuse there and change nothing.
+  async "offline, the stdio server answers reads from the local copy as the connection, and refuses writes"() {
+    const devices = [
+      { scope: false, keepSensitive: false },
+      { scope: true, keepSensitive: true },
+      { scope: true, keepSensitive: false },
+    ];
+    for (const { scope, keepSensitive } of devices) {
+      const what = `scope: ${scope}, keepSensitive: ${keepSensitive}`;
+      const record = new TestRecord();
+      const notes = [
+        [A, "notes/a.md", "normal", "type: Project\ntitle: Transit app\ndate: 2025-03-01\n"],
+        [B, "notes/b.md", "normal", "type: Note\n"],
+        [C, "notes/c.md", "sensitive", "type: Note\n"],
+      ] as const;
+      for (const [id, path, cls, fields] of notes) {
+        const raw = `---\nid: ${id}\n${fields}---\nbody of ${id}\n`;
+        const made = mutate(record.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: 1 });
+        equal(made.status, "applied", JSON.stringify(made));
+      }
+      // A second revision, so a rev the copy hands out is the record's, not a placeholder.
+      const a = record.note(A)!;
+      mutate(
+        record.sql,
+        { op: "put", noteId: A, baseRev: a.rev, raw: setField(a.raw, "status", "done") },
+        { actor: "site", now: 2 },
+      );
+      // A manifest, which the copy must carry for describe's types and the questions: B and C now lack a title.
+      record.requireTitles();
+      const connection = record.asConnection(scope);
+      const token = "brn_e0a1_offline";
+      const v = await open(record, folder("brainiac-vault-"), {
+        keepSensitive,
+        tokenKey: tokenKey(token),
+      });
+      if (keepSensitive && scope)
+        await v.until(() => v.read("notes/c.md") === record.note(C)?.raw, "the sensitive note");
+      v.daemon.stop(); // the laptop goes offline
+
+      const now = Date.UTC(2026, 10, 15);
+      const calls = [
+        ["describe", {}],
+        ["query", {}],
+        ["query", { type: "Project", fields: ["title", "date", "status"] }],
+        ["query", { type: "Question" }],
+        ["get", { ids: [A, B, C] }],
+        ["get", { paths: ["notes/c.md"], body: false }],
+      ] as const;
+      const writes = [
+        ["update", { id: A, rev: record.note(A)!.rev, set: { status: "offline edit" } }],
+        ["create", { type: "Note", fields: { title: "Offline note" } }],
+        ["undo", { run: "x" }],
+        ["request_info", { question: "Which school?" }],
+      ] as const;
+      const requests = [
+        {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1" },
+          },
+        },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        ...[...calls, ...writes].map(([name, args], i) => ({
+          jsonrpc: "2.0",
+          id: i + 2,
+          method: "tools/call",
+          params: { name, arguments: args },
+        })),
+      ];
+      const lines: string[] = [];
+      const copy = localCopy({ vault: v.root, deviceId: "laptop", token, keepSensitive, now: () => now });
+      // Nothing listens on port 1: every message finds the record unreachable.
+      await serveStdio({
+        server: "http://127.0.0.1:1",
+        token,
+        input: Readable.from(requests.map((r) => `${JSON.stringify(r)}\n`)),
+        write: (line) => lines.push(line),
+        offline: copy.call,
+      });
+      copy.close();
+      const answers = new Map(lines.map((line) => JSON.parse(line)).map((m) => [m.id, m]));
+      equal(answers.get(0)?.result?.serverInfo?.name, "brainiac", `initialize answers offline, ${what}`);
+      same(
+        answers.get(1)?.result?.tools?.map((t: { name: string }) => t.name),
+        ["describe", "query", "get", "add", "create", "update", "undo", "request_info", "inbox", "fill_form"],
+      );
+      const syncedAt = Number(new Date(JSON.parse(answers.get(2).result.content[0].text).syncedAt));
+      ok(syncedAt > 0 && syncedAt <= Date.now(), "the time of the last sync");
+      const ctx = { actor: `connection:${connection.id}`, connection, now };
+      for (const [i, [name, args]] of calls.entries()) {
+        const online = callTool(record.sql, name, args, ctx);
+        if (!online.ok || typeof online.value !== "object" || online.value === null)
+          throw new Error(JSON.stringify(online));
+        if ("type" in args && args.type === "Question")
+          ok(JSON.stringify(online.value).includes(B), "not vacuous: B's missing title is a question");
+        const expected: Record<string, unknown> = {
+          ...online.value,
+          offline: true,
+          syncedAt: new Date(syncedAt).toISOString(),
+        };
+        // Proposals stay in the record, so offline doesn't count them.
+        if (name === "describe") expected["openProposals"] = null;
+        // What the connection may see but this device doesn't keep is named, and stays out of the answer.
+        if (scope && !keepSensitive) {
+          expected["cloudOnly"] =
+            "Sensitive notes are cloud-only on this laptop, so they aren't in this answer. They are once the record is back online.";
+          continue; // the answers differ by exactly the notes the device doesn't hold, checked below
+        }
+        same(
+          JSON.parse(answers.get(i + 2).result.content[0].text),
+          expected,
+          `${name} ${JSON.stringify(args)}, ${what}`,
+        );
+      }
+      const got = JSON.parse(answers.get(6).result.content[0].text);
+      same(got.missing, scope && keepSensitive ? [] : [C], `the sensitive note offline, ${what}`);
+      equal(got.notes.find((n: { id: string }) => n.id === A)?.rev, record.note(A)!.rev, "the record's rev");
+      if (scope && !keepSensitive) ok(got.cloudOnly, "says sensitive notes are cloud-only here");
+      for (const [i] of writes.entries()) {
+        const refused = answers.get(calls.length + 2 + i);
+        equal(refused.result.isError, true, `${writes[i]![0]} refuses offline, ${what}`);
+        ok(/can't be reached/.test(refused.result.content[0].text), refused.result.content[0].text);
+      }
+      // Nothing changed or queued: the record, the file, and the sync client's pending changes.
+      equal(record.note(A)?.raw.includes("offline edit"), false);
+      equal(record.liveCount(), 3, "no note made");
+      equal(v.read("notes/a.md"), record.note(A)?.raw);
+      const state = openState(join(v.root, ".brainiac", "state.db"));
+      same(
+        JSON.parse(state.sql.all<{ saved: string }>("SELECT saved FROM sync_client")[0]!.saved).pending,
+        [],
+      );
+      state.close();
+    }
+  },
+
+  // The record closes a connection's sockets when its grants change, so the next sync brings the new ones.
+  async "offline, a scope removed online leaves the copy and its answers at the next sync"() {
+    const record = new TestRecord();
+    record.seed(A, "notes/a.md");
+    record.seed(B, "notes/b.md");
+    record.seed(C, "notes/c.md", "secret\n", "sensitive");
+    const { id } = record.asConnection(true);
+    const token = "brn_e0a1_offline";
+    const options = { keepSensitive: true, tokenKey: tokenKey(token) };
+    const root = folder("brainiac-vault-");
+    const before = await open(record, root, options);
+    await before.until(() => before.read("notes/c.md") !== undefined, "the sensitive note");
+    before.daemon.stop();
+    const ask = (name: string, args: unknown) => {
+      const copy = localCopy({ vault: root, deviceId: "laptop", token, keepSensitive: true });
+      const answer = copy.call(name, args);
+      copy.close();
+      ok(answer.ok, JSON.stringify(answer));
+      return answer.value as Record<string, unknown> & { you: { sensitive: boolean }; missing: string[] };
+    };
+    same(ask("get", { ids: [C] }).missing, [], "held, with the scope");
+    record.restrict(id, { sensitive: false });
+    const after = await open(record, root, options);
+    await after.until(() => after.read("notes/c.md") === undefined, "the sensitive note to leave");
+    after.daemon.stop();
+    same(ask("get", { ids: [C] }).missing, [C]);
+    equal(ask("describe", {}).you.sensitive, false, "the grants as the record last said");
+  },
+
+  async "offline, the local copy answers only for the token it synced with"() {
+    const record = new TestRecord();
+    record.seed(A, "notes/a.md");
+    record.seed(B, "notes/b.md");
+    record.asConnection();
+    const v = await open(record, folder("brainiac-vault-"), { tokenKey: tokenKey("brn_e0a1_daemon") });
+    v.daemon.stop();
+    const ask = (token: string, deviceId = "laptop") => {
+      const copy = localCopy({ vault: v.root, deviceId, token, keepSensitive: false });
+      const answer = copy.call("query", {});
+      copy.close();
+      return answer;
+    };
+    equal(ask("brn_e0a1_daemon").ok, true);
+    const other = ask("brn_e0a1_narrower");
+    ok(!other.ok && /hasn't synced as this connection/.test(other.error), JSON.stringify(other));
+    const copied = ask("brn_e0a1_daemon", "another-laptop");
+    ok(!copied.ok && /another computer's/.test(copied.error), JSON.stringify(copied));
+    const none = localCopy({ vault: undefined, deviceId: "laptop", token: "brn_x", keepSensitive: false });
+    const answer = none.call("describe", {});
+    ok(!answer.ok && /no local copy/.test(answer.error), JSON.stringify(answer));
   },
 
   async "a note moved on disk stays searchable"() {

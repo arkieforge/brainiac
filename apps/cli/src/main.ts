@@ -13,6 +13,7 @@ import { fileable, fileInbox, filer, type Bridge } from "./filing.ts";
 import { refusal, ToolCall } from "./hook.ts";
 import { socketLink } from "./link.ts";
 import { callRecord, serveStdio } from "./mcp.ts";
+import { localCopy, tokenKey } from "./offline.ts";
 import { QUESTIONS_QUERY, questionsReport } from "./questions.ts";
 import { logout, openBrowser, startLogin } from "./login.ts";
 import { service } from "./service.ts";
@@ -148,6 +149,7 @@ async function main(argv: readonly string[]): Promise<void> {
       root: vault,
       deviceId: config.deviceId,
       connect: socketLink(config.server, token),
+      ...(token && { tokenKey: tokenKey(token) }),
       ...(config.keepSensitive && { keepSensitive: true }),
       ...(values.repair && { repair: true }),
     });
@@ -203,6 +205,13 @@ async function main(argv: readonly string[]): Promise<void> {
     // stdout carries the protocol, so nothing else may print there.
     if (!config.server || !token)
       fail("brainiac mcp serve needs --server <url> once, and brainiac login (or BRAINIAC_TOKEN).");
+    const copy = localCopy({
+      vault,
+      deviceId: config.deviceId,
+      token,
+      keepSensitive: config.keepSensitive ?? false,
+      ...(values.background && { background: true }),
+    });
     try {
       await serveStdio({
         server: config.server,
@@ -210,6 +219,7 @@ async function main(argv: readonly string[]): Promise<void> {
         input: process.stdin,
         write: (line) => process.stdout.write(`${line}\n`),
         ...(values.background && { background: true }),
+        offline: copy.call,
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));

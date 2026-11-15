@@ -1,12 +1,13 @@
 // `.brainiac/state.db`: the local copy's authoritative state, on SQLite's write-ahead log. It holds the sync
 // client's layers (pending changes with their base text), what the daemon last wrote or read in each file,
-// every version a sync write took off disk (7 days, for `brainiac restore`), the owning device and any pause.
+// every version a sync write took off disk (7 days, for `brainiac restore`), the owning device, any pause, and
+// what `brainiac mcp serve` needs to answer offline: the connection's last grants and when the copy last synced.
 import { Database } from "bun:sqlite";
 import { lstatSync } from "node:fs";
 
 import { bunSql } from "@brainiac/base/bun";
 import type { Sql } from "@brainiac/base";
-import { isUlid } from "@brainiac/core";
+import { isUlid, type Grants } from "@brainiac/core";
 import { sqlStore, type Store } from "@brainiac/sync";
 
 /** Versions a sync write displaced are kept this long. */
@@ -29,6 +30,18 @@ export interface Displaced {
   /** The name of the displaced file kept aside until late writes into it are ruled out; null once checked. */
   readonly file: string | null;
 }
+
+/** What the record last said the daemon's connection may do, for answering offline as it (offline.ts). */
+export interface Access {
+  /** Which token the daemon synced with (`tokenKey`): offline answers are only for that connection. */
+  readonly token: string;
+  readonly grants: Grants;
+  /** The record's manifest, or null when it has none. */
+  readonly manifest: string | null;
+}
+
+/** The meta rows offline.ts reads from another process. */
+export const META = { owner: "owner", access: "access", syncedAt: "syncedAt" } as const;
 
 /** Why the daemon stopped taking changes from disk; it waits for `brainiac resume`. */
 export interface Pause {
@@ -63,7 +76,13 @@ export interface State {
   setOwner(deviceId: string): void;
   pause(): Pause | undefined;
   setPause(pause: Pause | undefined): void;
-  /** Forgets the sync layers and every known file, keeping displaced versions: a copied vault starts over. */
+  setAccess(access: Access | undefined): void;
+  /** The remote layer was the record's as of `at`. */
+  synced(at: number): void;
+  /**
+   * Forgets the sync layers, every known file and the last grants, keeping displaced versions: a copied vault
+   * starts over.
+   */
   reset(): void;
   close(): void;
 }
@@ -160,8 +179,10 @@ export function openState(path: string, safePath: (path: string) => boolean = ()
         noteId ?? null,
         now - DISPLACED_MS,
       ),
-    owner: () => meta("owner"),
-    setOwner: (deviceId) => setMeta("owner", deviceId),
+    owner: () => meta(META.owner),
+    setOwner: (deviceId) => setMeta(META.owner, deviceId),
+    setAccess: (access) => setMeta(META.access, access && JSON.stringify(access)),
+    synced: (at) => setMeta(META.syncedAt, String(at)),
     pause() {
       const value = meta("pause");
       return value === undefined ? undefined : (JSON.parse(value) as Pause);
@@ -170,6 +191,7 @@ export function openState(path: string, safePath: (path: string) => boolean = ()
     reset() {
       sql.transaction(() => {
         for (const table of ["sync_client", "sync_remote", "files"]) sql.all(`DELETE FROM ${table}`);
+        for (const key of [META.access, META.syncedAt]) setMeta(key, undefined);
         sql.all("UPDATE displaced SET file = NULL"); // a copied vault's kept files are never read here
       });
     },

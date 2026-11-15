@@ -10,7 +10,7 @@ Each sample builds the fixture record on node:sqlite, adds the inbox in [`cases.
 person, and grants the device's connection the most the person can (write, the sensitive scope, no hold).
 Then it calls the daemon's own `fileInbox` (`apps/cli/src/filing.ts`), so the run gets exactly the
 daemon's flags, with the real `brainiac mcp serve --background` bridge pointed at this record's `/mcp`, served
-by the Worker's own tool server (`apps/worker/src/mcp/tools.ts`). After the run, every case checks what it had
+by the Worker's own tool server (`packages/base/src/mcp.ts`). After the run, every case checks what it had
 and what it did:
 
 | Case                            | Kind    | Fails when                                                                                       |

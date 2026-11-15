@@ -1,7 +1,11 @@
-// The MCP server `/mcp` answers with: every tool and prompt in packages/base, each tool call answered by the
-// record. Kept apart from the token checks in handler.ts so the filing eval serves exactly these tools too.
-import { PROMPTS, TOOLS, type Answer } from "@brainiac/base";
+// The MCP server every transport answers with: every tool and prompt in this package, each tool call answered by
+// `call`. The Worker's `/mcp` serves it in front of the record, `brainiac mcp serve` in front of the local copy
+// when the record can't be reached, and the filing eval in front of its fixture record, so all three advertise
+// exactly the same tools.
 import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
+
+import { PROMPTS } from "./prompts.ts";
+import { TOOLS, type Answer } from "./tools.ts";
 
 const UNAVAILABLE = "Brainiac couldn't finish that call. Get the note again before you retry a change.";
 

@@ -306,9 +306,6 @@ importers:
       '@brainiac/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@modelcontextprotocol/server':
-        specifier: 2.4.0
-        version: 2.4.0
       '@simplewebauthn/server':
         specifier: 13.3.3
         version: 13.3.3
@@ -351,6 +348,9 @@ importers:
       '@brainiac/core':
         specifier: workspace:*
         version: link:../core
+      '@modelcontextprotocol/server':
+        specifier: 2.4.0
+        version: 2.4.0
       arktype:
         specifier: 2.2.9
         version: 2.2.9

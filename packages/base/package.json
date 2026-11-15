@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./bun": "./src/bun.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./mcp": "./src/mcp.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p .",
@@ -13,6 +14,7 @@
   },
   "dependencies": {
     "@brainiac/core": "workspace:*",
+    "@modelcontextprotocol/server": "2.4.0",
     "arktype": "2.2.9"
   },
   "devDependencies": {

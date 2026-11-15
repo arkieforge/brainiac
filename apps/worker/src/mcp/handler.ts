@@ -2,6 +2,7 @@
 // packages/base/src/tools.ts, each call answered by the caller's own record as the caller's connection. It takes an
 // MCP client's OAuth access token, or a CLI token (`brainiac mcp serve` forwards here with one).
 import { BACKGROUND_HEADER, tokenBase, type Answer, type Connection } from "@brainiac/base";
+import { serveTools } from "@brainiac/base/mcp";
 import { createResourceServerChallenge } from "@better-auth/oauth-provider";
 import { APIError, isAPIError } from "better-auth/api";
 import {
@@ -14,7 +15,6 @@ import {
 import { decodeProtectedHeader } from "jose";
 
 import { type createAuth, mcpResource } from "../auth/config.ts";
-import { serveTools } from "./tools.ts";
 
 /**
  * Which connection a call comes through: an MCP client's, by its OAuth client id, or a CLI connection's. A client

@@ -32,7 +32,7 @@ hello    { clientId, cursor: seq | null, lastAssigned: clientSeq, ackedUpTo, sch
 mutate   { clientId, clientSeq, changeId, ackedUpTo, noteId, baseRev, change, approvalId? }   // changeId: random per change
          change: create { path, raw, class } | put { raw, base } | delete { base }   // base: the text it was made on
 // DO → client
-welcome  { clientId, highWater, ackedUpTo }   // answer to hello
+welcome  { clientId, highWater, ackedUpTo, connection?, manifest? }   // answer to hello; a connection's client also gets its grants and the manifest, for offline reads
 snapshot { seq, notes, attempt }       // answers hello `attempt`: cursor missing, ahead of the record, or older than the 90-day log
 changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
 result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?: { planHash, items }, error? }

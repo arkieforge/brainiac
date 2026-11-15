@@ -13,6 +13,7 @@ import {
   type ServerMessage,
 } from "@brainiac/core";
 
+import { connectionOf } from "./connections.ts";
 import { mutate, propose, type Context, type MutationResult } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
@@ -186,12 +187,24 @@ export function hello(
       "SELECT result, noteId FROM results WHERE clientId = ? ORDER BY clientSeq",
       message.clientId,
     );
+    const connection = connectionOf(sql, ctx.actor);
+    const [schema] = sql.all<{ manifest: string }>(
+      "SELECT manifest FROM schema ORDER BY version DESC LIMIT 1",
+    );
     return [
       {
         type: "welcome",
         clientId: message.clientId,
         highWater: client?.highWater ?? 0,
         ackedUpTo: client?.ackedUpTo ?? 0,
+        ...(connection && {
+          connection: {
+            level: connection.level,
+            sensitive: connection.sensitive,
+            holdDays: connection.holdDays,
+          },
+          manifest: schema?.manifest ?? null,
+        }),
       },
       changesSince(sql, before?.reader === key ? message.cursor : null, reader, message.attempt),
       ...results.map((row) => asSeen(sql, JSON.parse(row.result), row.noteId, reader)),
