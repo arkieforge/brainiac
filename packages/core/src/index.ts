@@ -83,7 +83,9 @@ export {
 } from "./questions.ts";
 export {
   detect,
+  meetsEdges,
   overview,
+  requirementsOf,
   reviewFields,
   reviewQueue,
   show,
@@ -92,5 +94,6 @@ export {
   type Item,
   type Mark,
   type Overview,
+  type Requirement,
   type ReviewNote,
 } from "./review.ts";

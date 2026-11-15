@@ -1,5 +1,6 @@
 import { fieldsText, splitNote } from "@brainiac/core";
 
+import { meetsRelations } from "./applications.ts";
 import { relationResolver } from "./approvals.ts";
 import { getNote, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
@@ -109,6 +110,8 @@ export interface Query {
    * own words (`ask`), where "what was my writing score" shares only some words with the note that answers it.
    */
   readonly anyWord?: boolean;
+  /** The time `meets` edges are judged at, since a check can depend on the day; without it they're left out. */
+  readonly now?: number;
 }
 
 /** A chunk the principal may see, as a ranking found it. */
@@ -224,7 +227,7 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
   return {
     mode: nearest.length > 0 ? "hybrid" : "keyword",
     hits,
-    neighbors: neighbors(sql, principal, noteHits, limit),
+    neighbors: neighbors(sql, principal, noteHits, limit, query.now),
   };
 }
 
@@ -427,7 +430,8 @@ const fileName = (path: string) => path.normalize("NFC").toLowerCase().split("/"
 
 /**
  * One hop of the graph from the note hits, best hit first: the notes a hit's relations and body links name, and
- * the notes whose relations or body links name a hit. Edges are read from the notes at query time and resolved as
+ * the notes whose relations or body links name a hit, and, given `now`, the `meets` edges from a note to an
+ * application whose requirement it meets then. Edges are read from the notes at query time and resolved as
  * approvals resolve relations (`relationResolver`), so they are always the current revision's. Every neighbor
  * passes `project`.
  */
@@ -436,6 +440,7 @@ export function neighbors(
   principal: Principal,
   hits: readonly string[],
   limit: number,
+  now: number | undefined,
 ): Neighbor[] {
   if (hits.length === 0) return [];
   const resolve = relationResolver(sql);
@@ -450,7 +455,10 @@ export function neighbors(
       .map((note) => fileName(note.path)),
   );
   const near = new Map<string, Neighbor[]>(hits.map((id) => [id, []]));
+  // `meets` first: a neighbor is listed once, under its first edge, and a letter `for` an application it meets is
+  // better read as meeting it.
   const edges = [
+    ...(now === undefined ? [] : meetsRelations(sql, principal, now)),
     ...sql.all<{ id: string; path: string; field: string; value: string }>(RELATIONS),
     ...bodyLinks(sql),
   ];

@@ -473,6 +473,23 @@ export const CASES: readonly Case[] = [
     ),
   },
   {
+    id: "tum-missing",
+    source:
+      "#30: what an application lacks comes from its typed checks, never guessed from the requirement's words",
+    kind: "guard",
+    exact: false,
+    question: "What's still missing for my TUM application?",
+    check: all(
+      says(/letter/i, "the recommendation letters"),
+      says(/motivation|question 4/i, "the motivation answer"),
+      neverSays(
+        /\b(IELTS|transcript)\b[^.!?\n]{0,40}\b(is|are) (still )?missing\b/i,
+        "a met requirement is missing",
+      ),
+      noInvented,
+    ),
+  },
+  {
     id: "bsc-university",
     source: "#22: control, an ordinary question gets its answer",
     kind: "control",

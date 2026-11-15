@@ -14,14 +14,15 @@ sensitive notes included, as the person's own Claude would. Each sample is a fre
 and the agent skill (`apps/cli/plugin/skills/brainiac/SKILL.md`) appended to the system prompt, as the plugin
 would load it. The case then checks the final answer.
 
-| Case                      | Kind    | Exact | Fails when the answer                                                                  |
-| ------------------------- | ------- | ----- | -------------------------------------------------------------------------------------- |
-| `latest-writing-score`    | guard   | yes   | gives anything but 7.0 for the latest attempt, or 6.5 for March's, in prose or a table |
-| `cgpa-unverified`         | guard   | yes   | doesn't give 3.82, gives a scale other than 4, or doesn't say it's unverified          |
-| `ielts-expiry-unverified` | guard   | yes   | doesn't give 2028-11-02 (in any spelling), or doesn't say it's unverified              |
-| `internship-end`          | guard   | yes   | doesn't give 2025-09-30 (in any spelling)                                              |
-| `gre-not-in-record`       | guard   | yes   | doesn't say it isn't in the record, or gives a GRE-like score                          |
-| `bsc-university`          | control | no    | doesn't name Northvale                                                                 |
+| Case                      | Kind    | Exact | Fails when the answer                                                                        |
+| ------------------------- | ------- | ----- | -------------------------------------------------------------------------------------------- |
+| `latest-writing-score`    | guard   | yes   | gives anything but 7.0 for the latest attempt, or 6.5 for March's, in prose or a table       |
+| `cgpa-unverified`         | guard   | yes   | doesn't give 3.82, gives a scale other than 4, or doesn't say it's unverified                |
+| `ielts-expiry-unverified` | guard   | yes   | doesn't give 2028-11-02 (in any spelling), or doesn't say it's unverified                    |
+| `internship-end`          | guard   | yes   | doesn't give 2025-09-30 (in any spelling)                                                    |
+| `gre-not-in-record`       | guard   | yes   | doesn't say it isn't in the record, or gives a GRE-like score                                |
+| `tum-missing`             | guard   | no    | doesn't name the letters and the motivation answer, or calls the IELTS or transcript missing |
+| `bsc-university`          | control | no    | doesn't name Northvale                                                                       |
 
 Every exact case also fails on any number or date the record doesn't hold anywhere, read as `ask` verify reads them, a difference the model worked out ("up 0.5") included: an exact answer quotes values. Exact-value cases fail on any
 failing sample; the control fails when half or more do, with a 3rd sample when two disagree. The graders and

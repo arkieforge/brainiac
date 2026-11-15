@@ -6,7 +6,7 @@ import { isRelationPath } from "./paths.ts";
 
 // What a manifest (okf-base.yaml) may say about one field. A field with `values` is a choice of those.
 const FieldSpec = type({
-  "kind?": "'text' | 'number' | 'boolean' | 'date' | 'relation' | 'list' | 'mapping'",
+  "kind?": "'text' | 'number' | 'boolean' | 'date' | 'relation' | 'list' | 'mapping' | 'requirements'",
   "values?": "string[] > 0",
   "required?": "boolean",
   "example?": "string | number | boolean",
@@ -44,6 +44,55 @@ export function parseManifest(yaml: string): Manifest {
   return manifest;
 }
 
+/** The bounds a requirement check may put on its `field`. */
+export const BOUNDS = ["gte", "lte", "gt", "lt"] as const;
+
+/**
+ * What one requirement of an Application checks (review.ts `requirementsOf`): notes of `type` whose other keys
+ * equal the note's own, `field` within the bounds, valid on the application's `valid_on` date (today without one),
+ * at least `count_gte` of them (1 by default). `for: this` is a note whose `for` names the application. Thresholds
+ * live here and only here: the requirement's `need` is words for the person, never read as a check.
+ */
+const RequirementCheck = type({
+  type: "string > 0",
+  "field?": "string > 0",
+  "gte?": "number",
+  "lte?": "number",
+  "gt?": "number",
+  "lt?": "number",
+  "valid_on?": "string > 0",
+  "count_gte?": "number.integer >= 1",
+  "for?": "'this'",
+  "[string]": "string | number | boolean",
+}).narrow(
+  (spec, ctx) =>
+    spec.field !== undefined ||
+    !BOUNDS.some((bound) => spec[bound] !== undefined) ||
+    ctx.reject({ expected: "a check naming the field its bound compares, like field: overall" }),
+);
+
+/** One requirement: what the portal asks for in words, and the check that decides it. `manual` is one the person ticks with `done: true`. */
+const Requirement = type({
+  need: "string > 0",
+  check: RequirementCheck.or("'manual'").describe(
+    "a typed check like {type: TestScore, field: overall, gte: 6.5}, or manual",
+  ),
+  "done?": "boolean",
+}).narrow(
+  (requirement, ctx) =>
+    requirement.done === undefined ||
+    requirement.check === "manual" ||
+    ctx.reject({
+      expected: "done only with check: manual, since a typed check passes on the record's notes",
+    }),
+);
+
+/** One requirement as written in a note, or why it isn't one Brainiac can check. */
+export function parseRequirement(item: unknown): typeof Requirement.infer | { readonly invalid: string } {
+  const requirement = Requirement(item);
+  return requirement instanceof type.errors ? { invalid: requirement.summary } : requirement;
+}
+
 const KINDS = {
   text: type("string"),
   number: type("number"),
@@ -56,6 +105,7 @@ const KINDS = {
     .describe("a relative path to a note, like ../people/dr-okafor.md"),
   list: type("unknown[]").describe("a list"),
   mapping: type("Record<string, unknown>").describe("a mapping of fields"),
+  requirements: Requirement.array(),
 } satisfies Record<NonNullable<FieldSpec["kind"]>, Type<unknown>>;
 
 const EXAMPLES = {
@@ -66,6 +116,8 @@ const EXAMPLES = {
   relation: "../people/dr-okafor.md",
   list: "[a, b]",
   mapping: "{key: value}",
+  requirements:
+    "[{need: IELTS 6.5 or higher, check: {type: TestScore, test: ielts-academic, field: overall, gte: 6.5, valid_on: deadline}}]",
 } satisfies Record<NonNullable<FieldSpec["kind"]>, string | number | boolean>;
 
 /**
@@ -154,6 +206,21 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       about: { kind: "text" },
       location: { kind: "text" },
       synced: { kind: "mapping", example: "{url: https://x.com/nadia, owned: true}" },
+    },
+  },
+  // A target the person applies to (docs/product/features/applications.md): its requirements are checked against
+  // the record (review.ts `requirementsOf`), and an application stops relying on anything once its status is decision.
+  Application: {
+    version: 1,
+    folder: "applications",
+    headline: "{title} · {status} · deadline {deadline}",
+    fields: {
+      kind: { values: ["university", "scholarship", "job"], required: true },
+      deadline: { kind: "date", required: true },
+      portal: { kind: "text", example: "https://campus.tum.de" },
+      portal_login: { kind: "text", example: "secret:portal.tum" },
+      status: { values: ["researching", "preparing", "submitted", "interview", "decision"], required: true },
+      requirements: { kind: "requirements" },
     },
   },
   // A page the person saved (packages/base/src/links.ts). `for` names the application that relies on it, if one

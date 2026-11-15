@@ -405,7 +405,7 @@ export class Base extends DurableObject<Env> {
     // Read again after the model call: a grant narrowed meanwhile applies to this answer.
     const ctx = this.context(caller);
     if ("status" in ctx) return ctx;
-    return search(this.sql, principalOf(ctx.connection), text, vector ? { vector } : {});
+    return search(this.sql, principalOf(ctx.connection), text, { ...(vector && { vector }), now: ctx.now });
   }
 
   /** Workers AI, for questions' embeddings (the jobs consumer embeds chunks with its own). */

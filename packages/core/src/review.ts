@@ -4,7 +4,7 @@
 // is offered only when the record itself says what the value should be.
 import type { PatchOp, YamlValue } from "./patch.ts";
 import { PathError, pathKey, resolveRelation } from "./paths.ts";
-import type { Manifest } from "./schema.ts";
+import { BOUNDS as BOUND_KEYS, parseRequirement, type Manifest } from "./schema.ts";
 import { isUlid } from "./ids.ts";
 import { driftChecks } from "./profiles.ts";
 
@@ -658,20 +658,26 @@ const BOUNDS = {
   lte: (value: number, bound: number) => value <= bound,
   gt: (value: number, bound: number) => value > bound,
   lt: (value: number, bound: number) => value < bound,
-};
+} satisfies Record<(typeof BOUND_KEYS)[number], unknown>;
+/** A bound as the person reads it: `at least 6.5`. */
+const BOUND_WORDS = { gte: "at least", lte: "at most", gt: "over", lt: "under" } satisfies Record<
+  keyof typeof BOUNDS,
+  string
+>;
 
 /** A requirement check's `field` meets its bounds (`gte: 6.5`): a score too low never stands in for one that counts. */
 function meetsBounds(note: ReviewNote, check: Readonly<Record<string, unknown>>): boolean {
   const field = check["field"];
   if (typeof field !== "string") return true;
-  const value = note.data[field];
+  const value = pathIn(note.data, field);
   return Object.entries(BOUNDS).every(([key, holds]) => {
     const bound = check[key];
     return typeof bound !== "number" || (typeof value === "number" && holds(value, bound));
   });
 }
 
-const isOpen = (note: ReviewNote) => note.data["type"] === "Application" && note.data["status"] !== "decided";
+const isOpen = (note: ReviewNote) =>
+  note.data["type"] === "Application" && note.data["status"] !== "decision";
 
 /** The current notes an open application's requirement check matches, for every open application. */
 export function usedBy(notes: readonly ReviewNote[], now: number): Map<string, string[]> {
@@ -683,6 +689,124 @@ export function usedBy(notes: readonly ReviewNote[], now: number): Map<string, s
     for (const match of matches)
       used.set(match.id, [...new Set([...(used.get(match.id) ?? []), application.id])]);
   return used;
+}
+
+/** One requirement of an application, judged on the current notes by `requirementsOf`. */
+export interface Requirement {
+  readonly need: string;
+  /** met: its check passes on stored values, or the person ticked a manual one. */
+  readonly status: "met" | "missing";
+  /** The notes that meet it, in path order. */
+  readonly by: readonly string[];
+  /** Why it isn't met, from stored values: `IELTS Academic, March 2025: overall 7, needs at least 7.5`. */
+  readonly why?: string;
+}
+
+/** A requirement check's keys besides the field filters, such as `test: ielts-academic`. */
+const filtersOf = (check: Readonly<Record<string, unknown>>) =>
+  Object.entries(check).filter(([key]) => !CHECK_KEYS.has(key));
+
+/**
+ * Each requirement of `application`, met or missing, decided only by its typed check over `notes` (the ones the
+ * reader may see) as of `now`: never from the words of its `need`. A superseded note meets nothing; an item
+ * counts only while valid on the application's `valid_on` date (today without one), so an application whose
+ * `valid_on` date is missing meets nothing rather than guess one.
+ */
+export function requirementsOf(
+  application: ReviewNote,
+  notes: readonly ReviewNote[],
+  now: number,
+): Requirement[] {
+  const resolve = resolver(notes);
+  const superseded = new Set(notes.flatMap((n) => [resolve(n, n.data["supersedes"])?.id ?? []].flat()));
+  const current = notes.filter((n) => !superseded.has(n.id));
+  return listOf(application.data["requirements"]).map((item): Requirement => {
+    const requirement = parseRequirement(item);
+    if ("invalid" in requirement) {
+      const need = isRecord(item) ? str(item["need"]) : undefined;
+      return {
+        need: need ?? show(item),
+        status: "missing",
+        by: [],
+        why: `Its check can't run: ${requirement.invalid}`,
+      };
+    }
+    const { need, check } = requirement;
+    if (check === "manual")
+      return requirement.done
+        ? { need, status: "met", by: [] }
+        : { need, status: "missing", by: [], why: "Not ticked yet: the person marks it done (done: true)" };
+    const forThis = (note: ReviewNote) =>
+      check.for !== "this" || resolve(note, note.data["for"])?.id === application.id;
+    const candidates = current.filter(
+      (note) =>
+        note.data["type"] === check.type &&
+        forThis(note) &&
+        filtersOf(check).every(([key, want]) => same(note.data[key], want)),
+    );
+    const wanted = check.count_gte ?? 1;
+    const many = wanted > 1 ? `, ${wanted} needed` : "";
+    if (candidates.length === 0) {
+      const filters = filtersOf(check).map(([key, want]) => `${key} ${show(want)}`);
+      const what = [check.type, ...(filters.length > 0 ? [`with ${filters.join(", ")}`] : [])];
+      if (check.for === "this") what.push("for this application");
+      return { need, status: "missing", by: [], why: `No ${what.join(" ")}${many}` };
+    }
+    const dated = check.valid_on === undefined ? today(now) : application.data[check.valid_on];
+    if (!isDate(dated))
+      return {
+        need,
+        status: "missing",
+        by: [],
+        why: `${labelOf(application)} has no ${check.valid_on} to check it on`,
+      };
+    const on = dated.slice(0, 10);
+    const reasons: string[] = [];
+    const valid = candidates.filter((note) => {
+      const field = check.field;
+      const value = field === undefined ? undefined : pathIn(note.data, field);
+      const short = BOUND_KEYS.filter((key) => {
+        const bound = check[key];
+        return bound !== undefined && !(typeof value === "number" && BOUNDS[key](value, bound));
+      });
+      if (field !== undefined && short.length > 0) {
+        const needs = short.map((key) => `${BOUND_WORDS[key]} ${show(check[key])}`).join(" and ");
+        reasons.push(
+          `${labelOf(note)}: ${field} ${value === undefined ? "missing" : show(value)}, needs ${needs}`,
+        );
+        return false;
+      }
+      const expires = note.data["expires"];
+      if (isDate(expires) && expires.slice(0, 10) < on) {
+        reasons.push(
+          `${labelOf(note)}: expires ${expires.slice(0, 10)}, before ${check.valid_on ?? "today"} ${on}`,
+        );
+        return false;
+      }
+      return true;
+    });
+    if (valid.length >= wanted) return { need, status: "met", by: valid.map((note) => note.id) };
+    const counted = valid.length > 0 ? [`${valid.length} of ${wanted} needed`] : [];
+    return { need, status: "missing", by: [], why: [...counted, ...reasons].join("; ") };
+  });
+}
+
+/**
+ * The record's `meets` edges (docs/internals/record-format.md, "The knowledge graph"): from each note that meets a
+ * requirement of an application to the application, only while the check passes on `notes`.
+ */
+export function meetsEdges(
+  notes: readonly ReviewNote[],
+  now: number,
+): { readonly from: string; readonly to: string }[] {
+  return notes
+    .filter((note) => note.data["type"] === "Application")
+    .flatMap((application) =>
+      [...new Set(requirementsOf(application, notes, now).flatMap((r) => r.by))].map((from) => ({
+        from,
+        to: application.id,
+      })),
+    );
 }
 
 function* requirements(
