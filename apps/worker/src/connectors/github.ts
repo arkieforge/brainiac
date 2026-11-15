@@ -549,11 +549,13 @@ export async function setup(
     [installationId, reached.account],
   );
   if (reached.organization) {
+    // What the record was told: the sweep tells it the rest. Linked all the same if this first read fails.
     let repos: Repo[] = [];
     try {
-      repos = await memberRepos(deps, installationId, reached.token);
+      const seen = await memberRepos(deps, installationId, reached.token);
+      if (seen.length > 0) await deps.record(person.baseId).githubRepos(seen);
+      repos = seen;
     } catch (error) {
-      // Linked all the same: the daily sweep reads what they can see.
       console.error("github first read failed", installationId, error);
     }
     await deps.db.query(
@@ -568,7 +570,6 @@ export async function setup(
         new Date(deps.now()),
       ],
     );
-    if (repos.length > 0) await deps.record(person.baseId).githubRepos(repos);
     return done("connected");
   }
   await deps.db.query(
