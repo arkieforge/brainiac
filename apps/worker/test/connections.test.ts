@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
 import type { Approver } from "../src/approvals.ts";
+import { accountPage } from "../src/auth/pages.ts";
 import { createAuthenticator } from "../src/auth/test-authenticator.ts";
 import type { TestBase } from "./harness.ts";
 
@@ -130,6 +131,37 @@ describe("connections", () => {
     expect(await base.authenticate(token)).toBeNull();
     expect(await base.mutate({ ...edit, baseRev: 2 }, caller)).toMatchObject({ status: "forbidden" });
     expect(await base.notes(caller)).toMatchObject({ status: "forbidden" });
+  });
+
+  it("every tool call lands in the record's audit log, which the account page shows per connection", async () => {
+    const base = await record("audit");
+    const tum = await created(base, TUM, "normal");
+    const ielts = await created(base, IELTS, "sensitive");
+    const app = await base.addConnection({
+      kind: "oauth",
+      oauthClientId: "https://claude.ai/oauth/brainiac",
+    });
+    const cli = await base.addConnection({ kind: "cli" });
+    await base.tool({ connectionId: cli.id }, "get", { ids: [tum, ielts] });
+    await base.tool({ oauthClientId: "https://claude.ai/oauth/brainiac" }, "describe", {});
+
+    const activity = await base.activity();
+    expect(activity.map((a) => [a.connection.id, a.calls.map((c) => c.tool)]).toSorted()).toEqual(
+      [
+        [app.id, ["describe"]],
+        [cli.id, ["get"]],
+      ].toSorted(),
+    );
+    // The sensitive note was hidden from the CLI connection, so its read names only the one it saw.
+    expect(activity.find((a) => a.connection.id === cli.id)?.calls[0]?.notes).toEqual([
+      { id: tum, path: TUM },
+    ]);
+
+    const html = await accountPage("nadia@example.com", [], 0, [], activity).text();
+    expect(html).toContain("What your connections did");
+    expect(html).toContain(`get: ${TUM}`);
+    expect(html).toContain("claude.ai");
+    expect(html).toContain("Brainiac CLI");
   });
 
   it("holds a write connection's change to a held value until the person accepts it", async () => {

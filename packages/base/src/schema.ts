@@ -294,6 +294,8 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       expiresAt INTEGER NOT NULL
     ) WITHOUT ROWID`,
   ],
+  // The account page reads each connection's calls, newest first.
+  ["CREATE INDEX audit_actor ON audit (actor, id)"],
 ];
 
 /** The SQL schema version this code writes. */
