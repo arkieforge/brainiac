@@ -123,6 +123,24 @@ describe("sync chaos", () => {
     expectConverged(world, laptop, other);
   });
 
+  it("repairs under a new id when its connection is re-issued, edits made offline included", () => {
+    const { world, laptop } = start();
+    setField(laptop, A, "title", "before");
+    world.settle();
+    const oldId = laptop.client.state.clientId;
+    world.disconnect(laptop);
+    setField(laptop, A, "status", "offline");
+    // `brainiac logout` and `login` again: the same vault now speaks for a new connection.
+    laptop.actor = "connection:reissued";
+    world.settle();
+    expect(laptop.client.state.clientId).not.toBe(oldId);
+    expect([field(world, "title"), field(world, "status")]).toEqual(["before", "offline"]);
+    expect(laptop.client.state.blocked.size).toBe(0);
+    expect(world.sql.all("SELECT actor FROM clients WHERE clientId = ?", oldId)).toEqual([
+      { actor: "human" },
+    ]);
+  });
+
   it("blocks a refused edit, uses up its number, and keeps going", () => {
     const { world, laptop } = start();
     const good = world.note(A)?.raw ?? "";

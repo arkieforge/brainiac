@@ -37,7 +37,7 @@ snapshot { seq, notes, attempt }       // answers hello `attempt`: cursor missin
 changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
 result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?: { planHash, items }, error? }
 gap      { clientId, highWater }        // resend from highWater + 1
-reset    { clientId, clientSeq, reason } // two machines share this id
+reset    { clientId, clientSeq?, reason } // two machines share this id; no clientSeq: another actor owns it
 ```
 
 The DO computes each mutation's digest itself. A result names the `changeId` it answers, so a copy that
@@ -78,6 +78,10 @@ record answers a `changeId` it has seen with the answer it gave.
 
 - **Exactly once, in order**: each client's mutations are applied strictly in sequence. The DO accepts only `highWater + 1`; a gap is refused, so the client resends in order. Results are kept until the client acknowledges them. A duplicate older than that gets "already processed, reconcile": the client re-reads that note's current revision, which is enough because the change log or a snapshot shows what happened.
 - **Every result consumes its number**: a mutation that comes back as a conflict, `needsApproval` or invalid still uses up its `clientSeq` (the high-water mark advances in the same transaction); the edit moves to _blocked_, and the queue keeps going. Resending it later (after you approve or fix it) takes a new number. Acknowledgment is implicit: every `hello` and `mutate` carries `ackedUpTo`, and the DO drops results and digests up to that point. A reconcile never discards local intent: if the client's edit differs from what the server has, it goes back in the queue with its **original** base revision and base text, so it passes through the three-way merge and can't silently overwrite another device's later change.
+- **A client id belongs to its actor**: the record remembers the actor (`human` or `connection:<id>`) that first
+  used each `clientId`, and a `hello` or `mutate` under it from any other actor gets a `reset` with no
+  `clientSeq` and nothing else: no results, counters or feed, and nothing written. The client repairs under a new
+  id, so a vault whose connection was re-issued (`logout`, then `login`) carries on, its pending edits included.
 - **Two machines, one identity** (for example a full OS migration while the old laptop still runs): a `clientSeq` that arrives with a different digest, or one the DO has already dropped, gets a `reset` naming it. The copy that still holds that change as pending repairs under a new id; the other ignores it, so a late duplicate never resets a healthy client.
 - **Repair** resends every pending change in order, exactly as it was made (same `changeId`, same base text), under the new id. The record keeps every answer it gave, by `changeId`, for 90 days, so a change it has seen before gets the same answer again without being applied again: a note deleted or reverted since stays that way, and no proposal is opened twice. Anything else goes through the merge rules below.
 - **Copies and restores are caught**: the OS config folder holds a device id for the machine, and `state.db` records which device owns its pending queue. A copied vault on another machine sees a different owner, discards the copied queue and repairs: it diffs files against the server, with no base for any of them, so a difference becomes a conflict rather than an overwrite and nothing replays twice. A machine restored from an old backup learns it from `welcome`: the DO's high-water mark is above the last `clientSeq` it assigned, or the DO has seen it acknowledge more than it has. It takes a new `clientId` and repairs the same way. The client decides, because a late `hello` carries old counters and only the client knows its current ones. No edit is dropped, and none is applied twice.

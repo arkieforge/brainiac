@@ -134,6 +134,25 @@ const reset = (message: Mutate, reason: string): ServerMessage => ({
 });
 
 /**
+ * Whether `actor` may use `clientId`, claiming it if nobody has: an id belongs to the actor that first used it,
+ * so a socket that learns another's id can neither replay its stored results nor write under its numbers. Rows
+ * from before ids had owners go to the next actor that uses them.
+ */
+function claim(sql: Sql, clientId: string, actor: string): boolean {
+  sql.all("INSERT OR IGNORE INTO clients (clientId, actor) VALUES (?, ?)", clientId, actor);
+  sql.all("UPDATE clients SET actor = ? WHERE clientId = ? AND actor IS NULL", actor, clientId);
+  const [row] = sql.all<{ actor: string }>("SELECT actor FROM clients WHERE clientId = ?", clientId);
+  return row?.actor === actor;
+}
+
+/** Another actor's id: the client repairs under a new one, as after any reset. */
+const taken = (clientId: string): ServerMessage => ({
+  type: "reset",
+  clientId,
+  reason: "This client id belongs to another connection.",
+});
+
+/**
  * A client (re)connects: it gets its high-water mark and how far it has acknowledged (so a restored backup
  * or a copy can tell it is behind and repair), every result it hasn't acknowledged, and what changed since
  * its cursor. The record never resets on hello: a late hello carries old counters, and only the client
@@ -141,17 +160,23 @@ const reset = (message: Mutate, reason: string): ServerMessage => ({
  * scope granted or narrowed since) gets a snapshot: the feed after its cursor says nothing of notes that
  * changed visibility without changing.
  */
-export function hello(sql: Sql, message: Hello, now: number, reader: Principal): ServerMessage[] {
+export function hello(
+  sql: Sql,
+  message: Hello,
+  ctx: Pick<Context, "actor" | "now">,
+  reader: Principal,
+): ServerMessage[] {
   // Canonical, so the same scopes written another way are still the same principal.
   const key = JSON.stringify([reader.sensitive, reader.types?.toSorted() ?? null]);
   return sql.transaction(() => {
     const [before] = sql.all<ClientRow>("SELECT * FROM clients WHERE clientId = ?", message.clientId);
+    if (!claim(sql, message.clientId, ctx.actor)) return [taken(message.clientId)];
     sql.all(
       `INSERT INTO clients (clientId, lastSeenAt, appVersion, reader) VALUES (?, ?, ?, ?)
        ON CONFLICT (clientId) DO UPDATE SET lastSeenAt = excluded.lastSeenAt, appVersion = excluded.appVersion,
          reader = excluded.reader`,
       message.clientId,
-      now,
+      ctx.now,
       message.appVersion,
       key,
     );
@@ -185,7 +210,7 @@ export function receive(sql: Sql, message: Mutate, ctx: Context, reader: Princip
     .update(JSON.stringify([message.changeId, message.noteId, message.baseRev, message.change]))
     .digest("hex");
   return sql.transaction(() => {
-    sql.all("INSERT OR IGNORE INTO clients (clientId) VALUES (?)", message.clientId);
+    if (!claim(sql, message.clientId, ctx.actor)) return taken(message.clientId);
     const [client] = sql.all<ClientRow>("SELECT * FROM clients WHERE clientId = ?", message.clientId);
     // A late message carries an older ackedUpTo, so only one past the high-water mark gives a copy away.
     if (!client || message.ackedUpTo > client.highWater) {
@@ -402,7 +427,7 @@ export interface Served {
  * and what it pushes to everyone.
  */
 export function serve(sql: Sql, message: ClientMessage, ctx: Context, reader: Principal): Served {
-  if (message.type === "hello") return { replies: hello(sql, message, ctx.now, reader) };
+  if (message.type === "hello") return { replies: hello(sql, message, ctx, reader) };
   const before = currentSeq(sql);
   const reply = receive(sql, message, ctx, reader);
   return {
