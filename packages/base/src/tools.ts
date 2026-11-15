@@ -1020,7 +1020,7 @@ const LEASED = {
 };
 
 /** Notes the person is already deciding something about: an open proposal or conflict, or an open question. */
-function waitingForPerson(sql: Sql, ctx: Context): Set<string> {
+function waitingForPerson(sql: Sql): Set<string> {
   const ids = new Set<string>();
   for (const open of sql.all<{ noteId: string | null; patch: string; kind: string }>(
     "SELECT noteId, patch, kind FROM proposals WHERE status = 'open'",
@@ -1028,12 +1028,18 @@ function waitingForPerson(sql: Sql, ctx: Context): Set<string> {
     if (open.noteId !== null) ids.add(open.noteId);
     if (open.kind === "change") for (const item of JSON.parse(open.patch) as PlanItem[]) ids.add(item.noteId);
   }
-  // An asked question names the note it's about (a found one, the note its answer goes to).
-  const questions = questionRows(sql, ctx);
-  if (typeof questions !== "string")
-    for (const { data } of questions)
-      if (data["status"] === "open")
-        for (const ref of [data["about"], data["note"]]) if (typeof ref === "string") ids.add(ref);
+  // The note an open asked question is about, whoever may see the question: only ids leave here, and a question a
+  // background run asked as sensitive must still keep the next run off its item.
+  for (const question of listNotes(sql, { type: "Question" })) {
+    const { status, about } = fieldsOf(question);
+    if (status !== "open" || typeof about !== "string") continue;
+    try {
+      const target = getNoteByPath(sql, resolveRelation(question.path, about));
+      if (target) ids.add(target.id);
+    } catch (error) {
+      if (!(error instanceof PathError)) throw error;
+    }
+  }
   return ids;
 }
 
@@ -1107,7 +1113,7 @@ File each item with create and update, then send its id in done, which deletes i
     const until = ctx.now + INBOX_LEASE_MS;
     sql.all("UPDATE inbox_leases SET expiresAt = ? WHERE agent = ?", until, agent);
     const take = args.take ?? (ending.length > 0 ? 0 : 10);
-    const deciding = waitingForPerson(sql, ctx);
+    const deciding = waitingForPerson(sql);
     const items = (
       take === 0
         ? []

@@ -1099,6 +1099,21 @@ export const toolCases: Record<string, Case> = {
     same(taken(call(sql, as(connection(sql, { sensitive: true })), "inbox", {})), [a, b]);
   },
 
+  "a question a background run can't see still keeps the next run off its item": (sql, fixtures) => {
+    record(sql, fixtures);
+    const item = String(call(sql, PERSON_CTX, "add", { text: "Re-marked: which test?" })["id"]);
+    const bg: ToolContext = { ...as(connection(sql, { level: "write", sensitive: true })), background: true };
+    const { lease } = call(sql, bg, "inbox", {});
+    equal(
+      call(sql, bg, "request_info", { question: "Which test was re-marked?", note: item, sensitive: true })[
+        "status"
+      ],
+      "queued",
+    );
+    call(sql, bg, "inbox", { lease, release: [item] });
+    same(taken(call(sql, bg, "inbox", {})), []);
+  },
+
   "a done past the day's five deletes waits for the passkey, and goes through when sent with it": (
     sql,
     fixtures,

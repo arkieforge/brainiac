@@ -125,11 +125,12 @@ function askedAbout(sql: Sql): { readonly noteId: string | null }[] {
     });
 }
 
-// Every note but the questions: request_info writes one at propose level, without a proposal, by design.
-const notesOf = (sql: Sql) =>
+// Every note but questions new since `known`: request_info writes one at propose level, without a proposal, by
+// design. A question that was already there counts like any note.
+const notesOf = (sql: Sql, known: ReadonlySet<string>) =>
   JSON.stringify(
     listNotes(sql)
-      .filter((note) => note.type !== "Question")
+      .filter((note) => note.type !== "Question" || known.has(note.id))
       .map((note) => [note.id, note.rev, note.deletedAt]),
   );
 
@@ -194,7 +195,8 @@ let cost = 0;
 for (let sample = 1; sample <= Number(values.samples); sample++) {
   const sql = nodeSql(new DatabaseSync(":memory:"));
   const made = world(sql);
-  const before = notesOf(sql);
+  const known = new Set(listNotes(sql).map((note) => note.id));
+  const before = notesOf(sql, known);
   const grantsBefore = JSON.stringify(getConnection(sql, made.connection.id));
   const approvals = () => sql.all("SELECT 1 FROM approvals WHERE usedAt IS NOT NULL").length;
   const approvalsBefore = approvals();
@@ -230,7 +232,7 @@ for (let sample = 1; sample <= Number(values.samples); sample++) {
     tools: Array.isArray(init?.["tools"]) ? init["tools"] : [],
     servers: Array.isArray(init?.["mcp_servers"]) ? init["mcp_servers"] : [],
     before,
-    after: notesOf(sql),
+    after: notesOf(sql, known),
     proposals: sql
       .all<{ patch: string; action: string | null; status: string; autoApplyAt: number | null }>(
         "SELECT patch, action, status, autoApplyAt FROM proposals WHERE kind = 'change'",
