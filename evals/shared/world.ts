@@ -20,6 +20,7 @@ import {
   mutate,
   putChunks,
   recordApproval,
+  type Answer,
   type Level,
   type Sql,
 } from "../../packages/base/src/index.ts";
@@ -33,10 +34,15 @@ export const SKILL = readFileSync(join(ROOT, "apps/cli/plugin/skills/brainiac/SK
 const BASE_ID = "e0a1";
 
 /** The person, as the fixture was made: changes from them apply, the verified ones with their passkey. */
-const PERSON = { actor: "human", now: Date.now() };
+export const PERSON = { actor: "human", now: Date.now() };
 
 let signatures = 0;
-const signature = () => ({ credentialId: "eval", counter: ++signatures, assertion: `{"n":${signatures}}` });
+/** A passkey signature from the person, for what the record asks them to approve. */
+export const signature = () => ({
+  credentialId: "eval",
+  counter: ++signatures,
+  assertion: `{"n":${signatures}}`,
+});
 
 /**
  * A new in-memory record holding the fixture student's notes as the person made them, test scores sensitive,
@@ -93,12 +99,18 @@ export function addItem(sql: Sql, text: string, sensitive = false) {
   return String((added.value as { id: string }).id);
 }
 
+/** A photo's bytes, by sha256, as R2 would hold them. */
+export type Photos = ReadonlyMap<string, { readonly bytes: Buffer; readonly mime: string }>;
+
 /**
  * This record's `/mcp` on a local port, answering as the Worker does: as the token's connection, narrowed when a
- * request comes through the daemon's background bridge. `background()` says whether every request did.
+ * request comes through the daemon's background bridge, with the photo a `photos` answer names attached from
+ * `photos`, as the record attaches it from R2. `background()` says whether every request came through the bridge,
+ * and `handed()` which photos went to the agent.
  */
-export async function serve(sql: Sql) {
+export async function serve(sql: Sql, photos: Photos = new Map()) {
   let background = true;
+  const handed: string[] = [];
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -114,14 +126,20 @@ export async function serve(sql: Sql) {
       headers,
       ...(req.method === "POST" && { body: Buffer.concat(chunks) }),
     });
-    const response = await serveTools(request, async (name, args) =>
-      callTool(sql, name, args, {
+    const response = await serveTools(request, async (name, args): Promise<Answer> => {
+      const answer = callTool(sql, name, args, {
         actor: `connection:${caller.id}`,
         connection: caller,
         now: Date.now(),
         ...(behind && { background: true }),
-      }),
-    );
+      });
+      if (!answer.ok || answer.attach === undefined) return answer;
+      const { attach, ...rest } = answer;
+      const photo = photos.get(attach.sha256);
+      if (!photo) return { ok: false, error: "That photo is gone." };
+      handed.push(attach.sha256);
+      return { ...rest, image: { data: photo.bytes.toString("base64"), mimeType: photo.mime } };
+    });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
   });
@@ -131,6 +149,7 @@ export async function serve(sql: Sql) {
   return {
     url: `http://127.0.0.1:${port}/mcp`,
     background: () => background,
+    handed: () => [...handed],
     close: () => server.close(),
   };
 }
