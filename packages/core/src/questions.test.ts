@@ -36,6 +36,7 @@ const notesOf = (record: Record_): QuestionNote[] =>
 const ask = (record: Record_, now = NOW) => findQuestions(notesOf(record), manifest, now);
 const ids = (record: Record_) => ask(record).map((q) => q.id);
 
+const PAPER = "facts/papers/swahili-ner-2026.md";
 const ROLE = "facts/roles/acme-intern-2025.md";
 const BSC = "facts/education/bsc-northvale.md";
 const TUM = "applications/tum-msc-informatics-2027/application.md";
@@ -122,6 +123,16 @@ describe("found questions", () => {
     });
     expect(second).toMatchObject({ field: "end", why: "Your Role has no end yet" });
     expect(second).not.toHaveProperty("deadline");
+  });
+
+  it("a field the connector already knows isn't asked: a paper's position from the linked ORCID iD", () => {
+    const record = fixture();
+    edit(record, PAPER, [{ op: "unset", path: ["position"] }]);
+    expect(ask(record).map((q) => q.text)).toEqual([
+      "Which author are you on Named Entity Recognition for Low-Resource Swahili News? 1 is the first.",
+    ]);
+    edit(record, PAPER, [{ op: "set", path: ["synced"], value: { position: 1 } }]);
+    expect(ask(record)).toEqual([]);
   });
 
   it("falls back to plain words when the type's text names a field that is empty too", () => {

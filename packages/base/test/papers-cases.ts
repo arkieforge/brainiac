@@ -11,6 +11,7 @@ import {
   getNote,
   installLookup,
   jobInput,
+  linkOrcid,
   LOOKUP_MS,
   markDispatched,
   migrate,
@@ -20,6 +21,7 @@ import {
   type Context,
   type Found,
   type Sql,
+  unlinkOrcid,
 } from "../src/index.ts";
 import type { Case, Fixture } from "./cases.ts";
 
@@ -35,6 +37,12 @@ const FOUND = {
   authors: ["Nadia Karim", "Amara Okafor"],
   citations: 3,
 } satisfies Found;
+
+// The fixture student's ORCID iD and her co-author's: outside the ranges ORCID issues, so nobody's. Crossref writes
+// them as links, with either scheme.
+const NADIA = "0000-0000-0000-0001";
+const AMARA = "0000-0000-0000-0002";
+const IDS = [`https://orcid.org/${NADIA}`, `http://orcid.org/${AMARA}`];
 
 // A new mapping is written on one line, in flow style, as every new value is (record-format.md).
 const BLOCK =
@@ -106,6 +114,58 @@ export const papersCases: Record<string, Case> = {
         citations: 5,
         checked: new Date(week).toISOString().replace(".000Z", "Z"),
       });
+    },
+
+  "the linked ORCID iD gives the paper its author position, by iD alone, and linking or unlinking looks it up again":
+    (sql, fixtures) => {
+      const paper = record(sql, fixtures);
+      const position = () => (synced(sql, paper.id) as { position?: number }).position;
+      // No iD linked: the registry's iDs are never kept, and no position is guessed.
+      equal(installLookup(sql, lookup(sql, paper.id, T0), { ...FOUND, orcids: IDS }, T0), "installed");
+      same(Object.keys(synced(sql, paper.id) as object), [
+        "doi",
+        "title",
+        "venue",
+        "published",
+        "authors",
+        "citations",
+        "checked",
+      ]);
+
+      // Linking the iD looks the paper up again at once, a week early, and the block says which author she is.
+      const linked = T0 + 60_000;
+      same(linkOrcid(sql, NADIA, [], linked), { proposed: 0 });
+      const job = lookup(sql, paper.id, linked);
+      equal(installLookup(sql, job, { ...FOUND, orcids: IDS }, linked + 500), "installed");
+      equal(position(), 1);
+      equal(lastActor(sql, paper.id), DOI_ACTOR);
+      // The same iD again changes nothing, so nothing is looked up before the week is out.
+      linkOrcid(sql, NADIA, [], linked + 1_000);
+      same(dois(sql, linked + 1_000), []);
+
+      // Unlinking looks it up again at once, without the iD: the position goes.
+      unlinkOrcid(sql, linked + 2_000);
+      equal(
+        installLookup(sql, lookup(sql, paper.id, linked + 2_000), { ...FOUND, orcids: IDS }, linked + 2_000),
+        "installed",
+      );
+      equal(position(), undefined);
+
+      // Linked again. A week on, her name is still first but the registry no longer names her iD: a name never
+      // stands in for it.
+      linkOrcid(sql, NADIA, [], linked + 3_000);
+      const install = (at: number, orcids: readonly (string | null)[]) =>
+        equal(installLookup(sql, lookup(sql, paper.id, at), { ...FOUND, orcids }, at), "installed");
+      install(linked + 3_000, IDS);
+      equal(position(), 1);
+      const week = (n: number) => linked + 3_000 + n * LOOKUP_MS;
+      install(week(1), [null, AMARA]);
+      equal(position(), undefined);
+      install(week(2), IDS);
+      equal(position(), 1);
+      // Two authors with her iD is a registry's mistake: no position rather than a guess.
+      install(week(3), [NADIA, NADIA]);
+      equal(position(), undefined);
     },
 
   "a DOI nobody knows says so, and changing the DOI looks the new one up at once": (sql, fixtures) => {

@@ -6,7 +6,7 @@ Projects come in from GitHub, profiles are checked for drift, and useful links a
 | ----- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | M2    | **GitHub**                                                              | Our GitHub App on the repos you pick; webhooks + a daily ETag sweep                                                       | Repos, stars, language, archived, last push                |
 | M2    | **DOIs**                                                                | Crossref and OpenAlex (free, no key), looked up again weekly                                                              | Title, venue, date, authors, citations                     |
-| M2    | **ORCID** (#112)                                                        | ORCID OAuth                                                                                                               | A verified iD, your works, your author position            |
+| M2    | **ORCID**                                                               | ORCID sign-in (OpenID Connect), once                                                                                      | A verified iD, your works, your author position            |
 | M2    | **LinkedIn**                                                            | Your data export zip                                                                                                      | Positions, education, skills, certifications               |
 | M3    | **Drift checks**                                                        | Through treg: `linkedin.user.profile`, `x.user.profile`, `google.serp.scholar` (your own public profiles, started by you) | "LinkedIn says 2025, record says 2026", with text to paste |
 | later | Kaggle, LeetCode, Hugging Face, npm, app stores, Credly, Devpost, blogs | Public APIs or treg                                                                                                       | Ranks, packages, apps, certificates, talks                 |
@@ -36,9 +36,22 @@ synced: {repo_id: R_kgDOJx..., repo: nadia-karim/library-seat-finder, url: "http
   proposal or a deleted project is never proposed again. Disconnecting on the account page stops the reading;
   your projects stay. Laptops get projects through sync; agents read and query them like any note; the
   extension has no part in it.
-- **Papers**: a Paper note with a `doi` gets a `synced:` block (title, venue, published, authors, citations,
-  checked), refreshed weekly; a DOI no registry knows says `missing: true`. Which author you are is your own
-  `position` field, asked until it is set, until ORCID (#112) can tell from your verified iD.
+- **Papers**: a Paper note (a built-in type, unless your manifest has its own) with a `doi` gets a `synced:` block
+  (title, venue, published, authors, citations, checked), refreshed weekly; a DOI no registry knows says
+  `missing: true`. Which author you are is your own `position` field, asked until it is set, unless your ORCID iD
+  answers it: then the block has `position` too, and the headline shows it until you set your own.
+- **ORCID** (`apps/worker/src/connectors/orcid.ts` signs in and reads works; `packages/base/src/orcid.ts`
+  decides): **Link your ORCID iD** on the account page signs you in to ORCID (the sandbox, off prod), asking only
+  who you are. The iD is the one in ORCID's own answer, never one you or an agent typed, and the record keeps it.
+  A paper's block gets `position` only when exactly one of the authors Crossref lists carries that iD
+  (`author[].ORCID`); a name never stands in for it, so without an iD match the position stays empty. Linking or
+  unlinking looks every paper up again at once. Each of your public works that is a paper (articles, conference
+  papers and posters, preprints, books and chapters, theses, reports) and that the record doesn't have (no paper
+  with its DOI, or for one without a DOI, its title) is proposed once as a Paper with its title and DOI, and the
+  DOI lookup fills the rest after you accept. A work you turn down, or whose paper you delete, is never proposed
+  again. **Link again** reads works added since; **Unlink** forgets the iD and keeps the papers. Laptops get papers
+  through sync; agents see the proposals and the positions like any note, but can't link an iD; the extension has
+  no part in it.
 - **Drift checks** (`packages/core/src/profiles.ts` compares; `packages/base/src/profiles.ts` decides when to read;
   `apps/worker/src/connectors/profiles.ts` reads through treg): a `Profile` note in `profiles/` names a site
   (`linkedin`, `x` or `scholar`), its `url`, and what it should say (`name`, `headline`, `about`, `location`). A new

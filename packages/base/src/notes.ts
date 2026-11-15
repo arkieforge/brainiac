@@ -1,4 +1,6 @@
-import { parseNote } from "@brainiac/core";
+import { BUILT_IN_TYPES, findClash, parseNote, type PlanItem } from "@brainiac/core";
+
+import { manifestOf } from "./hold.ts";
 
 import type { Sql } from "./sql.ts";
 
@@ -72,4 +74,35 @@ export function listNotes(sql: Sql, filter: { readonly type?: string } = {}): No
         `SELECT ${COLUMNS} FROM notes WHERE deletedAt IS NULL AND type = ? ORDER BY date DESC NULLS LAST, path`,
         filter.type,
       );
+}
+
+// Split, not trimmed with `-+$`, which runs in quadratic time on a name of many dashes.
+const slug = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .join("-")
+    .slice(0, 60)
+    .replace(/-$/, "");
+
+/** Paths taken by live notes and by notes open proposals would create, so two new notes never collide. */
+function takenPaths(sql: Sql): string[] {
+  const live = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL").map((r) => r.path);
+  const proposed = sql
+    .all<{ patch: string }>("SELECT patch FROM proposals WHERE status = 'open' AND kind = 'change'")
+    .flatMap((row) => (JSON.parse(row.patch) as PlanItem[]).map((item) => item.path));
+  return [...live, ...proposed];
+}
+
+/**
+ * Where a connector's new note of `type` goes: its type's folder (the manifest's, or the built-in one), named
+ * after `name`, with the end of its id when that is taken.
+ */
+export function freePath(sql: Sql, type: string, name: string, id: string): string {
+  const folder = manifestOf(sql)?.types[type]?.folder ?? BUILT_IN_TYPES[type]?.folder;
+  const base = [folder, slug(name) || id.toLowerCase()].filter(Boolean).join("/");
+  return findClash(takenPaths(sql), `${base}.md`) === undefined
+    ? `${base}.md`
+    : `${base}-${id.slice(-6).toLowerCase()}.md`;
 }

@@ -199,6 +199,9 @@ export default Alchemy.Stack(
           ...(yield* secretIf("GITHUB_APP_CLIENT_SECRET")),
           ...(yield* secretIf("GITHUB_APP_PRIVATE_KEY")),
           ...(yield* secretIf("GITHUB_APP_WEBHOOK_SECRET")),
+          // The ORCID connector (apps/worker/src/connectors/orcid.ts): a sandbox client off prod; off until both are set.
+          ...(yield* secretIf("ORCID_CLIENT_ID")),
+          ...(yield* secretIf("ORCID_CLIENT_SECRET")),
           // Drift checks through treg (apps/worker/src/connectors/profiles.ts); off until it is set.
           ...(yield* secretIf("TREG_TOKEN")),
           ...email,

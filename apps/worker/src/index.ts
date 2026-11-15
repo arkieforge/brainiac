@@ -8,7 +8,14 @@ import { Client, Pool } from "pg";
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
-import { accountPage, landing, signInPage, type Activity, type GithubSection } from "./auth/pages.ts";
+import {
+  accountPage,
+  landing,
+  signInPage,
+  type Activity,
+  type GithubSection,
+  type OrcidSection,
+} from "./auth/pages.ts";
 import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
@@ -27,6 +34,7 @@ import {
   webhook,
   type Deps,
 } from "./connectors/github.ts";
+import { callback as orcidCallback, linkUrl as orcidLinkUrl, orcidApp } from "./connectors/orcid.ts";
 import { serveMcp, type Records } from "./mcp/handler.ts";
 import { baseOf } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
@@ -207,6 +215,7 @@ async function account(
   auth: ReturnType<typeof createAuth>,
   record: (userId: string) => ReturnType<typeof recordOf>,
   github?: (userId: string) => Promise<GithubSection>,
+  orcid?: (userId: string) => Promise<OrcidSection>,
 ): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
   const session = await auth.api.getSession({
@@ -214,11 +223,12 @@ async function account(
     query: { disableCookieCache: true },
   });
   if (!session) return Response.redirect(new URL("/sign-in", request.url).toString(), 303);
-  const [passkeys, apps, connections, githubSection] = await Promise.all([
+  const [passkeys, apps, connections, githubSection, orcidSection] = await Promise.all([
     auth.api.listPasskeys({ headers: request.headers }),
     auth.api.listConnectedApps({ headers: request.headers }),
     record(session.user.id).then(async (base): Promise<Activity[]> => (base ? await base.activity() : [])),
     github?.(session.user.id),
+    orcid?.(session.user.id),
   ]);
   return accountPage(
     session.user.email,
@@ -227,6 +237,7 @@ async function account(
     apps,
     connections,
     githubSection,
+    orcidSection,
   );
 }
 
@@ -291,6 +302,43 @@ async function routeGithub(request: Request, env: Env, ctx: ExecutionContext, ur
   });
 }
 
+/**
+ * The ORCID connector's routes (connectors/orcid.ts), for the signed-in person: the link to ORCID's sign-in, the
+ * page ORCID returns them to, and unlinking. Not found on a stage without an ORCID client.
+ */
+async function routeOrcid(request: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  const app = orcidApp(env);
+  if (!app) return new Response("Not found", { status: 404 });
+  return withAuth(request, env, ctx, async (auth, pool) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session) {
+      const signIn = new URL("/sign-in", url);
+      signIn.searchParams.set("next", url.pathname + url.search);
+      return Response.redirect(signIn.toString(), 303);
+    }
+    const record = await recordOf(env, pool, session.user.id);
+    if (!record) return new Response("Not found", { status: 404 });
+    const secret = env.BETTER_AUTH_SECRET;
+    switch (url.pathname) {
+      case "/connectors/orcid/link":
+        return Response.redirect(await orcidLinkUrl(app, url, secret, session.user.id, Date.now()), 302);
+      case "/connectors/orcid/callback":
+        return orcidCallback(url, { userId: session.user.id, record }, secret, {
+          app,
+          fetch: (input, init) => fetch(input, init),
+          now: Date.now,
+        });
+      case "/connectors/orcid/unlink":
+        // JSON only, so another site's form can't post here with the person's cookie.
+        if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")
+          return new Response("Expected JSON", { status: 415 });
+        await record.unlinkOrcid();
+        return new Response(null, { status: 204 });
+    }
+    return new Response("Not found", { status: 404 });
+  });
+}
+
 // OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may
 // ask under either RFC 8414's path insertion or OIDC's path appending.
 const AUTH_SERVER_METADATA = new Set([
@@ -345,8 +393,10 @@ export default {
       );
     if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
     if (pathname.startsWith("/connectors/github/")) return routeGithub(request, env, ctx, url);
+    if (pathname.startsWith("/connectors/orcid/")) return routeOrcid(request, env, ctx, url);
     if (pathname === "/account") {
       const app = githubApp(env);
+      const orcid = orcidApp(env);
       return withAuth(request, env, ctx, (auth, pool) =>
         account(
           request,
@@ -359,6 +409,15 @@ export default {
                 slug: app.slug,
                 installations: baseId === undefined ? [] : await linked(pool, baseId),
                 outcome: url.searchParams.get("github"),
+              };
+            }),
+          orcid &&
+            (async (userId) => {
+              const iD = (await (await recordOf(env, pool, userId))?.orcid()) ?? null;
+              return {
+                linked: iD,
+                profile: `${orcid.issuer}/${iD ?? ""}`,
+                outcome: url.searchParams.get("orcid"),
               };
             }),
         ),

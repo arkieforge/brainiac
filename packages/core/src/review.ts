@@ -194,6 +194,18 @@ const specOf = (manifest: Manifest | null, data: Readonly<Record<string, unknown
  * `{field|month}` its month, `{field|1}` a number to one decimal. Parts are separated by ` · `; a part with a
  * missing value is left out, so a headline never shows a blank or a guess. No template: the title.
  */
+const pathIn = (data: Readonly<Record<string, unknown>>, field: string): unknown =>
+  field.split(".").reduce<unknown>((at, key) => (isRecord(at) ? at[key] : undefined), data);
+
+/**
+ * A field's value; for one the person left empty, what a connector found for it in the note's `synced:` block (a
+ * paper's author position, matched by ORCID iD). The person's own value always wins.
+ */
+export function fieldOf(data: Readonly<Record<string, unknown>>, field: string): unknown {
+  const own = pathIn(data, field);
+  return own === undefined || own === null || own === "" ? pathIn(data, `synced.${field}`) : own;
+}
+
 export function headline(note: ReviewNote, manifest: Manifest | null): string {
   const title = str(note.data["title"]) ?? note.path;
   const template = specOf(manifest, note.data)?.headline;
@@ -202,10 +214,7 @@ export function headline(note: ReviewNote, manifest: Manifest | null): string {
     let missing = false;
     const filled = part.replaceAll(/\{([\w.]+)(?:\|(\w+))?\}/g, (_, field: string, format?: string) => {
       // `{synced.venue}` reaches into a mapping, such as the block a connector fills.
-      const value =
-        field === "title"
-          ? title
-          : field.split(".").reduce<unknown>((at, key) => (isRecord(at) ? at[key] : undefined), note.data);
+      const value = field === "title" ? title : fieldOf(note.data, field);
       if (value === undefined || value === null || value === "") {
         missing = true;
         return "";

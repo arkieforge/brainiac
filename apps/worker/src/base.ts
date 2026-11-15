@@ -11,6 +11,10 @@ import {
   installFile,
   installLookup,
   installLink,
+  linkedOrcid,
+  linkOrcid,
+  unlinkOrcid,
+  type Work,
   installProfile,
   linkWork,
   profileWork,
@@ -335,6 +339,28 @@ export class Base extends DurableObject<Env> {
     const before = currentSeq(this.sql);
     repoDeleted(this.sql, repoId, Date.now());
     this.changed(before);
+  }
+
+  // The ORCID connector (connectors/orcid.ts proves the iD; packages/base/src/orcid.ts decides). Only the Worker's
+  // ORCID routes call these, for the signed-in owner, with an iD from ORCID's own answer.
+
+  /** Links the iD ORCID proved: its works become proposals, and every paper is looked up again for its position. */
+  linkOrcid(orcid: string, works: readonly Work[]): { readonly proposed: number } {
+    const before = currentSeq(this.sql);
+    const result = linkOrcid(this.sql, orcid, works, Date.now());
+    this.changed(before);
+    return result;
+  }
+
+  /** Forgets the linked iD; papers are looked up again without it. */
+  unlinkOrcid(): void {
+    unlinkOrcid(this.sql, Date.now());
+    this.wake();
+  }
+
+  /** The linked ORCID iD, for the account page. */
+  orcid(): string | null {
+    return linkedOrcid(this.sql) ?? null;
   }
 
   /**
