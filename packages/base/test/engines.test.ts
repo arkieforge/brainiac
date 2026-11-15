@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -15,13 +16,32 @@ const names = Object.keys(cases);
 // The Bun pinned in package.json, not whatever is on PATH, so CI and laptops run the same engine.
 const BUN = createRequire(import.meta.url).resolve("bun/bin/bun.exe");
 
-let local: { results: Record<string, CaseResult>; parity: Answers };
-beforeAll(() => {
-  local = JSON.parse(execFileSync(BUN, [join(import.meta.dirname, "bun.ts")], { encoding: "utf8" }));
+// One Bun process runs every case, and each test waits only for its own case's line, not the whole run:
+// a single hook waiting for all of them went past its timeout on loaded CI runners (#127).
+const settled = <T>() => {
+  const deferred = Promise.withResolvers<T>();
+  // A test filtered out with -t never awaits its case; if Bun dies, that rejection isn't an error.
+  deferred.promise.catch(() => {});
+  return deferred;
+};
+const results = new Map(names.map((name) => [name, settled<CaseResult>()]));
+const parity = settled<Answers>();
+
+const bun = spawn(BUN, [join(import.meta.dirname, "bun.ts")], { stdio: ["ignore", "pipe", "inherit"] });
+createInterface({ input: bun.stdout }).on("line", (text) => {
+  const line: { name: string; result: CaseResult } | { parity: Answers } = JSON.parse(text);
+  if ("parity" in line) parity.resolve(line.parity);
+  else results.get(line.name)?.resolve(line.result);
 });
+bun.on("close", (code, signal) => {
+  // Settled cases ignore this; the rest fail now instead of at their timeout.
+  const error = new Error(`bun.ts exited (${signal ?? code}) before this case printed its result`);
+  for (const deferred of [...results.values(), parity]) deferred.reject(error);
+});
+afterAll(() => bun.kill());
 
 describe("bun:sqlite", () => {
-  it.each(names)("%s", (name) => expect(local.results[name]).toEqual({ ok: true }));
+  it.each(names)("%s", async (name) => expect(await results.get(name)?.promise).toEqual({ ok: true }));
 });
 
 describe("Durable Object SQLite (workerd)", () => {
@@ -49,10 +69,11 @@ describe("Durable Object SQLite (workerd)", () => {
 
   it("parity: the fixture record answers every question exactly as the local copy does", async () => {
     const cloud = await run("parity");
-    expect(cloud).toEqual(local.parity);
+    const local = await parity.promise;
+    expect(cloud).toEqual(local);
     // Not vacuous: the person finds every question, keyword-only and with vectors, some hits have graph
     // neighbors, and the agent sees fewer notes and never the canary.
-    const { person, agent, hybrid } = local.parity;
+    const { person, agent, hybrid } = local;
     for (const q of QUESTIONS) {
       expect(person.search[q]?.mode, q).toBe("keyword");
       expect(person.search[q]?.hits, q).not.toEqual([]);
