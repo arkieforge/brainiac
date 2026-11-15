@@ -44,6 +44,11 @@ export interface Reading {
 }
 
 export default class Ocr extends WorkerEntrypoint<Env> {
+  /** Nothing over HTTP: Cloudflare won't take a Worker without a handler, and RPC methods don't count as one. */
+  override fetch(): Response {
+    return new Response("Not found", { status: 404 });
+  }
+
   /** What OCR reads in an image (JPEG, PNG, HEIC, WebP or AVIF), or `undefined` when it isn't one Images decodes. */
   read(image: Uint8Array): Promise<Reading | undefined> {
     const reading = turn.then(() => this.#read(image));
