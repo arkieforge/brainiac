@@ -74,12 +74,39 @@ export class TestBase extends Base {
       .map((row) => row.id);
   }
 
+  /** How the next questions get embedded: as the stand-in does, held until `releaseEmbedding`, or failing. */
+  #embedding: "ok" | "held" | "fails" = "ok";
+  readonly #released: (() => void)[] = [];
+
+  protected override models(): Pick<Models, "run"> {
+    return {
+      run: async (model, inputs) => {
+        if (this.#embedding === "fails") throw new Error("Workers AI is down");
+        if (this.#embedding === "held") await new Promise<void>((resolve) => this.#released.push(resolve));
+        return models.run(model, inputs);
+      },
+    };
+  }
+
+  holdEmbedding(): void {
+    this.#embedding = "held";
+  }
+
+  releaseEmbedding(): void {
+    this.#embedding = "ok";
+    for (const release of this.#released.splice(0)) release();
+  }
+
+  failEmbedding(): void {
+    this.#embedding = "fails";
+  }
+
   jobs(): Job[] {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
   }
 
   find(principal: Principal, text: string): string[] {
-    return search(this.sql, principal, text).map((hit) => ("noteId" in hit ? hit.noteId : hit.fileSha));
+    return search(this.sql, principal, text).hits.map((hit) => ("noteId" in hit ? hit.noteId : hit.fileSha));
   }
 
   rev(noteId: string): number | null {

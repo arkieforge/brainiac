@@ -50,10 +50,23 @@ describe("Durable Object SQLite (workerd)", () => {
   it("parity: the fixture record answers every question exactly as the local copy does", async () => {
     const cloud = await run("parity");
     expect(cloud).toEqual(local.parity);
-    // Not vacuous: the person finds every question, and the agent sees fewer notes and no canary.
-    const { person, agent } = local.parity;
-    for (const q of QUESTIONS) expect(person.search[q], q).not.toEqual([]);
+    // Not vacuous: the person finds every question, keyword-only and with vectors, some hits have graph
+    // neighbors, and the agent sees fewer notes and never the canary.
+    const { person, agent, hybrid } = local.parity;
+    for (const q of QUESTIONS) {
+      expect(person.search[q]?.mode, q).toBe("keyword");
+      expect(person.search[q]?.hits, q).not.toEqual([]);
+      expect(hybrid.person[q]?.mode, q).toBe("hybrid");
+    }
+    expect(QUESTIONS.some((q) => person.search[q]?.neighbors.length)).toBe(true);
     expect(agent.notes.length).toBeLessThan(person.notes.length);
-    expect(agent.search["CANARY-BODY-7Q3X"]).toEqual([]);
+    expect(agent.search["CANARY-BODY-7Q3X"]?.hits).toEqual([]);
+    const answered = [
+      agent.notes,
+      agent.feed,
+      ...Object.values(agent.search),
+      ...Object.values(hybrid.agent),
+    ];
+    expect(JSON.stringify(answered)).not.toMatch(/CANARY/);
   });
 });

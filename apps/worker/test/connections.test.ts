@@ -3,7 +3,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { grantHash, type Connection, type GrantPlan, type MutationResult } from "@brainiac/base";
+import {
+  grantHash,
+  type Connection,
+  type Forbidden,
+  type GrantPlan,
+  type MutationResult,
+  type Results,
+} from "@brainiac/base";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -20,6 +27,12 @@ const IELTS = "facts/tests/ielts-2025-03.md";
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const ROLE = "facts/roles/acme-intern-2025.md";
 const human = { actor: "human" };
+
+/** What a search found: note ids, and `<sha256>#p<page>` for a file's page. */
+const found = (results: Results | Forbidden) =>
+  "hits" in results
+    ? results.hits.map((hit) => ("noteId" in hit ? hit.noteId : `${hit.fileSha}#p${hit.page}`))
+    : results;
 
 let mf: Miniflare;
 beforeAll(async () => {
@@ -79,8 +92,8 @@ describe("connections", () => {
     const installed = base.nextInstall();
     await base.dispatch();
     await installed;
-    // Both are in the index, each in its own family.
-    expect(await base.search("held the score back", human)).toEqual([ielts]);
+    // Both are in the index, each in its own family; the vectors rank the one without the words after it.
+    expect(found(await base.search("held the score back", human))).toEqual([ielts, tum]);
 
     const connection = await base.addConnection({ kind: "cli" });
     const caller = { actor: "human", connectionId: connection.id };
@@ -90,7 +103,7 @@ describe("connections", () => {
       return notes.map((note) => note.id);
     };
     expect(await seen()).toEqual([tum]);
-    expect(await base.search("held the score back", caller)).toEqual([]);
+    expect(found(await base.search("held the score back", caller))).toEqual([tum]);
     expect(await base.mutate({ op: "delete", noteId: ielts, baseRev: 1 }, caller)).toEqual({
       status: "invalid",
       issues: [{ field: "noteId", message: `No note with id ${ielts}.` }],
@@ -107,7 +120,36 @@ describe("connections", () => {
       await base.grant(plan, authenticator.authenticate({ challenge: grantHash(plan) }), approver),
     ).toHaveProperty("connection.sensitive", true);
     expect((await seen()).toSorted()).toEqual([ielts, tum].toSorted());
-    expect(await base.search("held the score back", caller)).toEqual([ielts]);
+    expect(found(await base.search("held the score back", caller))).toEqual([ielts, tum]);
+  });
+
+  it("search embeds the question in the cloud, answers with the grants left when the model replies, and says when it is keyword-only", async () => {
+    const base = await record("search-modes");
+    const ielts = await created(base, IELTS, "sensitive");
+    const tum = await created(base, TUM, "normal");
+    const installed = base.nextInstall();
+    await base.dispatch();
+    await installed;
+    const connection = await base.addConnection({ kind: "cli" });
+    const caller = { actor: "human", connectionId: connection.id };
+    const grants = { level: connection.level, holdDays: connection.holdDays };
+    await base.setGrants(connection.id, { ...grants, sensitive: true });
+    const hybrid = await base.search("held the score back", caller);
+    expect(hybrid).toMatchObject({ mode: "hybrid", hits: [{ noteId: ielts }, { noteId: tum }] });
+    expect(JSON.stringify(hybrid)).toContain("Writing held the score back.");
+
+    // The scope is taken away while the question is with the model: the answer is the narrower one.
+    await base.holdEmbedding();
+    const asked = base.search("held the score back", caller);
+    await base.setGrants(connection.id, { ...grants, sensitive: false });
+    await base.releaseEmbedding();
+    expect(found(await asked)).toEqual([tum]);
+
+    // Workers AI fails: keyword-only, and the answer says so.
+    await base.failEmbedding();
+    const keyword = await base.search("held the score back", human);
+    expect(keyword).toMatchObject({ mode: "keyword" });
+    expect(found(keyword)).toEqual([ielts]);
   });
 
   it("a connection's actor and grants come from the record, and a disconnected one gets nothing", async () => {

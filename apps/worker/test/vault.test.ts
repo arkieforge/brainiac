@@ -3,7 +3,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { grantHash, unseal, type Classified, type GrantPlan, type Uploaded } from "@brainiac/base";
+import {
+  grantHash,
+  unseal,
+  type Classified,
+  type Forbidden,
+  type GrantPlan,
+  type Results,
+  type Uploaded,
+} from "@brainiac/base";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -15,6 +23,12 @@ import type { TestBase } from "./harness.ts";
 const ORIGIN = "https://brainiac.test";
 const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
 const human = { actor: "human" };
+
+/** What a search found: note ids, and `<sha256>#p<page>` for a file's page. */
+const found = (results: Results | Forbidden) =>
+  "hits" in results
+    ? results.hits.map((hit) => ("noteId" in hit ? hit.noteId : `${hit.fileSha}#p${hit.page}`))
+    : results;
 // The fixture student's passport, issued by ICAO's specimen state Utopia (UTO): nobody real.
 const PASSPORT = new TextEncoder().encode(
   "P<UTOKARIM<<NADIA<<<<<<<<<<<<<<<<<<<<<<<<<<<\nXK12345679UTO0103141F3105043<<<<<<<<<<<<<<04\n",
@@ -110,17 +124,17 @@ describe("vault", () => {
     const pdf = new TextEncoder().encode("%PDF-Northvale University transcript\fThesis on transit apps\n");
     const { sha256 } = fileOf(await base.upload(pdf, { mime: "application/pdf", kind: "transcript" }, human));
     expect(await base.file(sha256, human)).toMatchObject({ class: "unclassified", checks: "unreadable" });
-    expect(await base.search("transit", human)).toEqual([]);
+    expect(found(await base.search("transit", human))).toEqual([]);
 
     const installed = base.nextInstall();
     await base.dispatch();
     expect(await installed).toBe("installed");
     expect(await base.file(sha256, human)).toMatchObject({ class: "sensitive", checks: "clean" });
-    expect(await base.search("transit", human)).toEqual([`${sha256}#p2`]);
+    expect(found(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
     expect(await base.vectorModels()).toEqual(["@cf/baai/bge-m3", "@cf/baai/bge-m3"]);
     // A cleared file is sensitive: a connection without the scope finds nothing.
     const agent = await base.addConnection({ kind: "cli" });
-    expect(await base.search("transit", { actor: "agent", connectionId: agent.id })).toEqual([]);
+    expect(found(await base.search("transit", { actor: "agent", connectionId: agent.id }))).toEqual([]);
   });
 
   it("a PDF the person names after it was read is indexed by a job the confirmation dispatches", async () => {
@@ -138,7 +152,7 @@ describe("vault", () => {
     const indexed = base.nextInstall();
     await base.dispatch();
     expect(await indexed).toBe("installed");
-    expect(await base.search("transit", human)).toEqual([`${sha256}#p2`]);
+    expect(found(await base.search("transit", human))).toEqual([`${sha256}#p2`, `${sha256}#p1`]);
   });
 
   it("stores nothing for an upload it refuses", async () => {

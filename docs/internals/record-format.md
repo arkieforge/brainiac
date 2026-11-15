@@ -111,7 +111,7 @@ A requirement is "met" only when its check passes on the current notes (or you t
 
 ### The knowledge graph
 
-Notes are nodes. Edges come from relation fields declared in the manifest (`proves`, `for`, `supersedes`, `referee`) plus body links, and a `meets` edge exists only while a requirement check passes. Edges are stored with inverses and rebuilt in the same transaction as the note.
+Notes are nodes. Edges come from relations in the front-matter (`proves`, `for`, `supersedes`, `referee`, a source's `resource`: any value that is a relative `.md` path or a note id, whatever its field's kind) plus body links (`[text](path.md)`), and a `meets` edge exists only while a requirement check passes. Edges are read from the note when a query follows them, so they are always the current revision's, and a relative path resolves the way approvals resolve `supersedes`.
 
 ![Knowledge graph example: the TUM application in the center links to the transcript document, the IELTS score, a letter (status) written by Dr Okafor, the SOP draft, and a missing APS certificate. The transcript proves the BSc education fact; the SOP cites a project and a paper.](../assets/knowledge-graph.svg)
 

@@ -170,9 +170,9 @@ export const mutateCases: Record<string, Case> = {
     );
     // A delete drops the note from search at once, rather than through a job.
     putChunks(sql, noteId, 2, chunkNote(stored(sql, noteId)));
-    equal(search(sql, PERSON, "computer").length, 1);
+    equal(search(sql, PERSON, "computer").hits.length, 1);
     applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by()));
-    same(search(sql, PERSON, "computer"), []);
+    same(hitIds(search(sql, PERSON, "computer")), []);
     same(dueJobs(sql, T0), []);
     same(jobs(sql), []);
   },
@@ -245,7 +245,7 @@ export const mutateCases: Record<string, Case> = {
       finishJob(sql, old.id, () => putChunks(sql, noteId, 1, chunkNote(input.note))),
       "dropped",
     );
-    same(search(sql, PERSON, "computer"), []);
+    same(hitIds(search(sql, PERSON, "computer")), []);
     // A redelivery of the old job finds nothing to work on.
     equal(jobInput(sql, old.id), undefined);
 

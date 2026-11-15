@@ -41,7 +41,7 @@ files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vaul
 chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }   // a cleared file's pages: noteId file:<sha256>, until files get sidecar notes (#100)
 chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
 vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory; meta.index names the chunking and model the index was built with
-edges        { fromId, toId, rel }
+edges        { fromId, toId, rel }                                 // empty: search reads edges from notes.fm when it follows them (retrieval.md)
 schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
 file_tokens  { hash PK, sha256, origin, expiresAt }                  // single-use, one minute: opens one file's original on usercontent.<domain> for the site origin that asked; brf_<base id>_<secret>, stored as a hash
 tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens, brn_<base id>_<secret>, stored as a hash of the whole token; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
