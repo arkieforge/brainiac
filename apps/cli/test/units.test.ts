@@ -147,6 +147,9 @@ describe("brainiac hook", () => {
       ["Bash", { command: "cat \\\n../brainiac/identity/passport.md" }],
       ["Bash", { command: 'echo "$(cat ../brainiac/identity/passport.md)"' }],
       ["Bash", { command: 'echo "seen: `cat ../brainiac/me.md`"' }],
+      ["Bash", { command: 'echo "$(diff <(sort README.md) ../brainiac/me.md)"' }],
+      ["Bash", { command: "bash -c 'cat brainiac/identity/passport.md'" }, home],
+      ["Bash", { command: 'eval "cat ../brainiac/me.md"' }],
     ];
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);

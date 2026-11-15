@@ -48,8 +48,9 @@ function shellWords(command: string): string[] {
   const words: string[] = [];
   let word = "";
   let quote = "";
-  // Inside double quotes, `$(` and a backtick start a command read unquoted again; each entry is its closer.
-  const inner: string[] = [];
+  // The closers still due, innermost last. Inside double quotes, `$(` and a backtick start a command read unquoted
+  // again; their closer (marked with a leading `"`) resumes the double quotes. Unquoted `(` nests inside them.
+  const open: string[] = [];
   const end = () => {
     if (word) words.push(word);
     word = "";
@@ -58,13 +59,15 @@ function shellWords(command: string): string[] {
     const char = command.charAt(i);
     if (quote === '"' && (char === "`" || (char === "$" && command.charAt(i + 1) === "("))) {
       end();
-      inner.push(char === "`" ? "`" : ")");
+      open.push(char === "`" ? '"`' : '")');
       quote = "";
       if (char === "$") i++;
-    } else if (!quote && char === inner.at(-1)) {
+    } else if (!quote && open.length > 0 && char === open.at(-1)?.at(-1)) {
       end();
-      inner.pop();
-      quote = '"';
+      if (open.pop()?.startsWith('"')) quote = '"';
+    } else if (!quote && char === "(") {
+      end();
+      open.push(")");
     } else if (quote && char === quote) quote = "";
     else if (quote === "'") word += char;
     else if (char === "\\") word += command.charAt(++i);
@@ -116,7 +119,12 @@ export function refusal(call: ToolCall, configured: string, home = homedir()): s
       .split(vault)
       .slice(1)
       .some((after) => !/^[\w.-]/.test(after));
-    if (named || [".", ...shellWords(command)].some((word) => within(at(word), vault)))
+    const words = shellWords(command);
+    // `bash -c '<command>'` and `eval '<command>'` run their argument as a command of its own.
+    const nested = words.flatMap((word, i) =>
+      ["-c", "eval"].includes(words[i - 1] ?? "") ? shellWords(word) : [],
+    );
+    if (named || [".", ...words, ...nested].some((word) => within(at(word), vault)))
       return `This command touches ${vault}, the person's Brainiac record. Don't read or change it from the shell. ${tools}.`;
   }
 
