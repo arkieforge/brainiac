@@ -56,7 +56,7 @@ function record(sql: Sql, fixtures: readonly Fixture[]) {
   const manifest = fixtures.find((f) => f.path === "okf-base.yaml");
   ok(manifest);
   sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", manifest.raw);
-  return dataKey(sql, "the stage's vault key");
+  return dataKey(sql, { current: "the stage's vault key", previous: undefined });
 }
 
 /** A PDF as the DO records it: sealed, no text until a `file` job extracts it. */

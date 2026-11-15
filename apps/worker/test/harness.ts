@@ -172,7 +172,18 @@ export class TestBase extends Base {
 
   /** The record's data key, for a test to open what the vault sealed. */
   async key(): Promise<Uint8Array> {
-    return dataKey(this.sql, await this.env.VAULT_KEY.get());
+    return dataKey(this.sql, await this.vaultKeys());
+  }
+
+  /** The wrapped data key and the id of the vault key that wraps it, as `meta` keeps them. */
+  wrappedDataKey(): Record<string, string> {
+    return Object.fromEntries(
+      this.sql
+        .all<{ key: string; value: string }>(
+          "SELECT key, value FROM meta WHERE key IN ('dataKey', 'vaultKeyId')",
+        )
+        .map((row) => [row.key, row.value]),
+    );
   }
 
   /** A secret's value. Outside tests only the fill path (secrets.ts) unseals one, for the person. */

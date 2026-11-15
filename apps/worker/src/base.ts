@@ -24,10 +24,12 @@ import {
   readText,
   recordUpload,
   refuseUpload,
+  rewrapDataKey,
   sealFile,
   takeFileToken,
   unseal,
   viewFile,
+  type VaultKeys,
   type Classified,
   dismissFill,
   forgetSecret,
@@ -189,6 +191,12 @@ export class Base extends DurableObject<Env> {
     // when chunking or the embedding model changed.
     migrate(this.sql);
     if (reindex(this.sql)) this.wake();
+    // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
+    // vault key the first time it wakes, off the request it woke for.
+    if (env.VAULT_KEY_PREVIOUS)
+      this.rewrapDataKey().catch((error: unknown) =>
+        console.error("vault key rewrap failed", { error: String(error) }),
+      );
   }
 
   schemaVersion(): number {
@@ -679,9 +687,26 @@ export class Base extends DurableObject<Env> {
     return "status" in ctx ? ctx : dismissFill(this.sql, fillId, ctx);
   }
 
+  /** The stage's vault keys: reading them is I/O, so it happens before any transaction that uses them. */
+  protected async vaultKeys(): Promise<VaultKeys> {
+    const [current, previous] = await Promise.all([
+      this.env.VAULT_KEY.get(),
+      this.env.VAULT_KEY_PREVIOUS?.get(),
+    ]);
+    return { current, previous };
+  }
+
+  /**
+   * Moves the record's data key onto the current vault key if the previous one wraps it; makes none if it has none.
+   * The id of the vault key that wraps it now, for the registry (the rotation sweep, vault-rotation.ts).
+   */
+  async rewrapDataKey(): Promise<string> {
+    return rewrapDataKey(this.sql, await this.vaultKeys());
+  }
+
   private dataKey(): Promise<Uint8Array> {
     if (!this.#dataKey) {
-      const loading = this.env.VAULT_KEY.get().then((vaultKey) => dataKey(this.sql, vaultKey));
+      const loading = this.vaultKeys().then((keys) => dataKey(this.sql, keys));
       // A failed read of the vault key is tried again by the next call, not remembered.
       loading.catch(() => (this.#dataKey = undefined));
       this.#dataKey = loading;

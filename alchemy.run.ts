@@ -66,17 +66,6 @@ export default Alchemy.Stack(
         caching: { disabled: true },
       });
 
-      // Wraps every record's data key (the vault, packages/base/src/vault.ts). Made once per stage and kept in
-      // Alchemy state; replacing it (a new value or a rename) leaves every record's sealed files and secrets
-      // unreadable, which is why prod's is protected below. The account has one Secrets Store, shared with other
-      // apps' secrets, so ours carry the stage in their name.
-      const secrets = yield* Cloudflare.SecretsStore.Store("secrets");
-      const vaultKey = yield* Cloudflare.SecretsStore.Secret("vault-key", {
-        store: secrets,
-        name: `brainiac_vault_key_${stage.replaceAll(/\W/g, "_")}`,
-        value: yield* Alchemy.makeRandom("vault-key-value"),
-      });
-
       // Signs sessions and encrypts the JWT keys. Made once per stage and kept in Alchemy state; replacing
       // it ends every session.
       const authSecret = yield* Alchemy.makeRandom("auth-secret");
@@ -88,6 +77,41 @@ export default Alchemy.Stack(
         const value = yield* optional(key);
         return value ? { [key]: Redacted.make(value) } : {};
       });
+      // Wraps every record's data key (the vault, packages/base/src/vault.ts). Each generation is made once per
+      // stage and kept in Alchemy state; replacing one (a new value or a rename) leaves every record it wraps
+      // unreadable, which is why prod's are protected below. Rotating moves to a new generation, with the one
+      // before bound beside it until every record has rewrapped (infra/README.md#rotating-the-vault-key).
+      // Generation 1 keeps the names it was made with. The account has one Secrets Store, shared with other
+      // apps' secrets, so ours carry the stage in their name.
+      const secrets = yield* Cloudflare.SecretsStore.Store("secrets");
+      const vaultKey = Effect.fn(function* (generation: number) {
+        const id = generation === 1 ? "" : `-${generation}`;
+        return yield* Cloudflare.SecretsStore.Secret(`vault-key${id}`, {
+          store: secrets,
+          name: `brainiac_vault_key_${stage.replaceAll(/\W/g, "_")}${generation === 1 ? "" : `__g${generation}`}`,
+          value: yield* Alchemy.makeRandom(`vault-key-value${id}`),
+        });
+      });
+      const generation = Number((yield* optional("VAULT_KEY_GENERATION")) ?? 1);
+      const previousGeneration = yield* optional("VAULT_KEY_PREVIOUS");
+      if (
+        !Number.isInteger(generation) ||
+        generation < 1 ||
+        (previousGeneration !== undefined && Number(previousGeneration) !== generation - 1)
+      )
+        return yield* Effect.die(
+          new Error(
+            `VAULT_KEY_GENERATION=${generation} with VAULT_KEY_PREVIOUS=${previousGeneration ?? "(unset)"}: ` +
+              "the generation is a whole number from 1, and the previous one, while set, is the one before it.",
+          ),
+        );
+      // Prod retains the previous key when its declaration goes, so ending a rotation passes protect() and the
+      // old value stays in the Secrets Store until someone deletes it by hand; other stages delete it.
+      const previousKey =
+        previousGeneration === undefined
+          ? undefined
+          : yield* vaultKey(generation - 1).pipe(Alchemy.RemovalPolicy.retain(prod));
+
       // Without its own keys a non-prod stage uses Turnstile's published always-pass test keys; prod has no
       // fallback, so sign-up there refuses until the real keys are set.
       const turnstileTest = {
@@ -141,14 +165,17 @@ export default Alchemy.Stack(
         compatibility: { flags: ["nodejs_compat", "global_fetch_strictly_public"] },
         // The weekly questions email (apps/worker/src/digest.ts, DIGEST_CRON) and the GitHub connector's daily
         // sweep (apps/worker/src/connectors/github.ts, SWEEP_CRON).
-        crons: ["0 8 * * 1", "0 3 * * *"],
+        // While a vault key rotation runs, the sweep that wakes records which haven't rewrapped
+        // (apps/worker/src/vault-rotation.ts, VAULT_SWEEP_CRON).
+        crons: ["0 8 * * 1", "0 3 * * *", ...(previousKey ? ["*/10 * * * *"] : [])],
         env: {
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),
           BLOBS: blobs,
           // Document-to-text and embeddings for search, in the jobs consumer.
           AI: Cloudflare.Workers.AI(),
-          VAULT_KEY: vaultKey,
+          VAULT_KEY: yield* vaultKey(generation),
+          ...(previousKey && { VAULT_KEY_PREVIOUS: previousKey }),
           JOBS: jobs,
           HYPERDRIVE: hyperdrive,
           BETTER_AUTH_SECRET: authSecret,

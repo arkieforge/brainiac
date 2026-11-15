@@ -124,6 +124,23 @@ export const stageChecks = (
         "/health/db failed: check the Neon branch and Hyperdrive (`vp run logs --stage <stage>`).",
     },
     {
+      // Ending a rotation while this counts any record leaves that record's files and secrets unreadable until
+      // the previous key is bound again.
+      name: "No record waiting on the previous vault key",
+      optional: true,
+      run: async () => {
+        const res = await get(`${origin}/health/vault`);
+        if (!res.ok) return `/health/vault answered ${res.status}.`;
+        const vault = (await res.json()) as { rotating: boolean; waiting?: number };
+        return (
+          !vault.rotating ||
+          vault.waiting === 0 ||
+          `A vault key rotation is running and ${vault.waiting} records haven't rewrapped yet; keep ` +
+            "VAULT_KEY_PREVIOUS set until this passes (infra/README.md#rotating-the-vault-key)."
+        );
+      },
+    },
+    {
       name: prod ? "Sign-in page uses a real Turnstile key" : "Sign-in page has a Turnstile key",
       run: async () => {
         const { status, html } = await signIn;

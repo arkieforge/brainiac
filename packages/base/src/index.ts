@@ -148,9 +148,11 @@ export {
   readText,
   recordUpload,
   refuseUpload,
+  rewrapDataKey,
   sealFile,
   takeFileToken,
   unseal,
+  vaultKeyId,
   viewFile,
   type Classified,
   type FileToken,
@@ -158,6 +160,7 @@ export {
   type FileRow,
   type FileView,
   type Uploaded,
+  type VaultKeys,
 } from "./vault.ts";
 export {
   callTool,
