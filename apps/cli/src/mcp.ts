@@ -1,11 +1,11 @@
 // `brainiac mcp serve`: MCP over stdio for Claude Code, Codex and T3 Code. Each message goes to the record's own
 // `/mcp` with this device's token, so the tools, their answers and the connection's grants are exactly the
-// record's, as over remote MCP, and a narrowed grant applies to the next call.
-// shortcut: offline, calls fail with a clear error instead of answering reads from the local copy; that needs the
-// copy's revisions and the connection's last grants on disk (#94).
+// record's, as over remote MCP, and a narrowed grant applies to the next call. When the record can't be reached,
+// the same MCP server answers here instead, each call from the local copy (offline.ts): reads only, marked offline.
 import { createInterface } from "node:readline";
 
-import { BACKGROUND_HEADER } from "@brainiac/base";
+import { BACKGROUND_HEADER, type Answer } from "@brainiac/base";
+import { serveTools } from "@brainiac/base/mcp";
 import { type } from "arktype";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -72,7 +72,7 @@ export async function callRecord(
   try {
     response = await post(url, token, JSON.stringify(request));
   } catch {
-    // shortcut: offline, the local copy can't answer yet (#94).
+    // shortcut: offline, only `brainiac mcp serve` answers from the local copy; these commands wait for the record.
     throw new Error(`Can't reach your Brainiac record at ${url.origin}. This needs it online.`);
   }
   if (response.status === 401 || response.status === 403)
@@ -99,12 +99,33 @@ export interface Bridge {
   readonly write: (line: string) => void;
   /** Nobody is there (the daemon's headless filer): the record narrows the connection for every call. */
   readonly background?: boolean;
+  /** Answers a tool call while the record can't be reached: the local copy's reads. */
+  readonly offline?: (name: string, args: unknown) => Answer;
 }
 
 /** Forwards stdin's JSON-RPC lines to `<server>/mcp` one at a time, in order, and writes each answer as a line. */
-export async function serveStdio({ server, token, input, write, background }: Bridge): Promise<void> {
+export async function serveStdio({
+  server,
+  token,
+  input,
+  write,
+  background,
+  offline,
+}: Bridge): Promise<void> {
   const url = mcpUrl(server);
   let version: string | undefined;
+  const answer = async (response: Response) => {
+    const body = await response.text();
+    for (const message of messagesIn(body, response.headers.get("content-type") ?? "")) {
+      // Later requests name the version initialize agreed on.
+      const parsed: unknown = JSON.parse(message);
+      const result =
+        typeof parsed === "object" && parsed !== null && "result" in parsed ? parsed.result : undefined;
+      if (typeof result === "object" && result !== null && "protocolVersion" in result)
+        version = String(result.protocolVersion);
+      write(message);
+    }
+  };
   for await (const line of createInterface({ input, crlfDelay: Infinity })) {
     if (line.trim() === "") continue;
     let message: unknown;
@@ -119,11 +140,21 @@ export async function serveStdio({ server, token, input, write, background }: Br
     try {
       response = await post(url, token, line, version, background);
     } catch {
-      if (id !== undefined)
+      if (offline) {
+        const local = new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...(version && { "mcp-protocol-version": version }),
+          },
+          body: line,
+        });
+        await answer(await serveTools(local, async (name, args) => offline(name, args)));
+      } else if (id !== undefined)
         write(failure(id, `Can't reach your Brainiac record at ${url.origin}. Nothing was read or changed.`));
       continue;
     }
-    const body = await response.text();
     if (!response.ok && response.status !== 202) {
       if (id === undefined) continue;
       const refused = response.status === 401 || response.status === 403;
@@ -137,14 +168,6 @@ export async function serveStdio({ server, token, input, write, background }: Br
       );
       continue;
     }
-    for (const answer of messagesIn(body, response.headers.get("content-type") ?? "")) {
-      // Later requests name the version initialize agreed on.
-      const parsed: unknown = JSON.parse(answer);
-      const result =
-        typeof parsed === "object" && parsed !== null && "result" in parsed ? parsed.result : undefined;
-      if (typeof result === "object" && result !== null && "protocolVersion" in result)
-        version = String(result.protocolVersion);
-      write(answer);
-    }
+    await answer(response);
   }
 }

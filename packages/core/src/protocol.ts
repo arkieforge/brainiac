@@ -115,6 +115,13 @@ export interface Result {
   readonly error?: string;
 }
 
+/** What a connection may do, as `describe` reports it: its level, the sensitive scope and its hold window. */
+export interface Grants {
+  readonly level: "read" | "propose" | "write";
+  readonly sensitive: boolean;
+  readonly holdDays: number;
+}
+
 export type ServerMessage =
   /**
    * Answer to hello: send everything after `highWater`, in order. A client whose own counters are behind
@@ -125,6 +132,15 @@ export type ServerMessage =
       readonly clientId: string;
       readonly highWater: number;
       readonly ackedUpTo: number;
+      /**
+       * To a connection's client (a laptop's daemon), what its local copy needs to answer reads offline as that
+       * connection: its grants as of now, and the record's manifest. A change to the grants closes the socket, so
+       * the next welcome carries them. Absent for the person, whose clients read everything.
+       * shortcut: a manifest changed while the socket is open reaches the device on its next connect; nothing
+       * changes a record's manifest yet.
+       */
+      readonly connection?: Grants;
+      readonly manifest?: string | null;
     }
   /**
    * `clientSeq` was already used by a different change, or already acknowledged: two machines share this id.

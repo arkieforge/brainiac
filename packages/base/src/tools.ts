@@ -70,6 +70,15 @@ export interface ToolContext extends Context {
    * narrowed by `inBackground`, so it sees normal notes only and every change it makes waits for the person.
    */
   readonly background?: boolean;
+  /**
+   * The record can't be reached, and a laptop's local copy answers instead (`brainiac mcp serve` offline): reads
+   * only, over the notes the device holds as of `syncedAt`, and each answer says so.
+   */
+  readonly offline?: {
+    readonly syncedAt: number;
+    /** The device keeps sensitive notes ("keep sensitive notes on this laptop"). */
+    readonly holdsSensitive: boolean;
+  };
 }
 
 /** One tool call as its connection, collecting the notes its answer shows for the call's audit row. */
@@ -399,6 +408,7 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
   (sql, args, ctx) => {
     const invalid = checkFilter(args);
     if (invalid) return fail(invalid);
+    if (args.type === "Proposal" && ctx.offline) return fail(offlineLacks("Proposals aren't"));
     const virtual = args.type === "Proposal" || args.type === "Question" || args.type === "Check";
     const notes = virtual ? [] : liveVisible(sql, ctx, args.type);
     if (typeof notes === "string") return fail(notes);
@@ -463,10 +473,13 @@ const describe = tool(
       openQuestions: [questionRows(sql, ctx)]
         .flat()
         .filter((row) => typeof row !== "string" && row.data["status"] === "open").length,
-      openProposals: {
-        yours: proposals.filter((row) => row.data["yours"]).length,
-        conflicts: proposals.filter((row) => row.data["kind"] === "conflict").length,
-      },
+      // Proposals stay in the record, so a laptop's copy can't count them.
+      openProposals: ctx.offline
+        ? null
+        : {
+            yours: proposals.filter((row) => row.data["yours"]).length,
+            conflicts: proposals.filter((row) => row.data["kind"] === "conflict").length,
+          },
     });
   },
 );
@@ -484,6 +497,7 @@ const get = tool(
     const refs = [...(args.ids ?? []).map((id) => ({ id })), ...(args.paths ?? []).map((path) => ({ path }))];
     if (refs.length === 0) return fail("Name the notes to get with ids or paths.");
     if (refs.length > 100) return fail("Get at most 100 notes at a time.");
+    if (args.history && ctx.offline) return fail(offlineLacks("Revision history isn't"));
     const live = sql
       .all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL")
       .map((r) => r.path);
@@ -1200,6 +1214,13 @@ const fillForm = tool(
   },
 );
 
+/** What a laptop's copy answers while the record can't be reached: the reads it holds everything for. */
+const OFFLINE_READS: ReadonlySet<string> = new Set(["describe", "query", "get"]);
+
+/** `what` says what isn't kept: "Proposals aren't". */
+const offlineLacks = (what: string) =>
+  `${what} kept on this laptop, and your Brainiac record can't be reached right now. Ask again once it's back online.`;
+
 /** Every tool, by the name agents call it. */
 export const TOOLS = {
   describe,
@@ -1237,9 +1258,13 @@ export function callTool(sql: Sql, name: string, args: unknown, ctx: ToolContext
       ...(ctx.background && ctx.connection && { connection: inBackground(ctx.connection) }),
       shown: new Set(),
     };
-    const answer = Object.hasOwn(TOOLS, name)
-      ? TOOLS[name as ToolName].call(sql, args, call)
-      : fail(`No tool named ${name}.`);
+    const answer = !Object.hasOwn(TOOLS, name)
+      ? fail(`No tool named ${name}.`)
+      : ctx.offline && !OFFLINE_READS.has(name)
+        ? fail(
+            `Your Brainiac record can't be reached, so ${name} changed nothing and nothing was queued. Offline, this laptop's copy answers describe, query and get; try again once the record is back online.`,
+          )
+        : TOOLS[name as ToolName].call(sql, args, call);
     for (const { noteId } of sql.all<{ noteId: string }>(
       "SELECT DISTINCT noteId FROM changes WHERE seq > ?",
       before,
@@ -1253,6 +1278,21 @@ export function callTool(sql: Sql, name: string, args: unknown, ctx: ToolContext
       ...(approvalId !== undefined && { approvalId }),
       at: ctx.now,
     });
-    return answer;
+    return ctx.offline ? offlineAnswer(answer, call, ctx.offline) : answer;
+  });
+}
+
+/** A read the local copy answered, saying so: when it last synced, and what this device doesn't hold. */
+function offlineAnswer(answer: Answer, ctx: Context, offline: NonNullable<ToolContext["offline"]>): Answer {
+  if (!answer.ok || typeof answer.value !== "object" || answer.value === null) return answer;
+  return ok({
+    ...answer.value,
+    offline: true,
+    syncedAt: iso(offline.syncedAt),
+    ...(principal(ctx).sensitive &&
+      !offline.holdsSensitive && {
+        cloudOnly:
+          "Sensitive notes are cloud-only on this laptop, so they aren't in this answer. They are once the record is back online.",
+      }),
   });
 }

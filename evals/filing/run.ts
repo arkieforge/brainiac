@@ -12,7 +12,6 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 
 import { fileInbox } from "../../apps/cli/src/filing.ts";
-import { serveTools } from "../../apps/worker/src/mcp/tools.ts";
 import {
   auditOf,
   authenticate,
@@ -29,6 +28,7 @@ import {
   TOOLS,
   type Sql,
 } from "../../packages/base/src/index.ts";
+import { serveTools } from "../../packages/base/src/mcp.ts";
 import { nodeSql } from "../../packages/base/src/node.ts";
 import { CASES, ITEMS, type Outcome } from "./cases.ts";
 
