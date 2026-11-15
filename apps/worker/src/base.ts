@@ -2,6 +2,18 @@ import {
   authenticate,
   canSee,
   changesSince,
+  classifyFile,
+  dataKey,
+  getFile,
+  kindHash,
+  readText,
+  recordUpload,
+  refuseUpload,
+  sealFile,
+  viewFile,
+  type Classified,
+  type FileView,
+  type Uploaded,
   connect,
   connectionOf,
   decide,
@@ -106,6 +118,8 @@ export interface Caller {
  */
 export class Base extends DurableObject<Env> {
   protected readonly sql: Sql;
+  /** The record's data key, unwrapped once per instance; reading the vault key is the only I/O it costs. */
+  #dataKey: Promise<Uint8Array> | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -274,6 +288,86 @@ export class Base extends DurableObject<Env> {
       lastCounter(this.sql, approver.credentialId),
       Date.now(),
     );
+  }
+
+  // The vault (contract §5). Every upload is sealed with the record's data key before it reaches R2 and starts
+  // unclassified; only the person confirms what a file is.
+  // shortcut: no route calls these yet; the site's upload (#16) and the MCP `add` tool (#17) arrive with them.
+
+  /**
+   * Seals a file into R2, then records it and runs the checks over its text, in one transaction after the only
+   * awaits. `kind` from the person is their confirmation; from a connection, a suggestion.
+   */
+  async upload(
+    bytes: Uint8Array,
+    input: { readonly mime: string; readonly kind?: string },
+    caller: Caller,
+  ): Promise<Uploaded> {
+    const allowed = this.context(caller);
+    if ("status" in allowed) return allowed;
+    // Refused before anything reaches R2, so a refused upload leaves no blob behind.
+    const refused = refuseUpload(allowed, input.kind);
+    if (refused) return refused;
+    const key = await this.dataKey();
+    const { sha256, sealed } = sealFile(key, bytes);
+    const r2Key = `blobs/${this.ctx.id.toString()}/${sha256}`;
+    if (!getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
+    // The puts awaited: the connection may have changed meanwhile, so it is loaded again.
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const before = currentSeq(this.sql);
+    const text = readText(bytes, input.mime);
+    const upload = { sha256, r2Key, mime: input.mime, bytes: bytes.byteLength, text };
+    const result = recordUpload(
+      this.sql,
+      key,
+      input.kind === undefined ? upload : { ...upload, kind: input.kind },
+      ctx,
+    );
+    this.changed(before);
+    return result;
+  }
+
+  /** What the caller may know about a file: a connection gets only a summary of one that isn't cleared. */
+  file(sha256: string, caller: Caller): FileView | undefined | Forbidden {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const file = getFile(this.sql, sha256);
+    return file && viewFile(ctx.connection, file);
+  }
+
+  /**
+   * The person says what a file is. Only the site's session route may call this. Loosening a kind they confirmed
+   * before needs their passkey over the `challenge` a first call returns.
+   */
+  async classifyFile(
+    sha256: string,
+    kind: string,
+    caller: Caller,
+    signed?: { readonly response: AuthenticationResponseJSON; readonly approver: Approver },
+  ): Promise<Classified> {
+    let ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    if (!signed) return classifyFile(this.sql, sha256, kind, ctx);
+    const file = getFile(this.sql, sha256);
+    if (!file) return { error: "No such file." };
+    const challenge = kindHash(file, kind);
+    const signature = await this.check(signed.response, challenge, signed.approver);
+    if ("error" in signature) return signature;
+    // The check awaited: a confirmation meanwhile bumped the file's rev, which the challenge names.
+    ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    return classifyFile(this.sql, sha256, kind, ctx, { challenge, signature });
+  }
+
+  private dataKey(): Promise<Uint8Array> {
+    if (!this.#dataKey) {
+      const loading = this.env.VAULT_KEY.get().then((vaultKey) => dataKey(this.sql, vaultKey));
+      // A failed read of the vault key is tried again by the next call, not remembered.
+      loading.catch(() => (this.#dataKey = undefined));
+      this.#dataKey = loading;
+    }
+    return this.#dataKey;
   }
 
   /** Accepts a sync socket (hibernatable, so idle connections cost nothing). */

@@ -1,6 +1,6 @@
 // The real Base DO and jobs consumer, loaded into workerd by base.test.ts. TestBase adds what a test needs to
 // see and steer: reads, a crash, and running the dispatcher when the test says rather than when it fires.
-import { getNote, search, type ChunkInput, type Job, type Principal } from "@brainiac/base";
+import { dataKey, getNote, search, unseal, type ChunkInput, type Job, type Principal } from "@brainiac/base";
 
 import { ACTOR_HEADER, Base } from "../src/base.ts";
 import type { Env } from "../src/env.ts";
@@ -64,6 +64,21 @@ export class TestBase extends Base {
   /** Gives the record a manifest, as onboarding does. */
   setManifest(yaml: string): void {
     this.sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", yaml);
+  }
+
+  /** The record's data key, for a test to open what the vault sealed. */
+  async key(): Promise<Uint8Array> {
+    return dataKey(this.sql, await this.env.VAULT_KEY.get());
+  }
+
+  /** A secret's value. Nothing outside tests reads one back: the fill path (#37) will be the only way out. */
+  async secretValue(name: string): Promise<string | null> {
+    const [row] = this.sql.all<{ ciphertext: string }>("SELECT ciphertext FROM secrets WHERE name = ?", name);
+    return row
+      ? Buffer.from(
+          unseal(await this.key(), Buffer.from(row.ciphertext, "base64"), `secret:${name}`),
+        ).toString()
+      : null;
   }
 
   actorOf(noteId: string): string | null {

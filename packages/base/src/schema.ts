@@ -272,6 +272,18 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "ALTER TABLE landed ADD COLUMN noteId TEXT",
     "ALTER TABLE landed ADD COLUMN digest TEXT",
   ],
+  // The vault: what the checks made of each upload, what the person confirmed it is, and the note its parse
+  // wrote. A file the checks never read is `unreadable`, so it can't be cleared.
+  [
+    `ALTER TABLE files ADD COLUMN checks TEXT NOT NULL DEFAULT 'unreadable'
+      CHECK (checks IN ('clean', 'found', 'unreadable'))`,
+    "ALTER TABLE files ADD COLUMN findings TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE files ADD COLUMN kind TEXT",
+    "ALTER TABLE files ADD COLUMN confirmedAt INTEGER",
+    "ALTER TABLE files ADD COLUMN noteId TEXT",
+    // Bumped by every confirmation; a passkey signature over a kind change names the rev it was signed at.
+    "ALTER TABLE files ADD COLUMN rev INTEGER NOT NULL DEFAULT 0",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

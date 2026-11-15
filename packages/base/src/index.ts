@@ -73,3 +73,19 @@ export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
 export { chunkNote, putChunks, search, type ChunkInput, type Family, type Hit } from "./search.ts";
 export { changesSince, currentSeq, hello, receive, serve, type Served } from "./sync.ts";
 export { doSql, type DurableObjectSql, type Sql, type SqlValue } from "./sql.ts";
+export {
+  classifyFile,
+  dataKey,
+  getFile,
+  kindHash,
+  readText,
+  recordUpload,
+  refuseUpload,
+  sealFile,
+  unseal,
+  viewFile,
+  type Classified,
+  type FileRow,
+  type FileView,
+  type Uploaded,
+} from "./vault.ts";
