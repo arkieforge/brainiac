@@ -492,13 +492,6 @@ export const CASES: readonly Case[] = [
 ];
 
 /**
- * A case's verdict from its samples' results: an exact-value case passes only if no sample failed; any other
- * passes while fewer than half failed.
- */
-export const passes = (exact: boolean, failing: number, samples: number) =>
-  exact ? failing === 0 : failing * 2 < samples;
-
-/**
  * The release gates an answers run checks, for the cases it ran: no exact-value sample fails, and answerable
  * questions get their answer in at least 95% of samples. A sample answered only when its case's check passed, so a
  * refusal in any wording counts against answerability: over-refusal invents no number and can slip past a check

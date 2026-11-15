@@ -8,11 +8,12 @@ person never checked, and say "not in your record" when it isn't there, never a 
 
 The fixture record is built once on node:sqlite and indexed as a laptop's copy is: keyword only, since no model
 embeds questions here (hybrid ranking needs Workers AI on a deployed stage). Its connection reads everything,
-sensitive notes included, as the person's own Claude would. Each sample is a fresh headless Claude Code run
-(`claude -p <question>`) with the record's `/mcp`, served by the Worker's own tool server
-(`packages/base/src/mcp.ts`), as its only MCP server, no built-in tools, none of this machine's settings,
-and the agent skill (`apps/cli/plugin/skills/brainiac/SKILL.md`) appended to the system prompt, as the plugin
-would load it. The case then checks the final answer.
+sensitive notes included, as the person's own Claude would. Each sample is a fresh headless run of the shared
+harness's runner (`claude -p <question>`, or `codex exec` for a `gpt-*` model; see [the harness](../README.md#the-shared-harness))
+with the record's `/mcp`, served by the Worker's own tool server (`packages/base/src/mcp.ts`), as its only MCP
+server, no built-in tools, none of this machine's settings, and the agent skill
+(`apps/cli/plugin/skills/brainiac/SKILL.md`) given as the plugin would load it. The case then checks the final
+answer.
 
 | Case                      | Kind    | Exact | Fails when the answer                                                                  |
 | ------------------------- | ------- | ----- | -------------------------------------------------------------------------------------- |
@@ -48,13 +49,17 @@ The exact values themselves are each case's own check.
 ```sh
 vp run eval:answers --out evals/runs/answers                  # 2 samples a case, Claude Code's default model
 vp run eval:answers --out evals/runs/answers --model <id> --case cgpa-unverified --samples 3
-vp run eval:answers --out evals/runs/answers --dry-run        # no model: prints the cases and the tools
+vp run eval:answers --out evals/runs/sol --model gpt-6.1-sol --baseline evals/runs/answers/results.ndjson
+vp run eval:answers --out evals/runs/answers --dry-run        # no model: prints each case's command
+vp run eval:answers --out evals/runs/answers --context        # no model: the size of what the model sees
 ```
 
-It needs `claude` on PATH, signed in: runs bill the subscription or key that Claude Code uses, and each sample
-is one short question, so a full run costs what its `summary.md` says (the sum of each run's result event).
-`--out` gets each sample's events (`<case>-<n>.ndjson`), its answer and tool calls (`<case>-<n>-said.txt`),
-`results.ndjson` and `summary.md`. `--baseline` and `--context` arrive with the shared harness (#27).
+It needs `claude` (or `codex` for a `gpt-*` model) on PATH, signed in: runs bill that harness's subscription or
+key, and each sample is one short question. A Claude run's `summary.md` gives its cost (the sum of each run's
+result event); Codex reports none, so its summary gives the tokens. One sample each of `cgpa-unverified` and
+`bsc-university` took about 90k tokens on either harness ($0.17 on Claude Opus). `--out` gets each sample's
+events (`<case>-<n>.ndjson`), its answer and tool calls (`<case>-<n>-said.txt`), `results.ndjson` and
+`summary.md`.
 
 ## Adding a case
 

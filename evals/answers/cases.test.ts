@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { answersGates, CASES, factsOf, passes } from "./cases.ts";
+import { answersGates, CASES, factsOf } from "./cases.ts";
 
 // The fixture record the eval asks, all of it: its connection may read sensitive notes.
 const FIXTURES = join(import.meta.dirname, "../../fixtures/nadia");
@@ -26,14 +26,7 @@ const verdicts = (rows: { case: string; ok: boolean }[], ran = CASES) =>
   answersGates(ran, rows).map((g) => [g.name, g.ok]);
 
 describe("answers eval", () => {
-  it("an exact-value case fails on any failing sample; the others when half or more fail", () => {
-    expect([passes(true, 0, 2), passes(true, 1, 3), passes(true, 1, 2)]).toEqual([true, false, false]);
-    expect([passes(false, 0, 2), passes(false, 1, 3), passes(false, 1, 2), passes(false, 2, 3)]).toEqual([
-      true,
-      true,
-      false,
-      false,
-    ]);
+  it("marks the exact-value cases, which fail on any failing sample", () => {
     expect(CASES.filter((c) => c.exact).map((c) => c.id)).toEqual([
       "latest-writing-score",
       "cgpa-unverified",
