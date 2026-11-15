@@ -125,8 +125,13 @@ function askedAbout(sql: Sql): { readonly noteId: string | null }[] {
     });
 }
 
+// Every note but the questions: request_info writes one at propose level, without a proposal, by design.
 const notesOf = (sql: Sql) =>
-  JSON.stringify(listNotes(sql).map((note) => [note.id, note.rev, note.deletedAt]));
+  JSON.stringify(
+    listNotes(sql)
+      .filter((note) => note.type !== "Question")
+      .map((note) => [note.id, note.rev, note.deletedAt]),
+  );
 
 /** This record's `/mcp` on a local port, answering as the Worker does: the token's connection, narrowed in the background. */
 function serve(sql: Sql) {
