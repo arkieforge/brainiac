@@ -10,6 +10,32 @@ export type Change = typeof Change.infer;
 
 const seq = "number.integer >= 0";
 
+interface BeforeAfter<T> {
+  readonly before?: T;
+  readonly after?: T;
+}
+
+/**
+ * What one transaction does to one note: each top-level front-matter field's value before and after (a missing
+ * side means the field was absent), the body, and whether the note was live. Revisions store it as their
+ * inverse patch; approvals sign it.
+ */
+export interface Diff {
+  readonly fields: Readonly<Record<string, BeforeAfter<unknown>>>;
+  readonly body?: BeforeAfter<string>;
+  readonly live?: BeforeAfter<boolean>;
+}
+
+/** One note's part of a plan: the note, the revision the change starts from, and what it does. */
+export interface PlanItem {
+  readonly noteId: string;
+  /** 0 for a note the change creates. */
+  readonly baseRev: number;
+  readonly path: string;
+  readonly class: "normal" | "sensitive";
+  readonly patch: Diff;
+}
+
 /** What a client may send. Checked on arrival: it comes from outside the record. */
 export const ClientMessage = type({
   type: "'hello'",
@@ -35,6 +61,12 @@ export const ClientMessage = type({
   noteId: "string > 0",
   baseRev: seq,
   change: Change,
+  /**
+   * An approval the person gave for this exact change, after a `needsApproval` result. It is only a reference:
+   * the record applies the change only if its effect hashes to the plan the passkey signed. A resend carries a
+   * new `changeId`, since the record answers a `changeId` it has seen with the answer it gave.
+   */
+  "approvalId?": "0 < string <= 64",
 });
 export type ClientMessage = typeof ClientMessage.infer;
 export type Hello = Extract<ClientMessage, { type: "hello" }>;
@@ -70,8 +102,8 @@ export interface Result {
     /** The note was deleted on one side and edited on the other. */
     readonly deleted: boolean;
   };
-  /** An approval the person must give before this edit can land (#12). */
-  readonly needsApproval?: { readonly planHash: string };
+  /** The edit alters a verified value: it lands once the person signs `planHash` with a passkey. */
+  readonly needsApproval?: { readonly planHash: string; readonly items: readonly PlanItem[] };
   /** Why the edit was refused, for the person to fix. */
   readonly error?: string;
 }

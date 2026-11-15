@@ -1,5 +1,18 @@
 // The record's SQL: one schema, migrations and queries, run by the Base DO and by the CLI's bun:sqlite.
 export {
+  lastCounter,
+  openReview,
+  planHash,
+  recordApproval,
+  REVIEW_MS,
+  startReview,
+  type Approved,
+  type Grant,
+  type NeedsApproval,
+  type Opened,
+  type Signature,
+} from "./approvals.ts";
+export {
   CHANGES_MS,
   dueJobs,
   enqueue,
@@ -19,7 +32,6 @@ export {
   propose,
   undoRun,
   type Context,
-  type Diff,
   type Mutation,
   type MutationResult,
   type UndoConflict,

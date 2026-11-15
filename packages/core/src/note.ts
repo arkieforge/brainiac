@@ -1,4 +1,4 @@
-import { parseDocument, type Document } from "yaml";
+import { isScalar, parseDocument, visit, type Document } from "yaml";
 
 /** A note's raw text cut into its front-matter YAML and markdown body, with offsets into the raw text. */
 export interface NoteParts {
@@ -36,12 +36,64 @@ export class NoteParseError extends Error {
   override readonly name = "NoteParseError";
 }
 
-/** Parses the front-matter with the yaml Document API, which keeps comments and source ranges. */
+/**
+ * Parses the front-matter with the yaml Document API, which keeps comments and source ranges. Always as YAML
+ * 1.2's core schema: a `%YAML 1.1` line can't make `010` read as 8, and tags (`!!timestamp`, `!!binary`,
+ * `!!omap`) are refused rather than read into types the stored JSON would blur. A key must be a plain name
+ * (text, a number or true/false), and two keys that read alike (`1` and `"1"`) are refused, since a reader
+ * would show one value and the record store the other.
+ */
 export function parseFrontMatter(yaml: string): Document.Parsed {
-  const doc = parseDocument(yaml, { keepSourceTokens: true });
-  const [error] = doc.errors;
+  const doc = parseDocument(yaml, {
+    keepSourceTokens: true,
+    version: "1.2",
+    schema: "core",
+    resolveKnownTags: false,
+    uniqueKeys: (a, b) => a === b || (isScalar(a) && isScalar(b) && String(a.value) === String(b.value)),
+  });
+  const [error] = [...doc.errors, ...doc.warnings.filter((warning) => warning.code === "TAG_RESOLVE_FAILED")];
   if (error) throw new NoteParseError(`Front-matter is not valid YAML: ${error.message}`);
+  visit(doc, {
+    Pair: (_, pair) => {
+      // Aliases, mappings, lists and null as keys all become text JSON can confuse with another key.
+      const key: unknown = isScalar(pair.key) ? pair.key.value : undefined;
+      const plain =
+        typeof key === "string" ||
+        typeof key === "boolean" ||
+        (typeof key === "number" &&
+          Number.isFinite(key) &&
+          (!Number.isInteger(key) || Number.isSafeInteger(key)));
+      if (!plain) throw new NoteParseError("Front-matter keys must be plain names.");
+    },
+  });
   return doc;
+}
+
+/**
+ * Throws unless `value` survives JSON exactly: strings, booleans, null, safe finite numbers, and lists and plain
+ * mappings of them, with no `__proto__` key (it reads as an object's prototype in most code). Front-matter is
+ * stored and judged (approvals compare and sign it) as JSON, so anything JSON would lose or blur is refused.
+ */
+function assertJson(value: unknown, key: string, path: readonly unknown[] = []): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`${key} must be a finite number.`);
+    // JSON stores -0 as 0.
+    if (Object.is(value, -0)) throw new Error(`${key} can't be -0.`);
+    if (Number.isInteger(value) && !Number.isSafeInteger(value))
+      throw new Error(`${key} is too long for a number: quote it.`);
+    return;
+  }
+  if (typeof value !== "object") throw new Error(`${key} can't be stored.`);
+  // An alias that contains itself (`a: &a [*a]`) can't be stored.
+  if (path.includes(value)) throw new Error(`${key} contains itself.`);
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null)
+    throw new Error(`${key} must be a plain mapping, list or value.`);
+  for (const [k, v] of Object.entries(value)) {
+    if (k === "__proto__") throw new Error("__proto__ can't be a field name.");
+    assertJson(v, k, [...path, value]);
+  }
 }
 
 export interface Note {
@@ -56,8 +108,7 @@ export function parseNote(raw: string): Note {
   let data: unknown;
   try {
     data = doc.toJS() ?? {};
-    // Front-matter is stored as JSON: an alias that contains itself (`a: &a [*a]`) can't be.
-    JSON.stringify(data);
+    assertJson(data, "front-matter");
   } catch (error) {
     // Valid YAML that can't become data (too many aliases, an unknown one, a cycle) is unreadable all the same.
     throw new NoteParseError(

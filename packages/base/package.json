@@ -16,6 +16,7 @@
   "devDependencies": {
     "@types/bun": "1.4.4",
     "bun": "1.4.4",
+    "fast-check": "4.10.2",
     "miniflare": "4.20260730.0"
   }
 }

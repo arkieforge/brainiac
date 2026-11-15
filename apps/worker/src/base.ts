@@ -1,5 +1,10 @@
 import {
   changesSince,
+  lastCounter,
+  openReview,
+  planHash,
+  recordApproval,
+  startReview,
   currentSeq,
   doSql,
   dueJobs,
@@ -14,16 +19,21 @@ import {
   schemaVersion,
   serve,
   undoRun,
+  type Approved,
   type ChunkInput,
   type Mutation,
   type MutationResult,
+  type NeedsApproval,
   type NoteRow,
+  type Opened,
   type Sql,
   type UndoResult,
 } from "@brainiac/base";
-import { decodeClientMessage, type ServerMessage } from "@brainiac/core";
+import { decodeClientMessage, type PlanItem, type ServerMessage } from "@brainiac/core";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
+import { checkSignature, type Approver } from "./approvals.ts";
 import type { Env } from "./env.ts";
 
 const RETRY_MS = 60_000;
@@ -52,6 +62,10 @@ export interface JobMessage {
 export interface Caller {
   readonly actor: string;
   readonly runId?: string;
+  /** An approval the person gave for this exact change (from `approve`); used up when the change lands. */
+  readonly approvalId?: string;
+  /** A review session the person opened (`openReview`) over the notes this change touches. */
+  readonly review?: string;
 }
 
 /**
@@ -81,11 +95,55 @@ export class Base extends DurableObject<Env> {
     return result;
   }
 
-  undoRun(runId: string, caller: Caller): UndoResult {
+  undoRun(runId: string, caller: Caller): UndoResult | NeedsApproval {
     const before = currentSeq(this.sql);
     const result = undoRun(this.sql, runId, { ...caller, now: Date.now() });
     this.changed(before);
     return result;
+  }
+
+  // Approvals. Only the site's session route may call these, with the record owner's passkey loaded from Neon
+  // (`Approver`); no agent, token or MCP tool reaches them, so none can approve.
+  // shortcut: no route calls them yet; the site's approval page lands with the editor (#16).
+
+  /**
+   * Checks a passkey signature over `planHash(items)` and records it, for the change with that exact effect to
+   * cite once as `approvalId`. The items are the ones a `needsApproval` result returned.
+   */
+  async approve(
+    items: readonly PlanItem[],
+    response: AuthenticationResponseJSON,
+    approver: Approver,
+  ): Promise<Approved> {
+    const signed = await this.check(response, planHash(items), approver);
+    // The check awaited: anything may have landed meanwhile, which the change's own plan hash catches.
+    return "error" in signed ? signed : recordApproval(this.sql, items, signed, Date.now());
+  }
+
+  /** A nonce for the person to sign, opening a review session over the notes shown, for them alone. */
+  startReview(noteIds: readonly string[], caller: Caller): string {
+    return startReview(this.sql, noteIds, caller.actor, Date.now());
+  }
+
+  /** Opens a review session once its nonce is signed: 10 minutes of verify, fix and undo on its notes. */
+  async openReview(
+    nonce: string,
+    response: AuthenticationResponseJSON,
+    approver: Approver,
+    caller: Caller,
+  ): Promise<Opened> {
+    const signed = await this.check(response, nonce, approver);
+    return "error" in signed ? signed : openReview(this.sql, nonce, caller.actor, signed, Date.now());
+  }
+
+  private check(response: AuthenticationResponseJSON, challenge: string, approver: Approver) {
+    return checkSignature(
+      response,
+      challenge,
+      approver,
+      lastCounter(this.sql, approver.credentialId),
+      Date.now(),
+    );
   }
 
   /** Accepts a sync socket (hibernatable, so idle connections cost nothing). */

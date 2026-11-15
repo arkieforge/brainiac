@@ -44,12 +44,22 @@ const applied = (result: MutationResult) => {
 };
 
 const IELTS = "facts/tests/ielts-2026-11.md";
+
+/** The IELTS note unverified: these cases are about writes and undo, which approvals.ts's cases gate. */
+const ieltsRaw = (fixtures: readonly Fixture[]) =>
+  fixture(fixtures, IELTS).raw.replace(/^verified:.*\n/m, "");
+
+const undo = (...args: Parameters<typeof undoRun>) => {
+  const result = undoRun(...args);
+  ok(result.status === "applied", JSON.stringify(result));
+  return result;
+};
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 
 /** A migrated record holding the IELTS note at rev 1, created through the mutation path. */
 function withIelts(sql: Sql, fixtures: readonly Fixture[]) {
   migrate(sql);
-  const { raw } = fixture(fixtures, IELTS);
+  const raw = ieltsRaw(fixtures);
   return applied(mutate(sql, { op: "create", path: IELTS, raw, class: "sensitive" }, by()));
 }
 
@@ -97,7 +107,7 @@ export const mutateCases: Record<string, Case> = {
     equal(getNote(sql, created.noteId)?.deletedAt, T0 + 2);
     // The edit changed only the bytes of that value.
     const raw = rows(sql, "revisions", created.noteId)[1]?.["raw"];
-    equal(raw, fixture(fixtures, IELTS).raw.replace("overall: 8.0", "overall: 8.5"));
+    equal(raw, ieltsRaw(fixtures).replace("overall: 8.0", "overall: 8.5"));
   },
 
   "a stale baseRev is a conflict and writes nothing": (sql, fixtures) => {
@@ -121,7 +131,7 @@ export const mutateCases: Record<string, Case> = {
       mutate(sql, { op: "create", path: "a.md", raw: "---\nid: [\n---\n", class: "normal" }, by()),
       mutate(sql, { op: "create", path: "a.md", raw: "---\nid: not-a-ulid\n---\n", class: "normal" }, by()),
       // Same id as the IELTS note, and a path that differs only by case.
-      mutate(sql, { op: "create", path: "x.md", raw: fixture(fixtures, IELTS).raw, class: "normal" }, by()),
+      mutate(sql, { op: "create", path: "x.md", raw: ieltsRaw(fixtures), class: "normal" }, by()),
       mutate(sql, { op: "create", path: IELTS.toUpperCase(), raw, class: "normal" }, by()),
       mutate(sql, { op: "patch", noteId, baseRev: 1, ops: [{ op: "unset", path: ["id"] }] }, by()),
       mutate(sql, { op: "patch", noteId: "01M6ZZZZZZZZZZZZZZZZZZZZZZ", baseRev: 1, ops: [] }, by()),
@@ -296,7 +306,7 @@ export const mutateCases: Record<string, Case> = {
       ),
     );
 
-    const result = undoRun(sql, run, by(T0 + 4));
+    const result = undo(sql, run, by(T0 + 4));
     same(result.undone, [noteId]);
     // overall, test and the body go back; expires keeps the person's value and becomes a conflict.
     equal(field(sql, noteId, "overall"), 8);
@@ -305,8 +315,8 @@ export const mutateCases: Record<string, Case> = {
     // Every other byte is as the person wrote it; the restored number comes back canonical.
     equal(
       stored(sql, noteId).raw,
-      fixture(fixtures, IELTS)
-        .raw.replace("overall: 8.0", "overall: 8")
+      ieltsRaw(fixtures)
+        .replace("overall: 8.0", "overall: 8")
         .replace("expires: 2028-11-02", "expires: 2028-12-01"),
     );
     same(
@@ -317,7 +327,7 @@ export const mutateCases: Record<string, Case> = {
       { noteId, kind: "conflict", status: "open" },
     ]);
     // The undo is a run of its own, so it can be undone.
-    undoRun(sql, result.runId, by(T0 + 5));
+    undo(sql, result.runId, by(T0 + 5));
     equal(field(sql, noteId, "overall"), 9);
     equal(field(sql, noteId, "test"), "toefl-ibt");
   },
@@ -327,7 +337,7 @@ export const mutateCases: Record<string, Case> = {
     const created = applied(
       mutate(sql, { op: "create", path: TUM, raw: fixture(fixtures, TUM).raw, class: "normal" }, by(T0)),
     );
-    same(undoRun(sql, created.runId, by(T0 + 1)).undone, [created.noteId]);
+    same(undo(sql, created.runId, by(T0 + 1)).undone, [created.noteId]);
     ok(getNote(sql, created.noteId)?.deletedAt !== null);
 
     const [deletion] = sql.all<{ runId: string }>(
@@ -335,7 +345,7 @@ export const mutateCases: Record<string, Case> = {
       created.noteId,
     );
     ok(deletion);
-    same(undoRun(sql, deletion.runId, by(T0 + 2)).undone, [created.noteId]);
+    same(undo(sql, deletion.runId, by(T0 + 2)).undone, [created.noteId]);
     const restored = getNote(sql, created.noteId);
     same([restored?.deletedAt, restored?.raw], [null, fixture(fixtures, TUM).raw]);
     same(
@@ -358,7 +368,7 @@ export const mutateCases: Record<string, Case> = {
         by(),
       ),
     );
-    const result = undoRun(sql, created.runId, by());
+    const result = undo(sql, created.runId, by());
     same([result.undone, result.conflicts.length], [[], 1]);
     equal(getNote(sql, created.noteId)?.deletedAt, null);
   },
@@ -391,7 +401,7 @@ export const mutateCases: Record<string, Case> = {
     set(1, 8.5, by(T0 + 1, run));
     set(2, 9, by(T0 + 2));
     set(3, 7, by(T0 + 3, run));
-    const result = undoRun(sql, run, by(T0 + 4));
+    const result = undo(sql, run, by(T0 + 4));
     equal(field(sql, noteId, "overall"), 9);
     same(
       result.conflicts.map((c) => c.diff),
@@ -410,7 +420,7 @@ export const mutateCases: Record<string, Case> = {
     const second = applied(
       mutate(sql, { op: "create", path: TUM, raw: replacement, class: "normal" }, by(T0 + 2, run)),
     );
-    const result = undoRun(sql, run, by(T0 + 3));
+    const result = undo(sql, run, by(T0 + 3));
     same(result.conflicts, []);
     same(
       [getNote(sql, first.noteId)?.deletedAt, getNote(sql, second.noteId)?.deletedAt === null],
@@ -429,7 +439,7 @@ export const mutateCases: Record<string, Case> = {
       ),
     );
     applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by(T0 + 1)));
-    const result = undoRun(sql, run, by(T0 + 2));
+    const result = undo(sql, run, by(T0 + 2));
     same(result.undone, []);
     same(
       result.conflicts.map((c) => c.diff),
@@ -462,7 +472,7 @@ export const mutateCases: Record<string, Case> = {
         by(),
       ),
     );
-    const result = undoRun(sql, run, by());
+    const result = undo(sql, run, by());
     same([result.undone, result.conflicts.length], [[], 1]);
     same([field(sql, noteId, "type"), field(sql, noteId, "role")], ["B", "referee"]);
   },
@@ -485,7 +495,7 @@ export const mutateCases: Record<string, Case> = {
         by(T0, run),
       ),
     );
-    const result = undoRun(sql, run, by(T0 + 1, run));
+    const result = undo(sql, run, by(T0 + 1, run));
     ok(result.runId !== run);
     equal(field(sql, noteId, "overall"), 8);
   },
@@ -501,7 +511,7 @@ export const mutateCases: Record<string, Case> = {
     set(1, 9, by(T0 + 1, run));
     set(2, 7, by(T0 + 2, run));
     set(3, 9, by(T0 + 3));
-    const result = undoRun(sql, run, by(T0 + 4));
+    const result = undo(sql, run, by(T0 + 4));
     equal(field(sql, noteId, "overall"), 9);
     same(
       result.conflicts.map((c) => c.diff),
@@ -523,7 +533,7 @@ export const mutateCases: Record<string, Case> = {
     set(2, 7, by(T0 + 2, run));
     set(3, 9, by(T0 + 3));
     same(
-      undoRun(sql, run, by(T0 + 4)).conflicts.map((c) => c.diff),
+      undo(sql, run, by(T0 + 4)).conflicts.map((c) => c.diff),
       [{ fields: { overall: { before: 9, after: 8 } } }],
     );
   },
@@ -550,9 +560,9 @@ export const mutateCases: Record<string, Case> = {
         by(T0 + 1, run),
       ),
     );
-    undoRun(sql, run, by(T0 + 2));
+    undo(sql, run, by(T0 + 2));
     const rev = stored(sql, noteId).rev;
-    const again = undoRun(sql, run, by(T0 + 3));
+    const again = undo(sql, run, by(T0 + 3));
     same([again.undone, again.conflicts], [[], []]);
     equal(stored(sql, noteId).rev, rev);
   },
@@ -577,7 +587,7 @@ export const mutateCases: Record<string, Case> = {
     applied(mutate(sql, { op: "delete", noteId: created.noteId, baseRev: 2 }, by(T0 + 1, run)));
     const other = raw.replace(created.noteId, "01M6ZZZZZZZZZZZZZZZZZZZZZZ");
     applied(mutate(sql, { op: "create", path: TUM, raw: other, class: "normal" }, by(T0 + 2)));
-    const result = undoRun(sql, run, by(T0 + 3));
+    const result = undo(sql, run, by(T0 + 3));
     same([result.undone, result.conflicts], [[], []]);
     ok(getNote(sql, created.noteId)?.deletedAt !== null);
   },
@@ -585,7 +595,7 @@ export const mutateCases: Record<string, Case> = {
   "a note the run created and edited, deleted since, needs nothing from the person": (sql, fixtures) => {
     migrate(sql);
     const run = "01M6RUN000000000000000000B";
-    const { raw } = fixture(fixtures, IELTS);
+    const raw = ieltsRaw(fixtures);
     const { noteId } = applied(
       mutate(sql, { op: "create", path: IELTS, raw, class: "sensitive" }, by(T0, run)),
     );
@@ -597,7 +607,7 @@ export const mutateCases: Record<string, Case> = {
       ),
     );
     applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by(T0 + 2)));
-    const result = undoRun(sql, run, by(T0 + 3));
+    const result = undo(sql, run, by(T0 + 3));
     same([result.undone, result.conflicts], [[], []]);
   },
 };

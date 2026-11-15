@@ -23,13 +23,13 @@ that opens.
 ```
 // client → DO (one WebSocket per client; packages/core protocol.ts, checked on arrival)
 hello    { clientId, cursor: seq | null, lastAssigned: clientSeq, ackedUpTo, schemaVersion, appVersion, attempt }
-mutate   { clientId, clientSeq, changeId, ackedUpTo, noteId, baseRev, change }   // changeId: random per change
+mutate   { clientId, clientSeq, changeId, ackedUpTo, noteId, baseRev, change, approvalId? }   // changeId: random per change
          change: create { path, raw, class } | put { raw, base } | delete { base }   // base: the text it was made on
 // DO → client
 welcome  { clientId, highWater, ackedUpTo }   // answer to hello
 snapshot { seq, notes, attempt }       // answers hello `attempt`: cursor missing, ahead of the record, or older than the 90-day log
 changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
-result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?, error? }
+result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?: { planHash, items }, error? }
 gap      { clientId, highWater }        // resend from highWater + 1
 reset    { clientId, clientSeq, reason } // two machines share this id
 ```
@@ -37,8 +37,10 @@ reset    { clientId, clientSeq, reason } // two machines share this id
 The DO computes each mutation's digest itself. A result names the `changeId` it answers, so a copy that
 shares a `clientId` never takes another machine's result as its own: a mismatch makes it repair. A client
 takes only the snapshot answering its latest hello; an older one has been overtaken. That one is taken even
-when its seq is below the cursor, since the record may have been restored. `needsApproval` and an
-`approvalId` on `mutate` arrive with approvals (#12).
+when its seq is below the cursor, since the record may have been restored. A `needsApproval` result carries
+the plan the person signs (each note's base revision, path, class and effect) and its hash. Once they approve on
+the site, the client resends the edit with the `approvalId` under a new `clientSeq` and a new `changeId`: the
+record answers a `changeId` it has seen with the answer it gave.
 
 - **Exactly once, in order**: each client's mutations are applied strictly in sequence. The DO accepts only `highWater + 1`; a gap is refused, so the client resends in order. Results are kept until the client acknowledges them. A duplicate older than that gets "already processed, reconcile": the client re-reads that note's current revision, which is enough because the change log or a snapshot shows what happened.
 - **Every result consumes its number**: a mutation that comes back as a conflict, `needsApproval` or invalid still uses up its `clientSeq` (the high-water mark advances in the same transaction); the edit moves to _blocked_, and the queue keeps going. Resending it later (after you approve or fix it) takes a new number. Acknowledgment is implicit: every `hello` and `mutate` carries `ackedUpTo`, and the DO drops results and digests up to that point. A reconcile never discards local intent: if the client's edit differs from what the server has, it goes back in the queue with its **original** base revision and base text, so it passes through the three-way merge and can't silently overwrite another device's later change.

@@ -74,7 +74,10 @@ const value: fc.Arbitrary<YamlValue> = fc.letrec<{ value: YamlValue }>((tie) => 
   value: fc.oneof(
     { depthSize: "small" },
     fc.integer(),
-    fc.double({ noNaN: true, noDefaultInfinity: true }).filter((n) => !Object.is(n, -0)),
+    // Whole numbers past 2^53 are refused (two of them can read as one), so they aren't values to set.
+    fc
+      .double({ noNaN: true, noDefaultInfinity: true })
+      .filter((n) => !Object.is(n, -0) && (!Number.isInteger(n) || Number.isSafeInteger(n))),
     fc.string({ maxLength: 12 }),
     fc.boolean(),
     fc.constant(null),

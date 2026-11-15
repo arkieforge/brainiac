@@ -5,9 +5,11 @@ export {
   ClientMessage,
   decodeClientMessage,
   type Change,
+  type Diff,
   type Hello,
   type Mutate,
   type NoteState,
+  type PlanItem,
   type Result,
   type ServerMessage,
 } from "./protocol.ts";
