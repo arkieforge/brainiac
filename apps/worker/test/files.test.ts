@@ -1,0 +1,170 @@
+// Files through the real site and usercontent routes (site.ts, usercontent.ts) and the real Base DO in workerd, with
+// a real R2 bucket. harness.ts fakes only the session. An upload can be HTML or SVG someone else wrote, so its bytes
+// must never come from the site's origin, and the usercontent origin must never let them run.
+import { Miniflare } from "miniflare";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+
+import { bundleWorker } from "../../../scripts/bundle-worker.ts";
+import type { TestBase } from "./harness.ts";
+
+const SITE = "https://brainiac.test";
+const USERCONTENT = "https://usercontent.brainiac.test";
+const HTML = new TextEncoder().encode("<script>document.title='pwned'</script><p>hello</p>");
+const TRANSCRIPT = new TextEncoder().encode("Northvale University\nCGPA 3.82 on a scale of 4\n");
+
+let mf: Miniflare;
+beforeAll(async () => {
+  mf = new Miniflare({
+    modules: true,
+    script: await bundleWorker(new URL("harness.ts", import.meta.url).pathname),
+    compatibilityDate: "2026-07-30",
+    compatibilityFlags: ["nodejs_compat"],
+    durableObjects: { BASE: { className: "TestBase", useSQLite: true } },
+    r2Buckets: ["BLOBS"],
+    secretsStoreSecrets: { VAULT_KEY: { store_id: "test", secret_name: "vault_key" } },
+    queueProducers: { JOBS: { queueName: "jobs" } },
+    bindings: { USERCONTENT_ORIGIN: USERCONTENT },
+  });
+  const vaultKey = await mf.getSecretsStoreSecretAPI("VAULT_KEY");
+  await vaultKey().create("a stage's vault key");
+});
+afterAll(() => mf.dispose());
+
+/** A tab of the site signed in as `user` (whose record is the one named `user`); `passkey`: it proved one lately. */
+const tab = (user: string, passkey = false) => ({
+  cookie: `user=${user}${passkey ? "; passkey=1" : ""}`,
+  origin: SITE,
+});
+
+async function upload(user: string, bytes: Uint8Array, mime: string): Promise<string> {
+  const res = await mf.dispatchFetch(`${SITE}/api/files`, {
+    method: "POST",
+    headers: { ...tab(user), "content-type": mime },
+    body: bytes,
+  });
+  const body = (await res.json()) as { file: { sha256: string } };
+  if (res.status !== 200) throw new Error(JSON.stringify(body));
+  return body.file.sha256;
+}
+
+const askToken = (user: string, sha256: string, passkey = false) =>
+  mf.dispatchFetch(`${SITE}/api/files/${sha256}/token`, { method: "POST", headers: tab(user, passkey) });
+
+async function tokenUrl(user: string, sha256: string, passkey = true): Promise<string> {
+  const res = await askToken(user, sha256, passkey);
+  const body = (await res.json()) as { url?: string };
+  if (!body.url) throw new Error(JSON.stringify(body));
+  return body.url;
+}
+
+async function record(name: string) {
+  const namespace = await mf.getDurableObjectNamespace("BASE");
+  // The stub's RPC methods are the DO's own; Miniflare's types describe only fetch.
+  return namespace.get(namespace.idFromName(name)) as unknown as DurableObjectStub<TestBase>;
+}
+
+describe("files", () => {
+  it("never serves a file's bytes from the site's origin", async () => {
+    const sha256 = await upload("main", HTML, "text/html");
+    const url = new URL(await tokenUrl("main", sha256));
+    expect(url.origin).toBe(USERCONTENT);
+    for (const accept of ["*/*", "text/html"]) {
+      const res = await mf.dispatchFetch(`${SITE}${url.pathname}`, { headers: { ...tab("main"), accept } });
+      expect(res.status).toBe(404);
+      expect(await res.text()).not.toContain("pwned");
+    }
+    // The site's 404 didn't use the token up: only the usercontent origin does.
+    expect((await mf.dispatchFetch(url.href)).status).toBe(200);
+  });
+
+  it("serves from usercontent with no scripts, no caching, no sniffing and no cookies", async () => {
+    const sha256 = await upload("headers", HTML, "text/html");
+    const res = await mf.dispatchFetch(await tokenUrl("headers", sha256), {
+      headers: { cookie: "user=headers" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(new TextDecoder().decode(HTML));
+    expect(Object.fromEntries(res.headers)).toMatchObject({
+      "content-type": "text/html",
+      "cache-control": "private, no-store",
+      "content-security-policy":
+        "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+      "x-content-type-options": "nosniff",
+      "access-control-allow-origin": SITE,
+    });
+    expect(res.headers.has("set-cookie")).toBe(false);
+    // Nothing else is there, and a session cookie sent along opens nothing either.
+    for (const path of ["/", "/api/files", "/sync", `/api/files/${sha256}/token`]) {
+      const other = await mf.dispatchFetch(`${USERCONTENT}${path}`, { headers: tab("headers") });
+      expect(other.status).toBe(404);
+      expect(other.headers.get("content-security-policy")).toContain("sandbox");
+      expect(other.headers.has("set-cookie")).toBe(false);
+    }
+  });
+
+  it("opens a file once with a token, and not after it expires", async () => {
+    const sha256 = await upload("once", TRANSCRIPT, "text/plain");
+    const url = await tokenUrl("once", sha256);
+    expect((await mf.dispatchFetch(url)).status).toBe(200);
+    expect((await mf.dispatchFetch(url)).status).toBe(404);
+    const late = await tokenUrl("once", sha256);
+    await (await record("once")).expireFileTokens();
+    expect((await mf.dispatchFetch(late)).status).toBe(404);
+  });
+
+  it("gives another record's session nothing, and a token moved to another record opens nothing", async () => {
+    const sha256 = await upload("owner", TRANSCRIPT, "text/plain");
+    await upload("other", HTML, "text/html");
+    const asked = await askToken("other", sha256, true);
+    expect(asked.status).toBe(400);
+    expect(await asked.json()).toEqual({ error: "No such file." });
+    const otherId = (await mf.getDurableObjectNamespace("BASE")).idFromName("other").toString();
+    const url = new URL(await tokenUrl("owner", sha256));
+    const moved = url.pathname.replace(/brf_[0-9a-f]+_/, `brf_${otherId}_`);
+    expect((await mf.dispatchFetch(`${USERCONTENT}${moved}`)).status).toBe(404);
+    expect((await mf.dispatchFetch(`${USERCONTENT}/f/brf_zz_${"a".repeat(43)}`)).status).toBe(404);
+    // The owner's own token was never touched.
+    expect((await mf.dispatchFetch(url.href)).status).toBe(200);
+  });
+
+  it("opens an unclassified original only after a passkey check, and a cleared one without", async () => {
+    const unclassified = await upload("passkey", HTML, "text/html");
+    const without = await askToken("passkey", unclassified);
+    expect(without.status).toBe(403);
+    expect(await without.json()).toEqual({ needsPasskey: true });
+    expect((await mf.dispatchFetch(await tokenUrl("passkey", unclassified, true))).status).toBe(200);
+
+    const transcript = await upload("passkey", TRANSCRIPT, "text/plain");
+    const kind = await mf.dispatchFetch(`${SITE}/api/files/${transcript}/kind`, {
+      method: "POST",
+      headers: tab("passkey"),
+      body: JSON.stringify({ kind: "transcript" }),
+    });
+    expect(await kind.json()).toMatchObject({ file: { class: "sensitive", kind: "transcript" } });
+    expect((await mf.dispatchFetch(await tokenUrl("passkey", transcript, false))).status).toBe(200);
+  });
+
+  it("never gives a connection a file token", async () => {
+    const sha256 = await upload("agent", TRANSCRIPT, "text/plain");
+    const base = await record("agent");
+    const agent = await base.addConnection({ kind: "cli" });
+    const minted = await base.fileToken(
+      sha256,
+      { actor: "agent", connectionId: agent.id },
+      { origin: SITE, passkey: true },
+    );
+    expect(minted).toMatchObject({ status: "forbidden" });
+  });
+
+  it("refuses changes from another origin's pages", async () => {
+    const res = await mf.dispatchFetch(`${SITE}/api/files`, {
+      method: "POST",
+      headers: { cookie: "user=csrf", origin: USERCONTENT, "content-type": "text/plain" },
+      body: TRANSCRIPT,
+    });
+    expect(res.status).toBe(403);
+    expect(await (await mf.dispatchFetch(`${SITE}/api/files`, { headers: tab("csrf") })).json()).toEqual({
+      files: [],
+    });
+  });
+});

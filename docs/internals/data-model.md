@@ -43,6 +43,7 @@ chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
 vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory
 edges        { fromId, toId, rel }
 schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
+file_tokens  { hash PK, sha256, origin, expiresAt }                  // single-use, one minute: opens one file's original on usercontent.<domain> for the site origin that asked; brf_<base id>_<secret>, stored as a hash
 tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens, brn_<base id>_<secret>, stored as a hash of the whole token; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
 secrets      { name PK, ciphertext, policy, domain }                // ciphertext: sealed with the data key (meta.dataKey, itself wrapped by the stage's VAULT_KEY), base64
 audit        { id, at, actor, tool, noteIds, secretName?, approvalId? }

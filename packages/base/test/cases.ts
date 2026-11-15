@@ -57,6 +57,7 @@ const ALL_TABLES = [
   "clients",
   "connections",
   "edges",
+  "file_tokens",
   "files",
   "inbox_leases",
   "jobs",

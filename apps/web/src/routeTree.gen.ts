@@ -10,33 +10,53 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as FilesFileIdRouteImport } from './routes/files.$fileId'
+import { Route as NNoteIdRouteImport } from './routes/n.$noteId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FilesFileIdRoute = FilesFileIdRouteImport.update({
+  id: '/files/$fileId',
+  path: '/files/$fileId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NNoteIdRoute = NNoteIdRouteImport.update({
+  id: '/n/$noteId',
+  path: '/n/$noteId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/files/$fileId': typeof FilesFileIdRoute
+  '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/files/$fileId': typeof FilesFileIdRoute
+  '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/files/$fileId': typeof FilesFileIdRoute
+  '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/files/$fileId' | '/n/$noteId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/files/$fileId' | '/n/$noteId'
+  id: '__root__' | '/' | '/files/$fileId' | '/n/$noteId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  FilesFileIdRoute: typeof FilesFileIdRoute
+  NNoteIdRoute: typeof NNoteIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +68,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/files/$fileId': {
+      id: '/files/$fileId'
+      path: '/files/$fileId'
+      fullPath: '/files/$fileId'
+      preLoaderRoute: typeof FilesFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/n/$noteId': {
+      id: '/n/$noteId'
+      path: '/n/$noteId'
+      fullPath: '/n/$noteId'
+      preLoaderRoute: typeof NNoteIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  FilesFileIdRoute: FilesFileIdRoute,
+  NNoteIdRoute: NNoteIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

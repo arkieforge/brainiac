@@ -1,6 +1,8 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import styles from "../styles.css?url";
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -9,6 +11,7 @@ export const Route = createRootRoute({
       { name: "color-scheme", content: "dark" },
       { title: "Brainiac" },
     ],
+    links: [{ rel: "stylesheet", href: styles }],
   }),
   shellComponent: Shell,
   component: Outlet,
@@ -20,7 +23,7 @@ function Shell({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body style={{ margin: 0, background: "#000", color: "#fff" }}>
+      <body>
         {children}
         <Scripts />
       </body>

@@ -69,7 +69,12 @@ doppler setup --no-interactive                        # reads doppler.yaml: proj
 ```
 
 `vp run dev`, `deploy` and `destroy` run through `doppler run`, so Alchemy gets the secrets. Worktree setup
-runs `doppler setup` for you. On macOS the token lives in the login keychain, so Doppler only works in a
+runs `doppler setup` for you. Under `vp run dev` uploaded files open from `http://usercontent.localhost:1337`
+(browsers resolve `*.localhost` to loopback), the dev stand-in for `usercontent.<domain>`. Trap: the dev stage's
+Alchemy state is shared by every checkout, but the vault key's local value lives in each checkout's
+`.alchemy/local/secrets-store`, seeded only when Alchemy creates or changes it. A second worktree's dev Worker
+then fails any upload with `Secret "brainiac_vault_key_dev_<you>" not found`; copy that folder from a checkout
+where it works (the Worker stopped). On macOS the token lives in the login keychain, so Doppler only works in a
 signed-in session.
 
 ## Signing in while you work

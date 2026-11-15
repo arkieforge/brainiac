@@ -284,6 +284,16 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     // Bumped by every confirmation; a passkey signature over a kind change names the rev it was signed at.
     "ALTER TABLE files ADD COLUMN rev INTEGER NOT NULL DEFAULT 0",
   ],
+  // Single-use file tokens for the usercontent origin: only a hash of each token, the file it opens, the site
+  // origin that asked (the only one its bytes may be read from) and when it stops working.
+  [
+    `CREATE TABLE file_tokens (
+      hash TEXT PRIMARY KEY,
+      sha256 TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 /** The SQL schema version this code writes. */

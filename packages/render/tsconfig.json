@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // Runs in the site (DOM, Vite's `?url` imports); its tests render to strings in Node.
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}

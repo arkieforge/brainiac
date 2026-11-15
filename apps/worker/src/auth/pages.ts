@@ -210,6 +210,10 @@ for (const button of document.querySelectorAll("[data-disconnect]")) {
 }
 document.getElementById("sign-out").onclick = run(async () => {
   await api("/sign-out", { method: "POST", body: "{}" });
+  // The site's copy of the record (apps/web/src/record.ts) leaves with the session.
+  for (const db of (await indexedDB.databases?.()) ?? [])
+    if (db.name?.startsWith("brainiac:")) indexedDB.deleteDatabase(db.name);
+  try { localStorage.removeItem("brainiac:user"); } catch {}
   location.href = "/sign-in";
 });`,
   );

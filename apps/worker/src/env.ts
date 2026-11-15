@@ -23,6 +23,12 @@ export interface Env {
   EMAIL_FROM?: string;
   /** The Alchemy stage: `prod`, `pr-<n>`, `dev_<you>`, `live_<you>`. */
   STAGE: string;
+  /**
+   * Where uploaded files are served (`https://usercontent.<domain>`, or `http://usercontent.localhost:1337` under
+   * `vp run dev`), never from the site's own origin (usercontent.ts). A stage without a custom domain has none,
+   * and the site says it can't show files there.
+   */
+  USERCONTENT_ORIGIN?: string;
   /** Dev sign-in as the fixture student (dev.ts). Bound only outside prod, from Doppler `dev`. */
   DEV_SIGN_IN_TOKEN?: string;
 }
