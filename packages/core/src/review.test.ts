@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ulid } from "./ids.ts";
 import { parseNote } from "./note.ts";
 import { patch } from "./patch.ts";
-import { ownershipCode } from "./profiles.ts";
+import { ownershipCode, titleHash } from "./profiles.ts";
 import {
   detect,
   headline,
@@ -506,6 +506,26 @@ describe("drift", () => {
     ]);
   });
 
+  it("X is compared only on what X shows: its name and bio, never a headline or location", () => {
+    const x = note("profiles/x.md", {
+      type: "Profile",
+      site: "x",
+      url: "https://x.com/fixture_nadia",
+      name: "Nadia Karim",
+      location: "Dhaka, Bangladesh",
+      about: "NLP for Swahili.",
+    });
+    const read = edited(x, {
+      synced: {
+        url: x.data["url"],
+        owned: true,
+        says: { name: "Nadia Karim", about: "BSc student." },
+        checked: "2026-11-15T00:00:00Z",
+      },
+    });
+    expect(drift([...fixture, read]).map((c) => c.field)).toEqual(["about"]);
+  });
+
   it("compares nothing until the profile shows its code, and gives the code to paste", () => {
     const notes = read({ owned: false });
     expect(drift(notes)).toEqual([
@@ -556,7 +576,7 @@ describe("drift", () => {
       edited(scholar, {
         synced: {
           url: scholar.data["url"],
-          papers: { [PAPER.id]: { title: searchedFor, says } },
+          papers: { [PAPER.id]: { for: titleHash(searchedFor), says } },
           checked: "2026-11-15T00:00:00Z",
         },
       });

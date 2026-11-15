@@ -8,7 +8,7 @@ import {
   isSite,
   ownershipCode,
   paperTitle,
-  titleKey,
+  titleHash,
   type PatchOp,
   type ProfileField,
   type ScholarSays,
@@ -113,9 +113,7 @@ function cached(sql: Sql, data: Readonly<Record<string, unknown>>, now: number):
   const searched = isRecord(synced["papers"]) ? synced["papers"] : {};
   return scholarPapers(sql).every(({ id, title }) => {
     const found = searched[id];
-    return (
-      isRecord(found) && typeof found["title"] === "string" && titleKey(found["title"]) === titleKey(title)
-    );
+    return isRecord(found) && found["for"] === titleHash(title);
   });
 }
 
@@ -152,6 +150,7 @@ export function profileWork(sql: Sql, note: NoteRow): ProfileWork | undefined {
 
 /** The block the note gets for `seen`. A profile once shown to be the person's at this link stays theirs. */
 function blockOf(
+  sql: Sql,
   data: Readonly<Record<string, unknown>>,
   noteId: string,
   seen: ProfileSeen,
@@ -159,14 +158,17 @@ function blockOf(
 ): Record<string, YamlValue> {
   const url = String(data["url"]);
   const checked = new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
-  if (data["site"] === "scholar")
-    return "papers" in seen
-      ? {
-          url,
-          papers: Object.fromEntries(Object.entries(seen.papers).map(([id, p]) => [id, { ...p }])),
-          checked,
-        }
-      : { url, unchecked: "unchecked" in seen ? seen.unchecked : "no answer", checked };
+  if (data["site"] === "scholar") {
+    if (!("papers" in seen))
+      return { url, unchecked: "unchecked" in seen ? seen.unchecked : "no answer", checked };
+    // Only papers still searchable now: one made sensitive (or deleted) while the search was out leaves nothing
+    // on this note, which any connection may read. The title is kept as a hash, never as text.
+    const searchable = new Set(scholarPapers(sql).map((paper) => paper.id));
+    const papers = Object.entries(seen.papers)
+      .filter(([id]) => searchable.has(id))
+      .map(([id, p]) => [id, { for: titleHash(p.title), says: p.says }]);
+    return { url, papers: Object.fromEntries(papers), checked };
+  }
   const code = ownershipCode(noteId);
   const old = data["synced"];
   const wasOwned = isRecord(old) && old["url"] === url && old["owned"] === true;
@@ -201,7 +203,7 @@ export function installProfile(
     const note = getNote(sql, job.noteId);
     if (!note) return "failed";
     const data: Readonly<Record<string, unknown>> = JSON.parse(note.fm);
-    const block = blockOf(data, note.id, seen, now);
+    const block = blockOf(sql, data, note.id, seen, now);
     const old = isRecord(data["synced"]) ? Object.keys(data["synced"]) : [];
     const ops: PatchOp[] = [
       ...Object.entries(block).map(([key, value]): PatchOp => ({ op: "set", path: ["synced", key], value })),

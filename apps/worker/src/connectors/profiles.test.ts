@@ -95,7 +95,10 @@ it("searches Google Scholar for each paper's title and keeps only a listing with
     "serper.google.serp.scholar": { organic: [{ title: "Something else", year: 2025 }] },
   });
   const blocked = treg({ "serper.google.serp.scholar": 503 });
+  // A 200 that isn't a search (an error object) says nothing about whether the paper is listed.
+  const odd = treg({ "serper.google.serp.scholar": { message: "quota" } });
   const work = { site: "scholar", url: "u", papers: [{ id: "p1", title }] } as const;
+  expect(await readProfile(work, TOKEN, odd.web)).toEqual({ papers: { p1: { title, says: "unchecked" } } });
   expect(await readProfile(work, TOKEN, nothing.web)).toEqual({ papers: { p1: { title, says: "missing" } } });
   expect(await readProfile(work, TOKEN, blocked.web)).toEqual({
     papers: { p1: { title, says: "unchecked" } },

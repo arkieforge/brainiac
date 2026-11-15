@@ -13,6 +13,12 @@ export type Site = keyof typeof SITES;
 export const PROFILE_FIELDS = ["name", "headline", "about", "location"] as const;
 export type ProfileField = (typeof PROFILE_FIELDS)[number];
 
+/** What each site's read brings back: X has no headline or location to compare. */
+const SITE_FIELDS: Readonly<Record<Exclude<Site, "scholar">, readonly ProfileField[]>> = {
+  linkedin: PROFILE_FIELDS,
+  x: ["name", "about"],
+};
+
 /**
  * What the person puts anywhere in their LinkedIn or X bio to show the profile is theirs. Tied to the note, so
  * nobody can make someone else's profile count in their own record: its owner would have to post the code.
@@ -33,6 +39,19 @@ const plain = (text: string, code: string) => text.replaceAll(code, "").replaceA
 const clip = (text: string) => (text.length > 80 ? `${text.slice(0, 79)}…` : text);
 /** A title as two listings of one paper agree on it: letters and digits only. */
 export const titleKey = (title: string) => title.toLowerCase().replaceAll(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Which title a paper was searched for, kept on the Profile instead of the title itself: a paper made sensitive
+ * later must not leave its title readable on a note that isn't. FNV-1a over the title's key.
+ */
+export function titleHash(title: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of titleKey(title)) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
 
 /** The title Google Scholar is searched for: the person's own, else the one the paper's registry gave. */
 export function paperTitle(data: Readonly<Record<string, unknown>>): string | undefined {
@@ -108,7 +127,7 @@ export function driftChecks(notes: readonly ReviewNote[]): Check[] {
       continue;
     }
     const says = isRecord(synced["says"]) ? synced["says"] : {};
-    for (const field of PROFILE_FIELDS) {
+    for (const field of SITE_FIELDS[site]) {
       const ours = str(data[field]);
       if (ours === undefined) continue;
       const theirs = str(says[field]);
@@ -139,7 +158,7 @@ function scholar(
     const title = paper && paperTitle(paper.data);
     // A paper retitled since the search was a different search: its answer isn't this paper's.
     if (paper?.data["type"] !== "Paper" || title === undefined || !isRecord(found)) return [];
-    if (typeof found["title"] !== "string" || titleKey(found["title"]) !== titleKey(title)) return [];
+    if (found["for"] !== titleHash(title)) return [];
     const says = found["says"];
     const related = [profile.id];
     if (says === "unchecked")

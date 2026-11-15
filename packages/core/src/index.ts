@@ -39,6 +39,7 @@ export {
   paperTitle,
   PROFILE_FIELDS,
   SITES,
+  titleHash,
   titleKey,
   type ProfileField,
   type ScholarSays,

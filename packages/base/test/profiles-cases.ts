@@ -3,7 +3,7 @@
 // unchecked; nothing loops. cases.ts runs them on both engines.
 import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 
-import { ownershipCode, parseNote, ulid } from "@brainiac/core";
+import { ownershipCode, parseNote, titleHash, ulid } from "@brainiac/core";
 
 import {
   CHECK_CACHE_MS,
@@ -246,8 +246,9 @@ export const profilesCases: Record<string, Case> = {
       const job = read(sql, scholar.noteId, T0);
       const title = "Named Entity Recognition for Low-Resource Swahili News";
       same(job.work, { site: "scholar", url, papers: [{ id: paper.id, title }] });
-      const papers = { [paper.id]: { title, says: 2025 } };
-      equal(installProfile(sql, job.id, { papers }, T0), "installed");
+      // The title is kept as a hash, never as text: the note may be read where a paper made sensitive can't be.
+      const papers = { [paper.id]: { for: titleHash(title), says: 2025 } };
+      equal(installProfile(sql, job.id, { papers: { [paper.id]: { title, says: 2025 } } }, T0), "installed");
       same(synced(sql, scholar.noteId), { url, papers, checked: iso(T0) });
 
       same(requestChecks(sql, T0 + 1), { checking: 0, cached: 1 });
@@ -265,4 +266,36 @@ export const profilesCases: Record<string, Case> = {
       equal(added.status, "applied");
       same(requestChecks(sql, T0 + 3), { checking: 1, cached: 0 });
     },
+  "a paper made sensitive while Google Scholar is searched leaves nothing of it on the profile": (
+    sql,
+    fixtures,
+  ) => {
+    const [paper] = record(sql, fixtures, [PAPER]);
+    ok(paper);
+    const url = "https://scholar.google.com/citations?user=fixture";
+    const scholar = mutate(
+      sql,
+      {
+        op: "create",
+        path: "profiles/scholar.md",
+        raw: `---\nid: ${ulid()}\ntype: Profile\nsite: scholar\nurl: ${url}\n---\n`,
+        class: "normal",
+      },
+      human(),
+    );
+    ok(scholar.status === "applied");
+    const job = read(sql, scholar.noteId, T0);
+    const classified = mutate(
+      sql,
+      { op: "classify", noteId: paper.id, baseRev: getNote(sql, paper.id)?.rev ?? 0, class: "sensitive" },
+      human(T0 + 1),
+    );
+    equal(classified.status, "applied");
+    const title = "Named Entity Recognition for Low-Resource Swahili News";
+    equal(
+      installProfile(sql, job.id, { papers: { [paper.id]: { title, says: 2025 } } }, T0 + 2),
+      "installed",
+    );
+    same(synced(sql, scholar.noteId), { url, papers: {}, checked: iso(T0 + 2) });
+  },
 };

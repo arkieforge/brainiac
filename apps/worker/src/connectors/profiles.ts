@@ -38,8 +38,9 @@ const LinkedInAnswer = type({
   output: { "full_name?": Text, "headline?": Text, "about?": Text, "location?": Text },
 });
 const XAnswer = type({ output: { "username?": Text, "name?": Text, "description?": Text } });
-// Serper's Scholar answer, relayed unchanged.
-const ScholarAnswer = type({ "organic?": type({ "title?": "string", "year?": "number | string" }).array() });
+// Serper's Scholar answer, relayed unchanged. A search that ran always has `organic`, empty when nothing matched;
+// an answer without it (an error object) says nothing about whether the paper is listed.
+const ScholarAnswer = type({ organic: type({ "title?": "string", "year?": "number | string" }).array() });
 
 const text = (value: string | null | undefined) => (value?.trim() ? value.trim() : undefined);
 
@@ -112,7 +113,7 @@ async function scholarSays(web: Web, token: string, title: string): Promise<Scho
   if ("unchecked" in got) return "unchecked";
   const answer = ScholarAnswer(got.answer);
   if (answer instanceof type.errors) return "unchecked";
-  const hit = answer.organic?.find(
+  const hit = answer.organic.find(
     (row) => row.title !== undefined && titleKey(row.title) === titleKey(title),
   );
   if (!hit) return "missing";
