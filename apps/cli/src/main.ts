@@ -21,7 +21,9 @@ brainiac restore <file> [<version>]
 brainiac doctor`;
 
 /** The arguments that run this binary again: the compiled binary alone, or Bun and this script. */
-const self = () => (Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main]);
+const self = () =>
+  // A compiled binary's embedded script: /$bunfs/ on macOS and Linux, B:\~BUN\ on Windows.
+  /^(\/\$bunfs\/|[A-Z]:[\\/]~BUN[\\/])/i.test(Bun.main) ? [process.execPath] : [process.execPath, Bun.main];
 
 /** The login service for this user, running this binary. */
 const unit = () =>

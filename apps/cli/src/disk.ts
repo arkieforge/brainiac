@@ -18,7 +18,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, join, posix, sep } from "node:path";
 
 import { isUlid, normalizePath } from "@brainiac/core";
 
@@ -134,7 +134,8 @@ export function tempTarget(path: string): string | undefined {
   const name = basename(path);
   if (!name.startsWith(TEMP)) return undefined;
   const target = name.slice(TEMP.length + 9); // 8 hex digits and a dash
-  return target ? join(dirname(path), target) : undefined;
+  // Vault paths use "/" on every OS, so a match against the known path holds on Windows too.
+  return target ? posix.join(posix.dirname(path), target) : undefined;
 }
 
 function tempName(full: string): string {
