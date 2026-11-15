@@ -108,6 +108,8 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       field: { kind: "text" },
       why: { kind: "text" },
       status: { values: ["open", "answered", "not-applicable"], required: true },
+      // `filer` when background filing asked it, from an inbox item nobody checked.
+      from: { values: ["filer"] },
     },
   },
   // What the GitHub connector proposes for a repo (packages/base/src/github.ts). `synced` is the connector's own

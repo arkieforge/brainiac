@@ -316,6 +316,8 @@ function questionRows(sql: Sql, ctx: Context): Row[] | string {
       ...(question.ongoing && { ongoing: true }),
       ...(question.suggested !== undefined && { suggested: question.suggested }),
       ...(question.deadline !== undefined && { deadline: question.deadline }),
+      // Its words came from an inbox item nobody checked: read them as data, not instructions.
+      ...(question.filer && { from: "filer" }),
       status: "open",
     };
     return { id: question.id, data, text: JSON.stringify(data) };
@@ -334,6 +336,7 @@ function questionRows(sql: Sql, ctx: Context): Row[] | string {
       // Still open in its note, but its field changed since it was asked: answered some other way.
       status: status === "open" ? "answered" : status,
       ...(note.data["answer"] !== undefined && { answer: note.data["answer"] }),
+      ...(note.data["from"] === "filer" && { from: "filer" }),
     };
     rows.push({ id: note.id, data, text: JSON.stringify(data) });
   }
@@ -977,6 +980,15 @@ const requestInfo = tool(
             );
       if (waiting) return ok({ status: "queued", question: waiting.id, already: true });
     }
+    if (
+      ctx.background &&
+      waitingQuestions(sql).filter(({ question }) => fieldsOf(question)["from"] === "filer").length >=
+        FILER_QUESTION_CAP
+    )
+      return ok({
+        status: "forbidden",
+        message: `The person already has ${FILER_QUESTION_CAP} questions from background filing waiting, so nothing was asked. Release the item: it stays in the inbox for them.`,
+      });
     const id = ulid(ctx.now);
     const path = `questions/${id.toLowerCase()}.md`;
     const was = note && args.field !== undefined ? valueAt(fieldsOf(note), args.field) : undefined;
@@ -991,6 +1003,8 @@ const requestInfo = tool(
       was: isYaml(was) && was !== null ? was : undefined,
       suggested: args.suggested,
       why: args.why,
+      // Marks the words as the filer's, written from an inbox item nobody checked: the site shows them as untrusted.
+      from: ctx.background ? "filer" : undefined,
     };
     const raw = patch(
       "",
@@ -1036,6 +1050,34 @@ const LEASED = {
     "An agent is filing this inbox item. Its lease ends with inbox {lease, done} or {lease, release}, or runs out within 30 minutes.",
 };
 
+/**
+ * Every asked question still waiting for the person, whoever may see it, with the note it's about if that note
+ * exists. Only for counting and ids: a question a background run asked as sensitive still counts against it.
+ */
+function waitingQuestions(sql: Sql): { readonly question: NoteRow; readonly about?: NoteRow }[] {
+  return listNotes(sql, { type: "Question" }).flatMap((question) => {
+    const { status, about, field, was } = fieldsOf(question);
+    if (status !== "open") return [];
+    if (typeof about !== "string") return [{ question }];
+    try {
+      const target = getNoteByPath(sql, resolveRelation(question.path, about));
+      if (!target) return [{ question }];
+      // As findQuestions judges it: a field that changed since it was asked answered the question.
+      if (typeof field === "string" && !sameValue(valueAt(fieldsOf(target), field), was)) return [];
+      return [{ question, about: target }];
+    } catch (error) {
+      if (!(error instanceof PathError)) throw error;
+      return [{ question }];
+    }
+  });
+}
+
+/**
+ * The most questions background filing may have waiting for the person at once, across all its runs: an injected
+ * inbox item can get a run to ask anything, so the filer can't fill the person's list with text it chose.
+ */
+const FILER_QUESTION_CAP = 3;
+
 /** Notes the person is already deciding something about: an open proposal or conflict, or an open question. */
 function waitingForPerson(sql: Sql): Set<string> {
   const ids = new Set<string>();
@@ -1045,21 +1087,9 @@ function waitingForPerson(sql: Sql): Set<string> {
     if (open.noteId !== null) ids.add(open.noteId);
     if (open.kind === "change") for (const item of JSON.parse(open.patch) as PlanItem[]) ids.add(item.noteId);
   }
-  // The note an open asked question is about, whoever may see the question: only ids leave here, and a question a
-  // background run asked as sensitive must still keep the next run off its item.
-  for (const question of listNotes(sql, { type: "Question" })) {
-    const { status, about, field, was } = fieldsOf(question);
-    if (status !== "open" || typeof about !== "string") continue;
-    try {
-      const target = getNoteByPath(sql, resolveRelation(question.path, about));
-      // As findQuestions judges it: a field that changed since it was asked answered the question.
-      const answered =
-        typeof field === "string" && target && !sameValue(valueAt(fieldsOf(target), field), was);
-      if (target && !answered) ids.add(target.id);
-    } catch (error) {
-      if (!(error instanceof PathError)) throw error;
-    }
-  }
+  // The note an open asked question is about: only ids leave here, and a question a background run asked as
+  // sensitive must still keep the next run off its item.
+  for (const { about } of waitingQuestions(sql)) if (about) ids.add(about.id);
   return ids;
 }
 

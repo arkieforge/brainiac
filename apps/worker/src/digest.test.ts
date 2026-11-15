@@ -35,6 +35,7 @@ it("emails each live record's verified owner who has questions waiting, and nobo
   const waiting: Digest = {
     lines: ["When did your role at Acme Robotics end? (Your Role has no end yet)"],
     private: 1,
+    filer: 0,
     more: 3,
   };
   const mail: { to: string; subject: string; text: string }[] = [];
@@ -56,12 +57,18 @@ it("emails each live record's verified owner who has questions waiting, and nobo
 it("names only normal questions, and its subject says only how many", () => {
   const email = digestEmail(
     "ada@example.edu",
-    { lines: ["When did your role at Acme Robotics end? (Your Role has no end yet)"], private: 2, more: 0 },
+    {
+      lines: ["When did your role at Acme Robotics end? (Your Role has no end yet)"],
+      private: 2,
+      filer: 1,
+      more: 0,
+    },
     ORIGIN,
   );
-  expect(email.subject).toBe("3 questions about your Brainiac record");
+  expect(email.subject).toBe("4 questions about your Brainiac record");
   expect(email.text).toContain("- When did your role at Acme Robotics end?");
   expect(email.text).toContain("2 private questions, shown only when you sign in.");
+  expect(email.text).toContain("1 question from background filing, shown only when you sign in.");
   expect(email.text).toContain(`${ORIGIN}/questions`);
   expect(email.text).not.toContain("more wait");
 });

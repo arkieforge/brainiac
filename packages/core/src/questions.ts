@@ -40,6 +40,8 @@ export interface Question {
   /** The soonest deadline of an open application that relies on the note. */
   readonly deadline?: string;
   readonly sensitive: boolean;
+  /** Asked by background filing: its words came from an inbox item nobody checked, so they're shown as untrusted. */
+  readonly filer?: true;
 }
 
 /** What the person answered: a value, "still there", or "not applicable". */
@@ -182,6 +184,7 @@ export function findQuestions(
       ...(!empty(suggested) && { suggested: suggested as YamlValue }),
       ...(context && { deadline: context.deadline }),
       sensitive: sensitive(question, about, why ? undefined : context?.from),
+      ...(question.data["from"] === "filer" && { filer: true }),
     });
   }
 

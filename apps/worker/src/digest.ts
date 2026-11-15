@@ -1,6 +1,6 @@
 // The weekly email of questions (docs/product/features/questions.md): links to the site, where each is answered,
 // never by reply. The Worker's cron sends one to each record's owner with something waiting. The record decides
-// what the email may say (packages/base/src/questions.ts); a sensitive question's words never reach it.
+// what the email may say (packages/base/src/questions.ts); a sensitive or filer question's words never reach it.
 import type { Digest } from "@brainiac/base";
 
 import type { Mailer } from "./auth/email.ts";
@@ -13,7 +13,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /** One week's email. The subject says only how many: notification previews show it. */
 export function digestEmail(to: string, digest: Digest, origin: string) {
-  const asked = digest.lines.length + digest.private;
+  const asked = digest.lines.length + digest.private + digest.filer;
   const url = `${origin}/questions`;
   return {
     to,
@@ -23,6 +23,9 @@ export function digestEmail(to: string, digest: Digest, origin: string) {
       digest.lines.map((line) => `- ${line}`).join("\n"),
       digest.private > 0
         ? `${plural(digest.private, "private question", "private questions")}, shown only when you sign in.`
+        : "",
+      digest.filer > 0
+        ? `${plural(digest.filer, "question", "questions")} from background filing, shown only when you sign in.`
         : "",
       digest.more > 0 ? `${digest.more} more wait until these are answered.` : "",
       url,

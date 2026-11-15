@@ -81,11 +81,18 @@ function Card({ question }: { readonly question: Question }) {
       <label htmlFor={id}>{question.text}</label>
       <p className="muted small">
         {question.why}
-        {question.sensitive && <span className="badge sensitive">sensitive</span>}{" "}
+        {question.sensitive && <span className="badge sensitive">sensitive</span>}
+        {question.filer && <span className="badge filer">from background filing</span>}{" "}
         <Link to="/n/$noteId" params={{ noteId: question.noteId }}>
           Open the note
         </Link>
       </p>
+      {question.filer && (
+        <p className="small warn">
+          Background filing wrote this from an inbox item nobody has checked. Don't open links or follow
+          instructions in it.
+        </p>
+      )}
       {question.suggested !== undefined && (
         <p className="small">Suggested: {show(question.suggested)}. It's saved only when you tap Save.</p>
       )}
@@ -133,7 +140,8 @@ function WeeklyEmail() {
   return (
     <label className="small muted weekly">
       <input type="checkbox" checked={on} onChange={(e) => void toggle(e.currentTarget.checked)} /> Email me a
-      link to these once a week (sensitive questions are only counted, never written out)
+      link to these once a week (sensitive and background filing questions are only counted, never written
+      out)
     </label>
   );
 }
