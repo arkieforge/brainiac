@@ -93,6 +93,9 @@ export const authOptions = (config: AuthConfig) =>
         consentPage: "/consent",
         grantTypes: ["authorization_code", "refresh_token"],
         accessTokenExpiresIn: ACCESS_TOKEN_SECONDS,
+        // Auth is built per request (a Worker can't keep a pool), so the default per-adapter mark would read Neon
+        // on every request. Per isolate is safe: one Worker talks to one database. From the patch in patches/ (#83).
+        resourceSeedScope: "process",
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
       connectedApps(config.onDisconnect),

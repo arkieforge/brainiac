@@ -1,0 +1,66 @@
+diff --git a/dist/authorize-CHM5WetL.mjs b/dist/authorize-CHM5WetL.mjs
+index 48f0f327eb43e2e39cc17e4f8215bc442a39fed1..b8a952936b2a1f7fff767bb39eb15401b8f92d46 100644
+--- a/dist/authorize-CHM5WetL.mjs
++++ b/dist/authorize-CHM5WetL.mjs
+@@ -1129,6 +1129,20 @@ function getSeededOptions(ctx) {
+ 	return seeded;
+ }
+ /**
++* Seed configs that completed in this process, for
++* {@link OAuthOptions.resourceSeedScope} `"process"`. Keyed by what the seed
++* writes, so instances built per request (each with its own adapter) share
++* the mark, and instances configuring different `resources` do not.
++*/
++let seededConfigs = /* @__PURE__ */ new Set();
++function seedConfigKey(opts) {
++	return JSON.stringify([
++		opts.schema?.oauthResource?.modelName ?? "oauthResource",
++		opts.resourceSeedMode ?? "insertOnly",
++		collectResourceInputs(opts)
++	]);
++}
++/**
+ * Seeds `oauthResource` rows from plugin config.
+ *
+ * Behavior is controlled by {@link OAuthOptions.resourceSeedMode}:
+@@ -1212,6 +1226,13 @@ async function seedResources(ctx, opts, isComplete) {
+ * @internal
+ */
+ async function seedResourcesOnce(ctx, opts) {
++	if (opts.resourceSeedScope === "process") {
++		const key = seedConfigKey(opts);
++		if (seededConfigs.has(key)) return;
++		await seedResources(ctx, opts, () => seededConfigs.has(key));
++		seededConfigs.add(key);
++		return;
++	}
+ 	const seeded = getSeededOptions(ctx);
+ 	if (seeded.has(opts)) return;
+ 	await seedResources(ctx, opts, () => seeded.has(opts));
+diff --git a/dist/oauth-BCdaEpYI.d.mts b/dist/oauth-BCdaEpYI.d.mts
+index 6ec216104a76763c3108ebe824f68040e8eb48a4..ebbf243c108d0c0ea3b79eb14c13495be66653ee 100644
+--- a/dist/oauth-BCdaEpYI.d.mts
++++ b/dist/oauth-BCdaEpYI.d.mts
+@@ -1204,6 +1204,22 @@ interface OAuthOptions<Scopes extends readonly Scope[] = InternallySupportedScop
+    * @default "insertOnly"
+    */
+   resourceSeedMode?: "insertOnly" | "merge" | "overwrite";
++  /**
++   * How long a finished `resources` seed is remembered, so later requests
++   * skip its database read.
++   *
++   * - `"adapter"` (default): per database adapter object. An instance built
++   *   once and reused seeds once.
++   * - `"process"`: for the life of the process, per seeded config. Use it
++   *   when Better Auth is built per request with a new database client each
++   *   time (for example on Cloudflare Workers), where `"adapter"` reads the
++   *   table on every request. Only safe when every instance in the process
++   *   uses the same database: an instance on another database with the same
++   *   `resources` skips its seed.
++   *
++   * @default "adapter"
++   */
++  resourceSeedScope?: "adapter" | "process";
+   /**
+    * Opt-in cache membership for resources by `identifier`. Mirrors the
+    * {@link OAuthOptions.cachedTrustedClients} pattern.

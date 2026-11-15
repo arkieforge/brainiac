@@ -39,6 +39,10 @@ let devices = 0;
 
 type Mail = { to: string; subject: string; text: string };
 
+// One oauthResource table for the whole file, as one Neon database outlives the isolate that seeded it: the seed's
+// done mark lasts the isolate (config.ts), so a fresh table per test would never be seeded again.
+let resources: unknown[] = [];
+
 function setup({
   noticesFail = false,
   onDisconnect,
@@ -49,6 +53,7 @@ function setup({
   const mail: Mail[] = [];
   /** Flip `down` to make every database call fail, like Neon being unreachable. */
   const neon = { down: false };
+  let resourceReads = 0;
   const memory = memoryAdapter({
     user: [],
     session: [],
@@ -57,16 +62,26 @@ function setup({
     passkey: [],
     jwks: [],
     oauthClient: [],
-    oauthResource: [],
+    // The adapter commits a transaction by assigning the table, so the shared one goes through an accessor.
+    get oauthResource() {
+      return resources;
+    },
+    set oauthResource(rows) {
+      resources = rows;
+    },
     oauthClientResource: [],
     oauthRefreshToken: [],
     oauthAccessToken: [],
     oauthConsent: [],
     oauthClientAssertion: [],
   });
-  const auth = createAuth({
+  const config: Parameters<typeof createAuth>[0] = {
     database: (options: Parameters<typeof memory>[0]) => {
       const adapter = memory(options);
+      const findOne: typeof adapter.findOne = (data) => {
+        if (data.model === "oauthResource") resourceReads++;
+        return adapter.findOne(data);
+      };
       // Like Postgres, a second row with the same id is refused; single-use reservations rely on it.
       const create: typeof adapter.create = async (data) => {
         const id: unknown = data.data.id;
@@ -78,7 +93,8 @@ function setup({
       };
       return new Proxy(adapter, {
         get: (target, key) => {
-          const value: unknown = key === "create" ? create : Reflect.get(target, key);
+          const value: unknown =
+            key === "create" ? create : key === "findOne" ? findOne : Reflect.get(target, key);
           return neon.down && typeof value === "function"
             ? () => Promise.reject(new Error("Neon is down"))
             : value;
@@ -93,7 +109,8 @@ function setup({
       mail.push(message);
     },
     onDisconnect,
-  });
+  };
+  const auth = createAuth(config);
 
   /** A browser: keeps cookies between calls and talks to the auth handler like the pages do. */
   const browser = () => {
@@ -184,7 +201,17 @@ function setup({
     return found.user.id;
   };
 
-  return { auth, mail, browser, student, neon, studentId };
+  return {
+    auth,
+    mail,
+    browser,
+    student,
+    neon,
+    studentId,
+    /** Another Better Auth over the same database, with its own adapter, as the Worker builds one per request. */
+    perRequest: () => createAuth(config),
+    resourceReads: () => resourceReads,
+  };
 }
 
 const notices = (mail: Mail[]) => mail.filter((m) => m.subject.includes("passkey"));
@@ -572,6 +599,17 @@ async function seedFixture(userId: string) {
     }));
   return base.seed(notes);
 }
+
+describe("the /mcp resource seed", () => {
+  it("reads Neon at most once across the Better Auth instances the Worker builds per request", async () => {
+    const { auth, perRequest, resourceReads } = setup();
+    await auth.$context;
+    for (const request of [perRequest(), perRequest()]) {
+      expect((await request.handler(new Request(`${ORIGIN}/api/auth/ok`))).status).toBe(200);
+    }
+    expect(resourceReads()).toBeLessThanOrEqual(1);
+  });
+});
 
 describe("MCP clients", () => {
   // A client the way claude.ai and Claude Code identify: client_id is the URL of its metadata document (CIMD).
