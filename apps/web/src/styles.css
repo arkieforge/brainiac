@@ -51,6 +51,10 @@
   --bar: 40px;
   --side: 240px;
   --meta: 280px;
+  /* Loading skeletons (Skullet): still bars in the hover shade. Its shimmer and pulse are off, so a page that
+     waits repaints nothing. */
+  --skullet-animation: none;
+  --skullet-base: var(--bg-hover);
   /* Motion: short and decisive, never on a loop. motion.ts holds the same values for JS. */
   --ease: cubic-bezier(0.23, 1, 0.32, 1);
   --fast: 120ms;
@@ -741,6 +745,19 @@ kbd,
   background: var(--bg-raised);
   min-height: 60vh;
 }
+/* A file's stand-in while it opens (FilePane.tsx): a page of text, or one block for pictures and video. */
+.file-sample {
+  justify-self: center;
+  width: min(100%, 640px);
+  border-radius: 3px;
+}
+.file-sample.page {
+  padding: 28px 32px;
+  background: var(--bg-input);
+}
+.file-sample[skullet-block] {
+  aspect-ratio: 4 / 3;
+}
 .pdf {
   display: grid;
   gap: 8px;
@@ -1348,6 +1365,10 @@ audio.media {
   position: relative;
   animation: row-in 280ms var(--ease) backwards;
   animation-delay: calc(var(--i, 0) * 22ms);
+}
+/* A skeleton's sample rows hold still: Skullet measures them once, and the real rows stagger in when they arrive. */
+[skullet-loading] .item {
+  animation: none;
 }
 .item:hover {
   background: transparent;
