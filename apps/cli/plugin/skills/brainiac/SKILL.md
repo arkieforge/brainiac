@@ -66,10 +66,19 @@ url and each field, by the label the page shows, with a value you read from the 
 It waits until the person opens the page and presses Fill in the Brainiac extension, and nothing is submitted.
 If it's refused as a lookalike, the page may be phishing: don't send the person there, and tell them.
 
+## Filing photos
+
+Uploads wait in `unorganized/`. `photos` lists the photos there; a photo the person let you see on the site
+comes back as an image with `photos {id}`. Fill in its note's fields with `update`, move the note into the folder
+it belongs in with `update {move}` (its file goes with it), and propose the facts it shows into the notes they
+belong in, citing it. Never copy a passport, ID or account number from a photo into any note: those live only
+in the vault, so tell the person to save one on the site. For a photo you can't see, ask the person to open it
+on the site and let you see it; don't guess what it shows.
+
 ## Never touch the vault files
 
 Never edit, write, move or delete files in the person's Brainiac folder, and never read its sensitive
-folders, `documents/files/` or `inbox/` from disk. Changes made outside the tools aren't attributed or
+folders, `documents/files/`, `unorganized/` or `inbox/` from disk. Changes made outside the tools aren't attributed or
 checked. The plugin's hook refuses those calls; when it does, do the same job with the tools.
 
 ## Prompts

@@ -29,9 +29,11 @@ function toolServer(call: (name: string, args: unknown) => Promise<Answer>): Mcp
         console.error("mcp tool call failed", name, error);
         return { content: [{ type: "text", text: UNAVAILABLE }], isError: true };
       }
-      return answer.ok
-        ? { content: [{ type: "text", text: JSON.stringify(answer.value) }] }
-        : { content: [{ type: "text", text: answer.error }], isError: true };
+      if (!answer.ok) return { content: [{ type: "text", text: answer.error }], isError: true };
+      const text = { type: "text" as const, text: JSON.stringify(answer.value) };
+      return {
+        content: answer.image ? [text, { type: "image" as const, ...answer.image }] : [text],
+      };
     });
   }
   for (const [name, prompt] of Object.entries(PROMPTS)) {

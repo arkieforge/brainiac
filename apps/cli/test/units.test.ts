@@ -226,6 +226,7 @@ describe("brainiac hook", () => {
       ["Read", { file_path: join(vault, "identity/passport.md") }],
       ["Read", { file_path: join(vault, "facts/tests/ielts-2026-11.md") }],
       ["Read", { file_path: join(vault, "documents/files/transcript-bsc.pdf") }],
+      ["Read", { file_path: join(vault, "unorganized/upload-2026-11-15-0a1b2c3d4e5f.md") }],
       ["Read", { file_path: "inbox/a.md" }, vault],
       ["Read", { file_path: join(code, "ids/passport.md") }],
       ["Grep", { pattern: "cgpa", path: vault }],

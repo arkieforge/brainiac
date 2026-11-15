@@ -8,7 +8,10 @@ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { type } from "arktype";
 
-/** Folders file reads stay out of: the sensitive areas (docs/internals/record-format.md), vault documents, the inbox. */
+/**
+ * Folders file reads stay out of: the sensitive areas (docs/internals/record-format.md), vault documents, uploads not
+ * filed yet, the inbox.
+ */
 const PRIVATE = [
   "facts/tests",
   "history",
@@ -17,6 +20,7 @@ const PRIVATE = [
   "finance",
   "people",
   "documents/files",
+  "unorganized",
   "inbox",
 ];
 

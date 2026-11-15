@@ -7,6 +7,7 @@ import { parseNote, resolveFile } from "@brainiac/core";
 
 import {
   callTool,
+  changesSince,
   classifyFile,
   connect,
   dataKey,
@@ -22,8 +23,13 @@ import {
   recordUpload,
   restrict,
   rewrapDataKey,
+  PERSON,
+  photoFor,
   saveSecret,
   sealFile,
+  shareFile,
+  shareHash,
+  undoRun,
   unseal,
   vaultKeyId,
   withdraw,
@@ -128,6 +134,22 @@ const fileOf = (result: Uploaded | Classified) => {
 };
 const classOf = (sql: Sql, sha256: string) => getFile(sql, sha256)?.class;
 
+/** A photo as the DO records it, its text as the checks got it (from OCR, in the record). */
+function uploadPhoto(sql: Sql, key: Uint8Array, content: string, text: string | undefined, ctx: Context) {
+  const bytes = Buffer.from(`\xff\xd8\xff${content}`, "latin1");
+  const { sha256 } = sealFile(key, bytes);
+  const photo = { sha256, r2Key: `blobs/test/${sha256}`, mime: "image/jpeg", bytes: bytes.length, text };
+  const result = recordUpload(sql, key, photo, ctx);
+  ok("sidecar" in result && result.sidecar, JSON.stringify(result));
+  return { sha256, sidecar: result.sidecar };
+}
+
+const photosOf = (sql: Sql, ctx: Context, args: object = {}) => {
+  const answer = callTool(sql, "photos", args, ctx);
+  ok(answer.ok, JSON.stringify(answer));
+  return answer;
+};
+
 export const vaultCases: Record<string, Case> = {
   "an upload starts unclassified, and an agent's kind is only a suggestion": (sql, fixtures) => {
     const key = record(sql, fixtures);
@@ -150,7 +172,7 @@ export const vaultCases: Record<string, Case> = {
     (sql, fixtures) => {
       const key = record(sql, fixtures);
       const { sha256, result } = upload(sql, key, TRANSCRIPT, human, undefined, FILENAME);
-      const path = `documents/files/upload-2026-11-15-${sha256.slice(0, 12)}.txt`;
+      const path = `unorganized/files/upload-2026-11-15-${sha256.slice(0, 12)}.txt`;
       const file = fileOf(result);
       ok("name" in file);
       // The person sees their own name for it, and where it sits.
@@ -159,7 +181,7 @@ export const vaultCases: Record<string, Case> = {
       const note = getNote(sql, result.sidecar);
       same(
         [note?.path, note?.class, note?.type],
-        [`documents/upload-2026-11-15-${sha256.slice(0, 12)}.md`, "sensitive", "Document"],
+        [`unorganized/upload-2026-11-15-${sha256.slice(0, 12)}.md`, "sensitive", "Document"],
       );
       // Its `file:` resolves to the file's path, as it does on a laptop copy.
       same(
@@ -173,7 +195,7 @@ export const vaultCases: Record<string, Case> = {
       const odd = upload(sql, key, "Scan, page 2\n", human, undefined, "scan.A1234567");
       equal(
         getFile(sql, odd.sha256)?.path,
-        `documents/files/upload-2026-11-15-${odd.sha256.slice(0, 12)}.txt`,
+        `unorganized/files/upload-2026-11-15-${odd.sha256.slice(0, 12)}.txt`,
       );
     },
 
@@ -557,5 +579,281 @@ export const vaultCases: Record<string, Case> = {
       vaultKeyId("vault key two"),
     );
     equal(sql.all("SELECT key FROM meta WHERE key IN ('dataKey', 'vaultKeyId')").length, 0);
+  },
+
+  "an upload lands in unorganized/, and moving its note takes its file along and every link to it": (
+    sql,
+    fixtures,
+  ) => {
+    const key = record(sql, fixtures);
+    const { sha256, result } = upload(sql, key, TRANSCRIPT, human);
+    ok("sidecar" in result && result.sidecar);
+    const sidecar = getNote(sql, result.sidecar);
+    ok(sidecar);
+    const stem = `upload-2026-11-15-${sha256.slice(0, 12)}`;
+    same(
+      [sidecar.path, getFile(sql, sha256)?.path],
+      [`unorganized/${stem}.md`, `unorganized/files/${stem}.txt`],
+    );
+    // A referee whose note links to the scan, and the scan's note naming what it proves.
+    const okafor = mutate(
+      sql,
+      {
+        op: "create",
+        path: "people/dr-okafor.md",
+        raw: `---\nid: 01JD7QA1ZK8M3V5X6Y7Z8A9BCE\ntype: Person\ntitle: Dr. Okafor\nrole: referee\n---\nHer letter cites [the transcript](../unorganized/${stem}.md#grades).\n`,
+        class: "normal",
+      },
+      human,
+    );
+    equal(okafor.status, "applied");
+    const proving = mutate(
+      sql,
+      {
+        op: "patch",
+        noteId: sidecar.id,
+        baseRev: sidecar.rev,
+        ops: [{ op: "set", path: ["proves"], value: ["../people/dr-okafor.md", "notes.md"] }],
+      },
+      human,
+    );
+    ok(proving.status === "applied");
+    const before = changesSince(sql, null, PERSON);
+    ok(before.type === "snapshot");
+
+    const moved = mutate(
+      sql,
+      { op: "move", noteId: sidecar.id, baseRev: proving.rev, path: "identity/scans/transcript-bsc.md" },
+      { ...human, runId: "01JD7QA1ZK8M3V5X6Y7Z8A9MOV" },
+    );
+    ok(moved.status === "applied", JSON.stringify(moved));
+    const note = getNote(sql, sidecar.id);
+    equal(note?.path, "identity/scans/transcript-bsc.md");
+    // Its file went with it, so `file:` still names it, as a laptop copy resolves it.
+    equal(getFile(sql, sha256)?.path, `identity/scans/files/${stem}.txt`);
+    same(
+      sidecarsOf(sql, `identity/scans/files/${stem}.txt`).map((n) => n.id),
+      [sidecar.id],
+    );
+    // Its relation to a note still reaches it; text naming no note stays as it was.
+    same(parseNote(note?.raw ?? "").data["proves"], ["../../people/dr-okafor.md", "notes.md"]);
+    // The referee's link follows it, heading and all.
+    ok(
+      getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(
+        "(../identity/scans/transcript-bsc.md#grades)",
+      ),
+    );
+    // Every device hears of the move through the feed, as a note at its new path.
+    const feed = changesSince(sql, before.seq, PERSON);
+    ok(feed.type === "changes");
+    ok(feed.items.some((item) => !item.deleted && item.noteId === sidecar.id && item.path === note?.path));
+
+    // A place that's taken moves nothing.
+    const taken = mutate(
+      sql,
+      { op: "move", noteId: sidecar.id, baseRev: moved.rev, path: "People/Dr-Okafor.md" },
+      human,
+    );
+    equal(taken.status, "invalid");
+    equal(getNote(sql, sidecar.id)?.path, "identity/scans/transcript-bsc.md");
+
+    // Undoing the move puts the note, its file and the links back.
+    const undone = undoRun(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9MOV", human);
+    ok(undone.status === "applied" && undone.conflicts.length === 0, JSON.stringify(undone));
+    equal(getNote(sql, sidecar.id)?.path, `unorganized/${stem}.md`);
+    equal(getFile(sql, sha256)?.path, `unorganized/files/${stem}.txt`);
+    same(parseNote(getNote(sql, sidecar.id)?.raw ?? "").data["proves"], [
+      "../people/dr-okafor.md",
+      "notes.md",
+    ]);
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../unorganized/${stem}.md#grades)`));
+
+    // Into a folder with a space, the link is still one a reader follows.
+    const spaced = mutate(
+      sql,
+      {
+        op: "move",
+        noteId: sidecar.id,
+        baseRev: getNote(sql, sidecar.id)?.rev ?? 0,
+        path: `my scans/${stem}.md`,
+      },
+      { ...human, runId: "01JD7QA1ZK8M3V5X6Y7Z8A9SPC" },
+    );
+    equal(spaced.status, "applied");
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../my%20scans/${stem}.md#grades)`));
+    // A move whose old place is taken since goes back not at all, so links never point at another note.
+    mutate(
+      sql,
+      {
+        op: "create",
+        path: `unorganized/${stem}.md`,
+        raw: "---\nid: 01JD7QA1ZK8M3V5X6Y7Z8A9TKN\ntype: Person\ntitle: Someone else\nrole: referee\n---\n",
+        class: "normal",
+      },
+      human,
+    );
+    const stuck = undoRun(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9SPC", human);
+    equal(stuck.status, "invalid");
+    equal(getNote(sql, sidecar.id)?.path, `my scans/${stem}.md`);
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../my%20scans/${stem}.md#grades)`));
+  },
+
+  "a connection can't move a note that notes it can't see link to": (sql, fixtures) => {
+    record(sql, fixtures);
+    const made = (id: string, path: string, body: string, cls: "normal" | "sensitive") =>
+      mutate(
+        sql,
+        {
+          op: "create",
+          path,
+          raw: `---\nid: ${id}\ntype: Person\ntitle: ${id}\nrole: referee\n---\n${body}\n`,
+          class: cls,
+        },
+        human,
+      );
+    equal(made("01JD7QA1ZK8M3V5X6Y7Z8A9AAA", "people/okafor.md", "", "normal").status, "applied");
+    // A sensitive note that links to it, with something private in it.
+    const canary = "CANARY-7Q3X";
+    equal(
+      made(
+        "01JD7QA1ZK8M3V5X6Y7Z8A9BBB",
+        "health/notes.md",
+        `[ref](../people/okafor.md) ${canary}`,
+        "sensitive",
+      ).status,
+      "applied",
+    );
+    const agent = connectionFor(sql, { level: "write" });
+    const answer = callTool(
+      sql,
+      "update",
+      { id: "01JD7QA1ZK8M3V5X6Y7Z8A9AAA", rev: 1, move: "referees/okafor.md" },
+      via(agent),
+    );
+    ok(answer.ok);
+    const seen = JSON.stringify(answer.value);
+    ok(seen.includes('"invalid"') && !seen.includes(canary), seen);
+    equal(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9AAA")?.path, "people/okafor.md");
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BBB")?.raw.includes("(../people/okafor.md)"));
+    // The person moves it, and the link follows.
+    equal(
+      mutate(
+        sql,
+        { op: "move", noteId: "01JD7QA1ZK8M3V5X6Y7Z8A9AAA", baseRev: 1, path: "referees/okafor.md" },
+        human,
+      ).status,
+      "applied",
+    );
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BBB")?.raw.includes("(../referees/okafor.md)"));
+  },
+
+  "an agent's move of a photo waits for the person when its level says so, and files it once accepted": (
+    sql,
+    fixtures,
+  ) => {
+    const key = record(sql, fixtures);
+    const { sidecar } = uploadPhoto(sql, key, "a certificate", "Certificate of merit\n", human);
+    const agent = connectionFor(sql, { sensitive: true });
+    const note = getNote(sql, sidecar);
+    ok(note);
+    const answer = callTool(
+      sql,
+      "update",
+      { id: sidecar, rev: note.rev, move: "documents/merit.md" },
+      via(agent),
+    );
+    ok(answer.ok);
+    const value = answer.value as { status: string; proposal: string };
+    equal(value.status, "proposed");
+    equal(getNote(sql, sidecar)?.path, note.path);
+    ok("status" in decide(sql, value.proposal, "accept", human));
+    equal(getNote(sql, sidecar)?.path, "documents/merit.md");
+  },
+
+  "a photo reaches an agent only once the person shares it with their passkey, a vaulted passport too": (
+    sql,
+    fixtures,
+  ) => {
+    const key = record(sql, fixtures);
+    // A photographed passport: the checks found its MRZ, so it is in the vault.
+    const passport = uploadPhoto(sql, key, "passport photo", PASSPORT, human);
+    equal(classOf(sql, passport.sha256), "vault");
+    const agent = connectionFor(sql, { sensitive: true });
+    const ctx = via(agent);
+
+    // Not shared: the agent learns only that a photo waits to be filed, and can't have it.
+    const waiting = JSON.stringify(photosOf(sql, ctx).value);
+    ok(waiting.includes(passport.sidecar) && waiting.includes('"shared":false'), waiting);
+    ok(!waiting.includes("mrz") && !waiting.includes("vault"), waiting);
+    const refused = callTool(sql, "photos", { id: passport.sidecar }, ctx);
+    ok(!refused.ok && refused.error.includes("hasn't let you see"), JSON.stringify(refused));
+    // Only the person shares, and only with their passkey over this turn.
+    equal((shareFile(sql, passport.sha256, true, ctx) as { status: string }).status, "forbidden");
+    const file = getFile(sql, passport.sha256);
+    ok(file);
+    const asked = shareFile(sql, passport.sha256, true, human);
+    same(asked, { status: "needsApproval", challenge: shareHash(file) });
+    const wrong = shareFile(sql, passport.sha256, true, human, { challenge: "another", signature: signed() });
+    ok("error" in wrong);
+    equal(getFile(sql, passport.sha256)?.sharedAt, null);
+    const signature = { challenge: shareHash(file), signature: signed() };
+    ok("file" in shareFile(sql, passport.sha256, true, human, signature));
+
+    // Shared: what Brainiac knows about it, and the photo itself, still nothing of its text.
+    const shared = JSON.stringify(photosOf(sql, ctx).value);
+    ok(shared.includes('"shared":true') && shared.includes('"found":["mrz"]'), shared);
+    ok(!shared.includes("XK1234567") && !shared.includes("KARIM"), shared);
+    const got = photosOf(sql, ctx, { id: passport.sidecar });
+    ok(got.ok && got.attach?.sha256 === passport.sha256, JSON.stringify(got));
+    // Its class is unchanged: still a vault document to every other read surface.
+    equal(classOf(sql, passport.sha256), "vault");
+    same(listFiles(sql, agent), [
+      {
+        sha256: passport.sha256,
+        class: "vault",
+        summary: "Vault document: only you can open it.",
+        kind: null,
+        noteId: getFile(sql, passport.sha256)?.noteId,
+      },
+    ]);
+
+    // Turned off: no passkey needed, and the old signature can't turn it on again.
+    ok("file" in shareFile(sql, passport.sha256, false, human));
+    ok(!callTool(sql, "photos", { id: passport.sidecar }, ctx).ok);
+    ok("error" in shareFile(sql, passport.sha256, true, human, signature));
+    equal(getFile(sql, passport.sha256)?.sharedAt, null);
+
+    // Shared again, it still never reaches a connection without the sensitive scope, or a background run.
+    const again = getFile(sql, passport.sha256);
+    ok(again);
+    ok(
+      "file" in
+        shareFile(sql, passport.sha256, true, human, { challenge: shareHash(again), signature: signed() }),
+    );
+    const floorConnection = connectionFor(sql);
+    const floor = via(floorConnection);
+    same((photosOf(sql, floor).value as { photos: unknown[] }).photos, []);
+    ok(!callTool(sql, "photos", { id: passport.sidecar }, floor).ok);
+    const background = { ...ctx, background: true };
+    same((photosOf(sql, background).value as { photos: unknown[] }).photos, []);
+    ok(!callTool(sql, "photos", { id: passport.sidecar }, background).ok);
+    // A normal note naming the photo's file doesn't reach it without the sensitive scope either.
+    const stand = mutate(
+      sql,
+      {
+        op: "create",
+        path: "notes/passport-copy.md",
+        raw: `---\nid: 01JD7QA1ZK8M3V5X6Y7Z8A9NRM\ntype: Document\ntitle: Copy\nfile: ../${getFile(sql, passport.sha256)?.path}\n---\n`,
+        class: "normal",
+      },
+      human,
+    );
+    equal(stand.status, "applied");
+    // As the record asks again after reading the bytes.
+    ok("error" in photoFor(sql, floorConnection, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
+    ok("view" in photoFor(sql, agent, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
+    // Only a photo can be shared at all.
+    const transcript = upload(sql, key, TRANSCRIPT, human);
+    ok("error" in shareFile(sql, transcript.sha256, true, human, { challenge: "x", signature: signed() }));
   },
 };

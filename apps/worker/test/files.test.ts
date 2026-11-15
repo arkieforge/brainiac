@@ -164,7 +164,7 @@ describe("files", () => {
     expect(res.status).toBe(200);
     expect(body.file).toMatchObject({ name, class: "unclassified" });
     expect(body.file.path).toMatch(
-      new RegExp(`^documents/files/upload-[0-9-]{10}-${body.file.sha256.slice(0, 12)}\\.pdf$`),
+      new RegExp(`^unorganized/files/upload-[0-9-]{10}-${body.file.sha256.slice(0, 12)}\\.pdf$`),
     );
     const note = await (await record("named")).noteRaw(body.sidecar);
     expect(note).toContain(`file: files/${body.file.path.split("/").at(-1)}`);
@@ -228,6 +228,74 @@ describe("files", () => {
     const signed = await kind({ kind: "transcript", response: passkey.authenticate({ challenge }) });
     expect(signed.status).toBe(200);
     expect(await classOf()).toBe("sensitive");
+  });
+
+  it("hands a photo to the person's agent as an image only while they share it, and moves it where they say", async () => {
+    const photo = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new TextEncoder().encode("a certificate")]);
+    const res = await mf.dispatchFetch(`${SITE}/api/files`, {
+      method: "POST",
+      headers: { ...tab("photos"), "content-type": "image/jpeg" },
+      body: photo,
+    });
+    const { file, sidecar } = (await res.json()) as { file: { sha256: string }; sidecar: string };
+    const base = await record("photos");
+    const agent = await base.addConnection({ kind: "cli" });
+    await base.setGrants(agent.id, { level: "write", sensitive: true, holdDays: 0 });
+    const ask = () => base.tool({ connectionId: agent.id }, "photos", { id: sidecar });
+    expect(await ask()).toMatchObject({ ok: false });
+
+    const passkey = createAuthenticator(SITE);
+    const neon = {
+      credentialId: passkey.id,
+      publicKey: passkey.publicKey,
+      counter: 0,
+      approvesAt: new Date(0).toISOString(),
+      origin: SITE,
+    };
+    const share = (body: object) =>
+      mf.dispatchFetch(`${SITE}/api/files/${file.sha256}/share`, {
+        method: "POST",
+        headers: {
+          ...tab("photos"),
+          "content-type": "application/json",
+          "x-test-passkey": JSON.stringify(neon),
+        },
+        body: JSON.stringify(body),
+      });
+    const asked = await share({ on: true });
+    expect(asked.status).toBe(409);
+    const { challenge } = (await asked.json()) as { challenge: string };
+    const shared = await share({ on: true, response: passkey.authenticate({ challenge }) });
+    expect(shared.status).toBe(200);
+    expect(await shared.json()).toMatchObject({ file: { shared: true, class: "unclassified" } });
+
+    // The photo itself, opened from R2, beside what the record knows about it.
+    // The RPC stub's mapped type drops the success arm (its value is `unknown`), so it's read as a plain object.
+    const answer: object = await ask();
+    expect(answer).toMatchObject({ ok: true, image: { mimeType: "image/jpeg" } });
+    const image = "image" in answer && typeof answer.image === "object" ? answer.image : null;
+    const data = image && "data" in image && typeof image.data === "string" ? image.data : "";
+    expect(Uint8Array.from(Buffer.from(data, "base64"))).toEqual(photo);
+    expect(answer).not.toHaveProperty("attach");
+
+    // Turned off, it is gone from the agent again; no passkey is needed to turn it off.
+    expect((await share({ on: false })).status).toBe(200);
+    expect(await ask()).toMatchObject({ ok: false });
+
+    // The person moves it out of unorganized/, and the file goes along.
+    const [note] = (await base.notes({ actor: "human" })) as { id: string; rev: number }[];
+    const moved = await mf.dispatchFetch(`${SITE}/api/notes/${sidecar}/move`, {
+      method: "POST",
+      headers: { ...tab("photos"), "content-type": "application/json" },
+      body: JSON.stringify({ path: "documents/merit-certificate.md", baseRev: note?.rev }),
+    });
+    expect(moved.status).toBe(200);
+    const { files } = (await (
+      await mf.dispatchFetch(`${SITE}/api/files`, { headers: tab("photos") })
+    ).json()) as {
+      files: { path: string }[];
+    };
+    expect(files[0]?.path).toMatch(/^documents\/files\/upload-/);
   });
 
   it("refuses changes from another origin's pages", async () => {

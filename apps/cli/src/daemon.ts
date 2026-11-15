@@ -118,6 +118,11 @@ export class Daemon {
   #gone = false;
   readonly #withholding = new Set<string>();
   #purged = false;
+  /**
+   * Where the record had each note when its file was last written for it: a file still there is one the record
+   * moves (a move on the site or by an agent), while one the person moved on disk stays where they put it.
+   */
+  readonly #recordPaths = new Map<string, string>();
 
   /** After a sensitive note's history was purged, its text is cleared out of the write-ahead log too. */
   #truncateLog(): void {
@@ -271,6 +276,8 @@ export class Daemon {
 
   async #attach(): Promise<void> {
     this.#client = await SyncClient.open(this.#clientOptions());
+    // As the last session left the remote layer: a move that arrives while catching up is still one.
+    for (const [id, remote] of this.#client.state.remote) this.#recordPaths.set(id, remote.path);
     this.#client.subscribe((ids) => this.#reflect(ids));
   }
 
@@ -497,7 +504,12 @@ export class Daemon {
         this.#client.edit(id, raw, known.text);
       }
       if (this.#withheld(id)) return this.#withhold(id); // the save is sent; the file still leaves the device
-      return this.#indexFile(path, id, raw);
+      this.#indexFile(path, id, raw);
+      // A move the record made waited for this save (`#follow`): it follows now, since a save that matches the
+      // record sends nothing, and no answer would come back to bring it.
+      const remote = state.remote.get(id);
+      if (remote && remote.path !== path && this.#recordPaths.get(id) === path) this.#reflect([id]);
+      return;
     }
     let id = idOf(text);
     if (id instanceof Error) return void this.held.set(path, id.message);
@@ -591,6 +603,12 @@ export class Daemon {
     if (state.blocked.has(id)) return;
     const remote = state.remote.get(id);
     const created = state.pending.find((p) => p.noteId === id && p.change.kind === "create")?.change;
+    const onDisk = this.#state.pathOf(id);
+    if (remote && onDisk !== undefined && remote.path !== onDisk && this.#recordPaths.get(id) === onDisk) {
+      if (!this.#follow(id, onDisk, remote.path)) return;
+    }
+    if (remote && (this.#state.pathOf(id) ?? remote.path) === remote.path)
+      this.#recordPaths.set(id, remote.path);
     const path =
       this.#state.pathOf(id) ?? remote?.path ?? (created?.kind === "create" ? created.path : undefined);
     // The record's paths are checked like any input: never outside the vault, never a hidden or non-note file.
@@ -622,6 +640,41 @@ export class Daemon {
     // A save the write displaced, or one found after a delete: the person's change, made on the file they had.
     // An empty one is an editor caught between truncating and writing; its write lands in the kept file.
     if (placed.unseen) this.#client.edit(id, placed.unseen, known?.text ?? "");
+  }
+
+  /**
+   * Moves a note's file where the record moved it: written there first, then gone from where it was, so the note
+   * is never missing from disk. A path the disk can't take, or another file there, holds it where it is.
+   */
+  #follow(id: string, from: string, to: string): boolean {
+    const known = this.#state.known(from);
+    if (!known) return true;
+    if (!isNote(to, this.#inICloud) || !inVault(this.#disk, to)) return false;
+    // A save there the daemon hasn't taken yet: the watcher sends it first, and the move follows its answer.
+    if (readNote(this.#disk, from) !== known.text) return false;
+    const there = this.#state.known(to);
+    const why = `Something else has this name, so the record's move of note ${id} isn't written here.`;
+    const placed =
+      there && there.noteId !== id ? undefined : place(this.#disk, to, known.text, undefined, id);
+    if (placed) this.#keep(to, placed, id);
+    if (!placed || placed.taken || placed.waiting || placed.disk === undefined) {
+      this.held.set(to, why);
+      return false;
+    }
+    this.#state.setKnown({ path: to, noteId: id, text: placed.disk });
+    let gone = remove(this.#disk, from, known.text, id);
+    this.#keep(from, gone, id);
+    // Saved into the old file as it went: the person's change, made on what the daemon knew. The file it put
+    // back goes too, its text sent, so no second copy of the note stays behind to be taken for a new one.
+    if (gone.unseen) this.#client.edit(id, gone.unseen, known.text);
+    if (gone.disk !== undefined) {
+      gone = remove(this.#disk, from, gone.disk, id);
+      this.#keep(from, gone, id);
+    }
+    // shortcut: saved again in the instant between: that file stays, known as the note's, beside the moved one.
+    if (gone.disk === undefined) this.#state.forget(from);
+    this.#indexFile(to, id, placed.disk);
+    return true;
   }
 
   /** Records what a write took off disk, and watches its file a while for a late write. */

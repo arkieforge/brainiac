@@ -45,6 +45,14 @@ export function Plan({ items }: { readonly items: readonly PlanItem[] }) {
                 <dd>{item.patch.live.after ? "comes back" : "is deleted"}</dd>
               </div>
             )}
+            {item.patch.path && (
+              <div>
+                <dt>moves</dt>
+                <dd>
+                  <del>{item.patch.path.before}</del> <ins>{item.patch.path.after}</ins>
+                </dd>
+              </div>
+            )}
             {item.patch.class && (
               <div>
                 <dt>privacy</dt>

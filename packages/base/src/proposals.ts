@@ -127,9 +127,13 @@ function apply(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
       const note = mutation.op === "create" ? undefined : getNote(sql, mutation.noteId);
       if (note && mutation.op !== "create" && note.rev !== mutation.baseRev) {
         const d = items.find((item) => item.noteId === note.id)?.patch ?? { fields: {} };
-        // A class change doesn't depend on the text, so it goes onto the note as it is now, like a field patch
-        // that still does what was held.
-        if (mutation.op === "classify" || (mutation.op === "patch" && rebases(note, mutation.ops, d)))
+        // A class change or a move doesn't depend on the text, so it goes onto the note as it is now, like a field
+        // patch that still does what was held. A move whose rewrites came out differently then waits again.
+        if (
+          mutation.op === "classify" ||
+          mutation.op === "move" ||
+          (mutation.op === "patch" && rebases(note, mutation.ops, d))
+        )
           mutation = { ...mutation, baseRev: note.rev };
         else {
           sql.all(

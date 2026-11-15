@@ -21,7 +21,7 @@ import {
 import { advance, canonical, type Signature } from "./approvals.ts";
 import { canSee, connectionOf, type Connection } from "./connections.ts";
 import { enqueue, finishJob } from "./jobs.ts";
-import { getNote } from "./notes.ts";
+import { getNote, type NoteRow } from "./notes.ts";
 import { mutate, type Context, type Forbidden, type MutationResult } from "./mutate.ts";
 import { extracts, isImage, mediaType, needsReading, PIPELINE } from "./pages.ts";
 import { chunkFile, fileOwner, putChunks } from "./search.ts";
@@ -221,14 +221,20 @@ export interface FileRow {
   readonly pipelineVersion: number;
   /** Who uploaded it (a revision's actor): a passport parsed later writes its note as them. */
   readonly uploadedBy: string | null;
-  /** Where it sits in the record (`documents/files/<name>`): what its sidecar note's `file:` resolves to. */
+  /** Where it sits in the record (`unorganized/files/<name>` until filed): what its sidecar note's `file:` resolves to. */
   readonly path: string | null;
   /** The person's own name for it, as they uploaded it. Only they see it: it can print a secret. */
   readonly name: string | null;
+  /** When it was uploaded; null for an upload from before this was kept. */
+  readonly uploadedAt: number | null;
+  /** When the person let their agents see this photo itself (`shareFile`); null while they don't. */
+  readonly sharedAt: number | null;
+  /** How many times the person turned that on or off: a signature over one turn names it, so it works once. */
+  readonly shares: number;
 }
 
 const COLUMNS =
-  "sha256, r2Key, mime, bytes, pages, class, checks, findings, kind, confirmedAt, noteId, rev, pipelineVersion, uploadedBy, path, name";
+  "sha256, r2Key, mime, bytes, pages, class, checks, findings, kind, confirmedAt, noteId, rev, pipelineVersion, uploadedBy, path, name, uploadedAt, sharedAt, shares";
 
 export const getFile = (sql: Sql, sha256: string): FileRow | undefined =>
   sql.all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE sha256 = ?`, sha256)[0];
@@ -269,6 +275,8 @@ export type FileView =
       readonly noteId: string | null;
       readonly path: string | null;
       readonly name: string | null;
+      /** The person lets their agents see this photo itself (`shareFile`). */
+      readonly shared: boolean;
     }
   /** For agents, a file still unclassified or in the vault: the summary, and (with the sensitive scope) its kind and note. */
   | {
@@ -309,6 +317,7 @@ export function viewFile(connection: Connection | undefined, file: FileRow): Fil
       noteId: file.noteId,
       path: file.path,
       name: file.name,
+      shared: file.sharedAt !== null,
     };
   }
   if (file.class === "unclassified") return { sha256, class: file.class, summary: UNCLASSIFIED };
@@ -391,9 +400,12 @@ export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Con
         uploadedBy: ctx.actor,
         path: null,
         name: null,
+        uploadedAt: ctx.now,
+        sharedAt: null,
+        shares: 0,
       };
       sql.all(
-        `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO files (${COLUMNS}, encrypted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         row.sha256,
         row.r2Key,
         row.mime,
@@ -410,6 +422,9 @@ export function recordUpload(sql: Sql, key: Uint8Array, upload: Upload, ctx: Con
         row.uploadedBy,
         row.path,
         row.name,
+        row.uploadedAt,
+        row.sharedAt,
+        row.shares,
       );
       followUp(sql, row);
       const sidecar = placed(sql, row, upload, ctx);
@@ -457,9 +472,12 @@ const EXTENSIONS: Readonly<Record<string, string>> = {
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
 
+/** Where every upload lands, until the person or their agent moves its sidecar note (and with it the file). */
+export const UNORGANIZED = "unorganized";
+
 /**
  * Gives a file its place in the record, if it has none yet, and its sidecar note there, if no live note names it:
- * `documents/files/upload-<day>-<id>.<ext>` beside `documents/upload-<day>-<id>.md`. The place is named for the
+ * `unorganized/files/upload-<day>-<id>.<ext>` beside `unorganized/upload-<day>-<id>.md`. The place is named for the
  * upload, never for the person's filename, which can print a secret and is kept only on the file. Returns the
  * sidecar's id when the caller may see it. Throws `NotWritten` when the sidecar can't be written.
  */
@@ -470,13 +488,13 @@ function placed(sql: Sql, file: FileRow, upload: Upload, ctx: Context): string |
   let path = file.path;
   if (path === null) {
     const stem = `upload-${new Date(ctx.now).toISOString().slice(0, 10)}-${file.sha256.slice(0, 12)}`;
-    path = `documents/files/${stem}.${EXTENSIONS[mediaType(file.mime)] ?? "bin"}`;
+    path = `${UNORGANIZED}/files/${stem}.${EXTENSIONS[mediaType(file.mime)] ?? "bin"}`;
     sql.all("UPDATE files SET path = ? WHERE sha256 = ?", path, file.sha256);
   }
   const found = sidecarOf(sql, path);
   if (found) return canSee(ctx.connection, found) ? found.id : undefined;
   const stem = path.slice(path.lastIndexOf("/") + 1, path.lastIndexOf("."));
-  const notePath = `documents/${stem}.md`;
+  const notePath = path.slice(0, path.lastIndexOf("/files/") + 1) + `${stem}.md`;
   const id = ulid(ctx.now);
   // Nothing an agent shouldn't read: no filename, no kind until the person says what it is.
   const raw = [
@@ -677,6 +695,170 @@ function confirm(sql: Sql, file: FileRow, kind: string, now: number): { file: Fi
   );
   followUp(sql, updated, file.class);
   return { file: viewFile(undefined, updated) };
+}
+
+/**
+ * The challenge for letting agents see a file's photo, as it is now: tagged so it can't equal any other plan's
+ * hash, and over how many times it was turned on or off, so a signature can't be used twice.
+ */
+export function shareHash(file: FileRow): string {
+  const plan = { share: { sha256: file.sha256, shares: file.shares } };
+  return createHash("sha256").update(canonical(plan)).digest("base64url");
+}
+
+/**
+ * The person lets their agents see a photo itself, or stops them (contract §5). Letting them hands an unread photo
+ * to a model, which may hold anything a passport or a bank card prints, so it is loosening privacy and needs the
+ * person's passkey over `shareHash`, vault document or not (contract §4); stopping them never does. Only the
+ * person decides; no connection can. It never changes the file's class: its text stays out of search and agents.
+ */
+export function shareFile(
+  sql: Sql,
+  sha256: string,
+  on: boolean,
+  ctx: Context,
+  signed?: { readonly challenge: string; readonly signature: Signature },
+): Classified {
+  if (ctx.connection !== undefined)
+    return { status: "forbidden", reason: "Only you can let agents see a file." };
+  return sql.transaction((): Classified => {
+    const file = getFile(sql, sha256);
+    if (!file) return { error: "No such file." };
+    if (!isImage(file.mime)) return { error: "Only a photo can be shown to your agents." };
+    if (on === (file.sharedAt !== null)) return { file: viewFile(undefined, file) };
+    if (on) {
+      const challenge = shareHash(file);
+      if (!signed) return { status: "needsApproval", challenge };
+      if (signed.challenge !== challenge) return { error: "This file changed since you signed. Sign again." };
+      if (!advance(sql, signed.signature)) return { error: "This passkey signature was already used." };
+    }
+    sql.all(
+      "UPDATE files SET sharedAt = ?, shares = shares + 1 WHERE sha256 = ?",
+      on ? ctx.now : null,
+      sha256,
+    );
+    return { file: viewFile(undefined, getFile(sql, sha256) ?? file) };
+  });
+}
+
+/** The photo types a model reads, and the largest it takes (Claude's per-image limit). */
+const READABLE: ReadonlySet<string> = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+interface PhotoBase {
+  /** Its sidecar note's id, path and revision: what `update` files it with. */
+  readonly id: string;
+  readonly path: string;
+  readonly rev: number;
+  /** The day it was uploaded. */
+  readonly uploaded: string | null;
+  readonly mime: string;
+}
+
+/** A photo as the person's agent may know it, beside its sidecar note: more only once the person shared it. */
+export type PhotoView =
+  | (PhotoBase & { readonly shared: false })
+  | (PhotoBase & {
+      /** The person lets the agent see the photo itself (`shareFile`). */
+      readonly shared: true;
+      readonly bytes: number;
+      /** What the person said it is; null until they say. */
+      readonly kind: string | null;
+      readonly class: FileClass;
+      /** What the checks found in it (OCR's text included): kinds of secret, never their values. */
+      readonly found: readonly Finding[];
+      /** The note written from what its MRZ said, if any. */
+      readonly note: string | null;
+      /** Why the agent can't get it as an image, if it can't. */
+      readonly unreadable?: string;
+    });
+
+/** The photo a sidecar note names, if the note is a live sidecar of a stored photo that `connection` can see. */
+function photoOf(sql: Sql, connection: Connection, noteId: string) {
+  // Every upload's sidecar is sensitive; any other note naming the photo needs the same scope to reach it.
+  if (!canSee(connection, SIDECAR)) return undefined;
+  const note = getNote(sql, noteId);
+  if (!note || note.deletedAt !== null || !canSee(connection, note)) return undefined;
+  const path = JSON.parse(note.fm)["file"];
+  if (typeof path !== "string") return undefined;
+  let key: string;
+  try {
+    key = pathKey(resolveFile(note.path, path));
+  } catch (error) {
+    if (error instanceof PathError) return undefined;
+    throw error;
+  }
+  const file = sql
+    .all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE path IS NOT NULL`)
+    .find((row) => pathKey(row.path ?? "") === key);
+  return file && isImage(file.mime) ? { note, file } : undefined;
+}
+
+function photoView(sql: Sql, connection: Connection, note: NoteRow, file: FileRow): PhotoView {
+  const base = {
+    id: note.id,
+    path: note.path,
+    rev: note.rev,
+    uploaded: file.uploadedAt === null ? null : new Date(file.uploadedAt).toISOString().slice(0, 10),
+    mime: mediaType(file.mime),
+  };
+  if (file.sharedAt === null) return { ...base, shared: false };
+  const parsed = file.noteId === null ? undefined : getNote(sql, file.noteId);
+  const unreadable = !READABLE.has(mediaType(file.mime))
+    ? `It's a ${mediaType(file.mime)} file, which models don't read. Ask the person what it shows.`
+    : file.bytes > PHOTO_MAX_BYTES
+      ? "It's larger than the 5 MB a model takes. Ask the person what it shows."
+      : undefined;
+  return {
+    ...base,
+    shared: true,
+    bytes: file.bytes,
+    kind: file.kind,
+    class: file.class,
+    found: JSON.parse(file.findings),
+    note: parsed && parsed.deletedAt === null && canSee(connection, parsed) ? parsed.id : null,
+    ...(unreadable !== undefined && { unreadable }),
+  };
+}
+
+/**
+ * The photos waiting in `unorganized/` (their sidecar notes are there), oldest first, as `connection` may know
+ * them: a sidecar is sensitive, so a connection without the sensitive scope sees none. Only a photo the person
+ * shared says more than that it exists.
+ */
+export function unorganizedPhotos(sql: Sql, connection: Connection): PhotoView[] {
+  return sql
+    .all<{ id: string }>(
+      "SELECT id FROM notes WHERE deletedAt IS NULL AND type = 'Document' AND path LIKE ? ORDER BY path",
+      `${UNORGANIZED}/%`,
+    )
+    .flatMap(({ id }) => {
+      const photo = photoOf(sql, connection, id);
+      return photo ? [photoView(sql, connection, photo.note, photo.file)] : [];
+    })
+    .toSorted((a, b) => (a.uploaded ?? "").localeCompare(b.uploaded ?? ""));
+}
+
+/**
+ * The photo a sidecar note names, for handing to `connection` as an image: only one the person shared (contract
+ * §5), of a type and size a model reads. The record reads its bytes after this, and asks again before it hands
+ * them over, so a share turned off meanwhile holds.
+ */
+export function photoFor(
+  sql: Sql,
+  connection: Connection,
+  noteId: string,
+): { readonly view: PhotoView; readonly file: FileRow } | { readonly error: string } {
+  const photo = photoOf(sql, connection, noteId);
+  if (!photo) return { error: `No photo's note with id ${noteId}.` };
+  const view = photoView(sql, connection, photo.note, photo.file);
+  if (!view.shared)
+    return {
+      error:
+        'The person hasn\'t let you see this photo. Ask them to open it on the site and turn on "Let your Claude see it".',
+    };
+  if (view.unreadable !== undefined) return { error: view.unreadable };
+  return { view, file: photo.file };
 }
 
 // A file token opens one file's bytes once, on the usercontent origin, for a minute. Like a CLI token it names its

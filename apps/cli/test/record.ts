@@ -81,6 +81,20 @@ export class TestRecord {
     for (const peer of this.#peers) this.#later(peer, () => peer.on.message(pushed));
   }
 
+  /** Moves a note in the record, as the site or an agent would, and pushes the change to every client. */
+  move(id: string, path: string): void {
+    const before = currentSeq(this.sql);
+    const baseRev = getNote(this.sql, id)?.rev ?? 0;
+    const moved = mutate(
+      this.sql,
+      { op: "move", noteId: id, baseRev, path },
+      { actor: "site", now: this.#now },
+    );
+    if (moved.status !== "applied") throw new Error(JSON.stringify(moved));
+    const pushed = changesSince(this.sql, before, this.reader);
+    for (const peer of this.#peers) this.#later(peer, () => peer.on.message(pushed));
+  }
+
   note(id: string): NoteRow | undefined {
     return getNote(this.sql, id);
   }

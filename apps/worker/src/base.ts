@@ -8,6 +8,7 @@ import {
   classifyFile,
   dataKey,
   getFile,
+  inBackground,
   installFile,
   installLookup,
   installLink,
@@ -28,11 +29,14 @@ import {
   manifestOf,
   mintFileToken,
   mayClear,
+  photoFor,
   readText,
   recordUpload,
   refuseUpload,
   rewrapDataKey,
   sealFile,
+  shareFile,
+  shareHash,
   takeFileToken,
   unseal,
   viewFile,
@@ -285,7 +289,33 @@ export class Base extends DurableObject<Env> {
       ...(vector && { vector }),
     });
     this.changed(before);
-    return answer;
+    return answer.ok && answer.attach !== undefined ? this.#withPhoto(answer, via) : answer;
+  }
+
+  /**
+   * A `photos` answer with the photo it names, read from R2 and opened. The bytes are read after the call decided
+   * it may have them, so it is decided again by the connection's row as it is now: a share the person turned off,
+   * or a grant narrowed, while R2 answered holds.
+   */
+  async #withPhoto(
+    answer: Extract<Answer, { readonly ok: true }>,
+    via: Parameters<Base["tool"]>[0],
+  ): Promise<Answer> {
+    const { attach, ...rest } = answer;
+    const file = attach && getFile(this.sql, attach.sha256);
+    if (!attach || !file) return { ok: false, error: "That photo is gone." };
+    const [key, object] = await Promise.all([this.dataKey(), this.env.BLOBS.get(file.r2Key)]);
+    if (!object) throw new Error(`The record's file ${file.sha256} is missing from R2.`);
+    const bytes = unseal(key, new Uint8Array(await object.arrayBuffer()), `file:${file.sha256}`);
+    const connection =
+      "oauthClientId" in via
+        ? oauthConnection(this.sql, via.oauthClientId)
+        : getConnection(this.sql, via.connectionId);
+    const still =
+      connection && photoFor(this.sql, via.background ? inBackground(connection) : connection, attach.noteId);
+    if (!still || "error" in still || still.file.sha256 !== file.sha256)
+      return { ok: false, error: still && "error" in still ? still.error : "That photo is gone." };
+    return { ...rest, image: { data: Buffer.from(bytes).toString("base64"), mimeType: still.view.mime } };
   }
 
   /** Ends an MCP client's connection when the person disconnects the app, so it can't come back with its grants. */
@@ -610,6 +640,30 @@ export class Base extends DurableObject<Env> {
     const result = classifyFile(this.sql, sha256, kind, ctx, { challenge, signature });
     this.wake();
     return result;
+  }
+
+  /**
+   * The person lets their agents see a photo itself, or stops them. Only the site's session route may call this.
+   * Letting them needs the person's passkey over the `challenge` a first call returns (contract §4).
+   */
+  async shareFile(
+    sha256: string,
+    on: boolean,
+    caller: Caller,
+    signed?: { readonly response: AuthenticationResponseJSON; readonly approver: Approver },
+  ): Promise<Classified> {
+    let ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    if (!signed || !on) return shareFile(this.sql, sha256, on, ctx);
+    const file = getFile(this.sql, sha256);
+    if (!file) return { error: "No such file." };
+    const challenge = shareHash(file);
+    const signature = await this.check(signed.response, challenge, signed.approver);
+    if ("error" in signature) return signature;
+    // The check awaited: a turn meanwhile counted in `shares`, which the challenge names.
+    ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    return shareFile(this.sql, sha256, on, ctx, { challenge, signature });
   }
 
   /** Every file, as the caller may know it. */

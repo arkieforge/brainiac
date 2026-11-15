@@ -233,6 +233,64 @@ export function KindForm({ file }: { readonly file: FileItem }) {
   );
 }
 
+/**
+ * Whether the person's Claude may see this photo itself, to file it and fill in what it says. Turning that on hands
+ * an unread photo to their agents, so it needs their passkey; turning it off never does.
+ */
+export function ShareForm({ file }: { readonly file: FileItem }) {
+  const [message, setMessage] = useState<string>();
+  const [challenge, setChallenge] = useState<string>();
+  const send = async (body: { readonly on: boolean; readonly response?: unknown }) => {
+    const res = await api(`/api/files/${file.sha256}/share`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => undefined);
+    const answer = await res?.json().catch(() => ({}));
+    await refresh();
+    return { res, answer };
+  };
+  const toggle = async () => {
+    setChallenge(undefined);
+    const { res, answer } = await send({ on: !file.shared });
+    if (res?.status === 409 && typeof answer?.challenge === "string") return setChallenge(answer.challenge);
+    setMessage(res?.ok ? undefined : (answer?.error ?? "That didn't save."));
+  };
+  const approve = async () => {
+    if (!challenge) return undefined;
+    const signed = await sign(challenge);
+    if ("error" in signed) return signed;
+    const { res, answer } = await send({ on: true, response: signed.response });
+    if (!res?.ok) return { error: answer?.error ?? "Your passkey's answer didn't check out." };
+    setChallenge(undefined);
+    setMessage(undefined);
+    return undefined;
+  };
+  return (
+    <div className="fields">
+      <p className="small muted">
+        {file.shared
+          ? "Your Claude can see this photo, to file it and fill in what it shows."
+          : "Your Claude can't see this photo. Let it, and it can file the photo and fill in what it shows."}
+      </p>
+      <button type="button" onClick={() => void toggle()}>
+        {file.shared ? "Stop your Claude seeing it" : "Let your Claude see it"}
+      </button>
+      {message && <p role="alert">{message}</p>}
+      {challenge && (
+        <div className="approval" role="status">
+          <p>
+            This hands the photo itself to your agents, whatever it shows
+            {file.class === "vault" ? ", and the checks found something secret in it" : ""}. It needs your
+            passkey.
+          </p>
+          <ApproveButton approve={approve} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The file itself, once the record hands this page a link to it; an unclassified or vault one after a passkey check. */
 export function FileView({ file }: { readonly file: FileItem }) {
   const [opened, setOpened] = useState<Opened>({ state: "loading" });
@@ -284,13 +342,15 @@ export function FileFacts({ file }: { readonly file: FileItem }) {
       <span className="badge">{file.mime}</span>
       <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
       <p className="small muted">
-        {file.checks === "found"
-          ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
-          : file.checks === "unreadable"
-            ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
-            : file.confirmed
-              ? "The checks found nothing secret, and you confirmed what it is."
-              : "The checks found nothing secret. Confirm what it is to clear it."}
+        {file.shared
+          ? `${file.checks === "found" ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault` : "It stays unclassified"}: your Claude can see the photo because you let it, never its text.`
+          : file.checks === "found"
+            ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
+            : file.checks === "unreadable"
+              ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
+              : file.confirmed
+                ? "The checks found nothing secret, and you confirmed what it is."
+                : "The checks found nothing secret. Confirm what it is to clear it."}
       </p>
     </>
   );

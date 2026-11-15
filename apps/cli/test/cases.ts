@@ -446,6 +446,57 @@ const cases: Record<string, () => Promise<void>> = {
     again.daemon.stop();
   },
 
+  async "a note the record moves moves on disk too, and one the person moved stays where they put it"() {
+    const v = await vault();
+    v.record.move(A, "filed/a.md");
+    await v.until(() => v.read("filed/a.md") !== undefined && v.read("notes/a.md") === undefined, "the move");
+    ok(v.read("filed/a.md")!.includes(`id: ${A}`), "the same note");
+    equal(v.daemon.state.known("filed/a.md")?.noteId, A);
+    equal(v.record.liveCount(), 3, "no new note");
+    // A save at its new place is a save to the same note.
+    v.write("filed/a.md", v.read("filed/a.md")!.replace("start", "saved after the move"));
+    await v.until(() => v.record.note(A)?.raw.includes("saved after the move") ?? false, "the save");
+    equal(v.record.note(A)?.path, "filed/a.md");
+    // Moved on disk by the person (the record keeps its path): a move in the record doesn't drag it back.
+    mkdirSync(join(v.root, "mine"));
+    renameSync(join(v.root, "notes/b.md"), join(v.root, "mine/b.md"));
+    await v.until(() => v.daemon.state.known("mine/b.md") !== undefined, "the local move");
+    v.record.move(B, "filed/b.md");
+    await v.until(() => v.daemon.client.state.remote.get(B)?.path === "filed/b.md", "the record's move");
+    ok(v.read("mine/b.md")?.includes(`id: ${B}`), "it stays where the person put it");
+    equal(v.read("filed/b.md"), undefined);
+    v.daemon.stop();
+  },
+
+  async "a save made just before the record moves the note reaches it, and leaves no second note"() {
+    const v = await vault();
+    v.write("notes/a.md", v.read("notes/a.md")!.replace("start", "saved as it moved"));
+    v.record.move(A, "filed/a.md");
+    await v.until(
+      () =>
+        (v.record.note(A)?.raw.includes("saved as it moved") ?? false) &&
+        (v.read("filed/a.md")?.includes("saved as it moved") ?? false) &&
+        v.read("notes/a.md") === undefined,
+      "the save and the move",
+    );
+    equal(v.record.liveCount(), 3, "no second note");
+    v.daemon.stop();
+  },
+
+  async "a save that matches what the record has still lets the record's move follow"() {
+    const v = await vault();
+    const text = v.read("notes/a.md")!;
+    // The person saves the very text the site just gave the note, which the record has moved; the move arrives
+    // before the watcher takes the save, so it waits for it.
+    const edited = text.replace("start", "the same words");
+    v.write("notes/a.md", edited);
+    feed(v, { noteId: A, seq: 9, deleted: false, rev: 3, path: "filed/a.md", raw: edited, class: "normal" });
+    await v.until(() => v.read("filed/a.md") !== undefined && v.read("notes/a.md") === undefined, "the move");
+    equal(v.read("filed/a.md"), edited);
+    equal(v.record.liveCount(), 3, "no second note");
+    v.daemon.stop();
+  },
+
   async "renaming a note to another case keeps one note and its id"() {
     const v = await vault();
     const before = v.read("notes/a.md")!;
@@ -1266,6 +1317,8 @@ const cases: Record<string, () => Promise<void>> = {
         ["request_info", { question: "Which school?" }],
         // A read the copy can't answer yet (#118) is refused the same way.
         ["ask", { mode: "context", question: "Which school?" }],
+        // Photos stay in the cloud: a laptop copy never holds one to hand over.
+        ["photos", {}],
       ] as const;
       const requests = [
         {
@@ -1316,6 +1369,7 @@ const cases: Record<string, () => Promise<void>> = {
           "undo",
           "request_info",
           "inbox",
+          "photos",
           "fill_form",
         ],
       );
@@ -1357,7 +1411,7 @@ const cases: Record<string, () => Promise<void>> = {
         equal(answer.result.isError, true, `${name} refuses offline, ${what}`);
         ok(/can't be reached/.test(text), text);
         // A read is refused as a read, never told it "changed nothing".
-        equal(/changed nothing/.test(text), name !== "ask", text);
+        equal(/changed nothing/.test(text), name !== "ask" && name !== "photos", text);
       }
       // Nothing changed or queued: the record, the file, and the sync client's pending changes.
       equal(record.note(A)?.raw.includes("offline edit"), false);

@@ -15,6 +15,7 @@ import { importSources, readSource, scanReport, type Source } from "./imports.ts
 import { socketLink } from "./link.ts";
 import { callRecord, serveStdio } from "./mcp.ts";
 import { localCopy, tokenKey } from "./offline.ts";
+import { photosReport } from "./photos.ts";
 import { QUESTIONS_QUERY, questionsReport } from "./questions.ts";
 import { logout, openBrowser, startLogin } from "./login.ts";
 import { service } from "./service.ts";
@@ -28,6 +29,7 @@ brainiac mcp serve [--server <url>] [--background]
 brainiac scan <file or folder>...
 brainiac import [<file or folder>...] [--vault <folder>]
 brainiac questions [--all] [--json]
+brainiac photos [--json]
 brainiac filing [on|off|now]
 brainiac hook
 brainiac resume [--undo]
@@ -280,6 +282,17 @@ async function main(argv: readonly string[]): Promise<void> {
       if (values.json) return console.log(JSON.stringify(answer, null, 2));
       for (const line of questionsReport(answer, config.server, Date.now(), values.all ?? false))
         console.log(line);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (command === "photos") {
+    if (!config.server || !token) fail("brainiac photos needs --server <url> once, and brainiac login.");
+    try {
+      const answer = await callRecord(config.server, token, "photos", {});
+      if (values.json) return console.log(JSON.stringify(answer, null, 2));
+      for (const line of photosReport(answer, config.server)) console.log(line);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }
