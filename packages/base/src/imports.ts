@@ -108,16 +108,8 @@ export function importInto(
 
   const results: Imported[] = [];
   for (const note of notes) {
-    // It couldn't see the note it made, nor tell next time that the record has it.
     if (note.sensitive && !reader.sensitive) {
-      results.push({
-        ...(note.path !== undefined && { path: note.path }),
-        result: {
-          status: "forbidden",
-          reason:
-            "This connection can't see sensitive notes, so it can't import one. Grant it the sensitive scope on the account page, then import again.",
-        },
-      });
+      results.push({ ...(note.path !== undefined && { path: note.path }), result: BLIND });
       continue;
     }
     let data: Readonly<Record<string, unknown>>;
@@ -174,6 +166,10 @@ export function importInto(
       .map((item) => [splitNote(item.raw).body.trim(), item.path]),
   );
   for (const { text, sensitive } of inbox) {
+    if (sensitive && !reader.sensitive) {
+      results.push({ result: BLIND });
+      continue;
+    }
     const twin = texts.get(text.trim());
     if (twin !== undefined) {
       results.push({ status: "duplicate", of: twin });
@@ -198,6 +194,13 @@ export function importInto(
   }
   return results;
 }
+
+// It couldn't see what it made, nor tell next time that the record has it.
+const BLIND: MutationResult = {
+  status: "forbidden",
+  reason:
+    "This connection can't see sensitive notes, so it can't import one. Grant it the sensitive scope on the account page, then import again.",
+};
 
 const invalid = (path: string | undefined, field: string, message: string): Imported => ({
   ...(path !== undefined && { path }),

@@ -77,10 +77,13 @@ describe("reading a LinkedIn export", () => {
     ]);
   });
 
-  it("keeps out a file that prints an ID number, and a position it can't name", () => {
+  it("keeps out a file or a position that prints an ID number, and a position it can't name", () => {
     const plan = fromLinkedIn(
       new Map([
-        ["Positions.csv", "Company Name,Title,Started On\n,Volunteer,Jan 2024\n"],
+        [
+          "Positions.csv",
+          "Company Name,Title,Started On,Description\n,Volunteer,Jan 2024,\nExample Travel,Guide,Mar 2023,Passport No. XK1234567 on file\n",
+        ],
         ["Certifications.csv", "Name,License Number\nDriving,Driver's license number: DL 12345678\n"],
       ]),
     );
@@ -89,6 +92,7 @@ describe("reading a LinkedIn export", () => {
     expect(plan.left.map((left) => left.what)).toEqual([
       "Positions.csv: Volunteer",
       "Certifications.csv, 1 row",
+      "facts/roles/guide-example-travel-2023.md",
     ]);
   });
 });

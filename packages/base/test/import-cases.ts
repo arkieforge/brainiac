@@ -212,6 +212,13 @@ export const importCases: Record<string, Case> = {
         notes: [{ raw, path: "people/dr-okafor.md", sensitive: true }],
       });
       equal(sensitive?.status, "forbidden", JSON.stringify(sensitive));
+      // Sensitive inbox text too: a second import couldn't tell it was there.
+      const notes = listNotes(sql).length;
+      const [text] = importing(sql, floor, {
+        inbox: [{ text: "IELTS re-mark: writing 7.5", sensitive: true }],
+      });
+      equal(text?.status, "forbidden", JSON.stringify(text));
+      equal(listNotes(sql).length, notes);
       // Sent as normal, it matches only a note the connection can't see: a new proposal, at a path that names nobody.
       const [normal] = importing(sql, floor, { notes: [{ raw, path: "people/dr-okafor.md" }] });
       equal(normal?.status, "proposed", JSON.stringify(normal));

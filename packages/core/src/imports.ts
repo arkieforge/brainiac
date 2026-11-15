@@ -202,7 +202,13 @@ export function fromLinkedIn(files: ReadonlyMap<string, string>): Plan {
       what: `${other} other ${other === 1 ? "file" : "files"}`,
       why: "about other people or LinkedIn itself, not your record",
     });
-  return { notes, inbox, left };
+  // A description can print a number too: those notes go nowhere, like the inbox text above.
+  const clean: Draft[] = [];
+  for (const note of notes) {
+    if (scan(note.raw).length === 0) clean.push(note);
+    else left.push({ what: note.path, why: SECRET });
+  }
+  return { notes: clean, inbox, left };
 }
 
 /** Areas whose notes hold ID or account numbers, which only the site's vault keeps: never sent as note text. */
