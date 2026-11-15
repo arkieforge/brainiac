@@ -18,12 +18,14 @@ import {
   grantHash,
   migrate,
   mintToken,
+  openReview,
   mutate,
   nextWake,
   planHash,
   recordApproval,
   releaseDue,
   restrict,
+  startReview,
   tokenBase,
   undoRun,
   withdraw,
@@ -90,6 +92,7 @@ function granted(sql: Sql, change: Partial<Pick<Connection, "level" | "sensitive
 }
 
 const set = (field: string, value: YamlValue): PatchOp => ({ op: "set", path: [field], value });
+const section = (heading: string, content: string): PatchOp => ({ op: "section", heading, content });
 const patchOf = (sql: Sql, noteId: string, ops: readonly PatchOp[]): Mutation => ({
   op: "patch",
   noteId,
@@ -157,6 +160,7 @@ export const connectionCases: Record<string, Case> = {
       sensitive: true,
       holdDays: 3,
     } as const;
+    ok("error" in grant(sql, { ...plan, sensitive: "yes" as unknown as boolean }, signed()));
     const signature = signed();
     const raised = grant(sql, plan, signature);
     ok("connection" in raised, JSON.stringify(raised));
@@ -396,6 +400,74 @@ export const connectionCases: Record<string, Case> = {
     // The person picks the held side.
     applied(decide(sql, second.proposalId, "accept", human()));
     equal(field(sql, role, "end"), "2025-11-30");
+
+    // An op that did nothing when it was held (org set to the value it had) would undo the person's edit now.
+    const third = proposed(
+      mutate(
+        sql,
+        patchOf(sql, role, [set("end", "2026-01-31"), set("org", "Acme Robotics GmbH")]),
+        via(writer),
+      ),
+    );
+    applied(mutate(sql, patchOf(sql, role, [set("org", "Acme Robotics AG")]), human()));
+    releaseDue(sql, third.autoApplyAt ?? 0);
+    same([field(sql, role, "end"), field(sql, role, "org")], ["2025-11-30", "Acme Robotics AG"]);
+    equal(proposal(sql, third.proposalId)?.kind, "conflict");
+  },
+
+  "bringing back a deleted held-type note with other values is held, and so is rewriting its body": (
+    sql,
+    fixtures,
+  ) => {
+    const { role } = record(sql, fixtures);
+    const writer = granted(sql, { level: "write" });
+    const text = getNote(sql, role)?.raw ?? "";
+    applied(mutate(sql, { op: "delete", noteId: role, baseRev: 1 }, human()));
+    const changed = text.replace("end: 2025-09-30", "end: 2025-12-31");
+    proposed(mutate(sql, { op: "put", noteId: role, baseRev: 2, raw: changed }, via(writer)));
+    equal(getNote(sql, role)?.deletedAt, T0);
+    // Brought back as it was: nothing existing changes.
+    applied(mutate(sql, { op: "put", noteId: role, baseRev: 2, raw: text }, via(writer)));
+
+    proposed(
+      mutate(
+        sql,
+        patchOf(sql, role, [section("What I did", "Ran the whole robotics division.\n")]),
+        via(writer),
+      ),
+    );
+    // Text added after the body is a new value.
+    applied(mutate(sql, patchOf(sql, role, [section("Next", "A second internship.\n")]), via(writer)));
+  },
+
+  "a held undo undoes only what the run had done when it was held": (sql, fixtures) => {
+    const { role } = record(sql, fixtures);
+    const writer = granted(sql, { level: "write" });
+    const run = { ...via(writer), runId: "run-1" };
+    applied(mutate(sql, patchOf(sql, role, [set("team", "fleet")]), run));
+    // Undoing removes a value the Role now has: held like any other change to it.
+    const held = proposed(undoRun(sql, "run-1", via(writer)));
+    applied(mutate(sql, patchOf(sql, role, [set("floor", 3)]), run));
+    releaseDue(sql, held.autoApplyAt ?? 0);
+    same([field(sql, role, "team"), field(sql, role, "floor")], [undefined, 3]);
+  },
+
+  "the person's review session covers accepting a proposal, as it covers their own edit": (sql, fixtures) => {
+    const { ielts } = record(sql, fixtures);
+    const verify = patchOf(sql, ielts, [set("verified", { by: "human", fields: ["overall"] })]);
+    const verdict = mutate(sql, verify, human());
+    ok(verdict.status === "needsApproval");
+    const approved = recordApproval(sql, verdict.items, signed(), T0);
+    ok("approvalId" in approved);
+    applied(mutate(sql, verify, { ...human(), approvalId: approved.approvalId }));
+
+    const proposer = granted(sql, { level: "propose", sensitive: true });
+    const waiting = proposed(mutate(sql, patchOf(sql, ielts, [set("overall", 7.5)]), via(proposer)));
+    equal(decide(sql, waiting.proposalId, "accept", human()).status, "needsApproval");
+    const nonce = startReview(sql, [ielts], "human", T0);
+    ok("review" in openReview(sql, nonce, "human", signed(), T0));
+    applied(decide(sql, waiting.proposalId, "accept", { ...human(), review: nonce }));
+    equal(field(sql, ielts, "overall"), 7.5);
   },
 
   "a held change whose connection is lowered or gone waits for the person": (sql, fixtures) => {

@@ -27,7 +27,7 @@ changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed
 landed       { changeId PK, result JSON, at }                       // every sync change answered, 90 days: a replay gets the same answer
 clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion }   // strict in-order apply; ackedUpTo: the highest it sent
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
-proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema, action?, runId?, at }   // status: open | applied | rejected | withdrawn; a held change keeps its plan in patch and what applies it in action
+proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema, action?, runId? }   // status: open | applied | rejected | withdrawn; a held change keeps its plan in patch and what applies it in action
 approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)], assertion, credentialId, at, usedAt? }   // used once
 review_runs  { nonce, actor, items JSON, assertion, credentialId, expiresAt }   // one signature, only for its opener and the items shown; assertion '' until signed
 passkey_keys { credentialId PK, publicKey, counter }                // the last counter each passkey signed with here

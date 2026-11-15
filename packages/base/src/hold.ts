@@ -3,7 +3,15 @@
 // connection's hold days. It's keyed on the note's type as the change found it, so changing the type or moving
 // the note can't escape it, and moving any note out of a held type's folder is held too. A new note is never
 // held, since it starts unverified, unless it supersedes a held-type note.
-import { deepEqual, parseManifest, pathKey, PathError, type Manifest, type PlanItem } from "@brainiac/core";
+import {
+  deepEqual,
+  parseManifest,
+  pathKey,
+  PathError,
+  splitNote,
+  type Manifest,
+  type PlanItem,
+} from "@brainiac/core";
 
 import { relationTarget, type Effect } from "./approvals.ts";
 import type { Mutation } from "./mutate.ts";
@@ -11,7 +19,10 @@ import type { NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 /** What a held proposal runs when it's released: one mutation, or an undo of a run. */
-export type Action = Mutation | { readonly op: "undo"; readonly runId: string };
+export type Action =
+  | Mutation
+  /** `upTo`: the last `seq` when it was held, so a release undoes only what was held, not what the run did since. */
+  | { readonly op: "undo"; readonly runId: string; readonly upTo: number };
 
 export interface Proposed {
   readonly status: "proposed";
@@ -60,6 +71,8 @@ function heldOf(manifest: Manifest | undefined) {
   };
 }
 
+const body = (note: NoteRow) => splitNote(note.raw).body;
+
 /** Whether a write-level change with this effect waits out the hold. */
 export function holds(sql: Sql, manifest: Manifest | undefined, { before, after }: Effect): boolean {
   const held = heldOf(manifest);
@@ -73,12 +86,19 @@ export function holds(sql: Sql, manifest: Manifest | undefined, { before, after 
     (!deepEqual(was?.["supersedes"], supersedes) || before?.path !== after.path) &&
     held.type(liveData(relationTarget(sql, after, supersedes)));
   if (edge) return true;
-  if (!was || !before) return false;
+  if (!before) return false;
+  // What the note held, even as a tombstone: bringing a held-type note back with other values is an edit to it.
+  const prior: Readonly<Record<string, unknown>> = JSON.parse(before.fm);
   // Moved (moves arrive with #38): out of a held area, or a held-type note anywhere.
-  if (before.path !== after.path && (held.area(before.path) || held.type(was))) return true;
-  if (!held.type(was)) return false;
-  // Deleted, or an existing value changed or removed. A new field is a new value, not a change to one.
-  return !is || Object.keys(was).some((key) => !Object.hasOwn(is, key) || !deepEqual(was[key], is[key]));
+  if (before.path !== after.path && (held.area(before.path) || held.type(prior))) return true;
+  if (!held.type(prior)) return false;
+  if (!is) return was !== undefined;
+  // An existing value changed or removed, or existing text in the body rewritten. A new field, or text added
+  // after the body, is a new value, not a change to one.
+  return (
+    !body(after).startsWith(body(before)) ||
+    Object.keys(prior).some((key) => !Object.hasOwn(is, key) || !deepEqual(prior[key], is[key]))
+  );
 }
 
 /** Records a held change, after its transaction rolled back: the plan it would apply, and how to apply it. */
@@ -86,13 +106,13 @@ export function recordHeld(
   sql: Sql,
   action: Action,
   items: readonly PlanItem[],
-  ctx: { readonly actor: string; readonly runId?: string; readonly now: number },
+  ctx: { readonly actor: string; readonly runId?: string },
   autoApplyAt: number | null,
   id: string,
 ): Proposed {
   sql.all(
-    `INSERT INTO proposals (id, noteId, patch, actor, autoApplyAt, status, kind, action, runId, at)
-     VALUES (?, ?, ?, ?, ?, 'open', 'change', ?, ?, ?)`,
+    `INSERT INTO proposals (id, noteId, patch, actor, autoApplyAt, status, kind, action, runId)
+     VALUES (?, ?, ?, ?, ?, 'open', 'change', ?, ?)`,
     id,
     items.length === 1 ? (items[0]?.noteId ?? null) : null,
     JSON.stringify(items),
@@ -100,7 +120,6 @@ export function recordHeld(
     autoApplyAt,
     JSON.stringify(action),
     ctx.runId ?? null,
-    ctx.now,
   );
   return { status: "proposed", proposalId: id, autoApplyAt };
 }

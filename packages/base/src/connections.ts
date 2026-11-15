@@ -109,7 +109,7 @@ const TOKEN = /^brn_([0-9a-f]{1,128})_([\w-]{43})$/;
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
-/** The record a CLI token names, for routing only: the record itself decides whether the token is good. */
+/** The record a CLI token names, for routing only (the /sync route, #87): the record itself decides whether the token is good. */
 export const tokenBase = (token: string): string | undefined => TOKEN.exec(token)?.[1];
 
 /** A new token for a CLI connection of the record `baseId`. Shown once; the record keeps only its hash. */
@@ -164,6 +164,7 @@ export type Granted = { readonly connection: Connection } | { readonly error: st
 
 function invalidGrant(plan: Omit<GrantPlan, "connectionId" | "rev">): string | undefined {
   if (!LEVELS.includes(plan.level)) return `level must be one of ${LEVELS.join(", ")}.`;
+  if (typeof plan.sensitive !== "boolean") return "sensitive must be true or false.";
   if (!Number.isInteger(plan.holdDays) || plan.holdDays < 0 || plan.holdDays > MAX_HOLD_DAYS)
     return `holdDays must be a whole number from 0 to ${MAX_HOLD_DAYS}.`;
   return undefined;

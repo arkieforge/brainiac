@@ -153,6 +153,7 @@ describe("connections", () => {
     expect(await base.rev(role)).toBe(1);
     expect(await base.decide(held.proposalId, "accept", human)).toMatchObject({ status: "applied" });
     expect(await base.rev(role)).toBe(2);
-    expect(await base.actorOf(role)).toBe(`connection:${connection.id}`);
+    // Accepted, it's the person's change.
+    expect(await base.actorOf(role)).toBe("human");
   });
 });

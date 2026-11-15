@@ -261,7 +261,6 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "CREATE INDEX tokens_connection ON tokens (connectionId)",
     "ALTER TABLE proposals ADD COLUMN action TEXT",
     "ALTER TABLE proposals ADD COLUMN runId TEXT",
-    "ALTER TABLE proposals ADD COLUMN at INTEGER NOT NULL DEFAULT 0",
   ],
 ];
 

@@ -388,29 +388,33 @@ export function undoRun(
   runId: string,
   ctx: Context,
 ): UndoResult | NeedsApproval | Proposed | Forbidden {
-  return undoing(sql, runId, ctx, false);
+  const [seq] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seq'");
+  return undoing(sql, { op: "undo", runId, upTo: Number(seq?.value ?? 0) }, ctx, false);
 }
 
-/** Applies a released proposal's undo. */
-export const releaseUndo = (sql: Sql, runId: string, ctx: Context) => undoing(sql, runId, ctx, true);
+/** Applies a released proposal's undo: only the part of the run that was held. */
+export const releaseUndo = (sql: Sql, action: Extract<Action, { op: "undo" }>, ctx: Context) =>
+  undoing(sql, action, ctx, true);
 
 function undoing(
   sql: Sql,
-  runId: string,
+  action: Extract<Action, { op: "undo" }>,
   ctx: Context,
   released: boolean,
 ): UndoResult | NeedsApproval | Proposed | Forbidden {
+  const { runId, upTo } = action;
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
-  return judged(sql, undo, "undo", { op: "undo", runId }, released, (started): UndoResult | Forbidden => {
+  return judged(sql, undo, "undo", action, released, (started): UndoResult | Forbidden => {
     // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
     // part; keep whole runs if people undo month-old runs.
     const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
       `SELECT revisions.noteId, revisions.patch, revisions.raw FROM revisions
        JOIN changes ON changes.noteId = revisions.noteId AND changes.rev = revisions.rev
-       WHERE revisions.runId = ? ORDER BY changes.seq DESC`,
+       WHERE revisions.runId = ? AND changes.seq <= ? ORDER BY changes.seq DESC`,
       runId,
+      upTo,
     );
     // Its conflicts would show the note's current values: a connection can't undo into a note it can't see.
     const hidden = revisions.some((revision) => {

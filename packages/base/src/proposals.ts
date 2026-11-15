@@ -1,11 +1,22 @@
 // Proposals (contract §3): held changes, a propose-level connection's changes, and conflicts. Only the person
 // decides them; a connection may withdraw its own. A held change applies on its own once its hold runs out, if
 // its connection still exists at write level; otherwise it waits for the person.
-import { deepEqual, patch, splitNote, type Diff, type PlanItem, type YamlValue } from "@brainiac/core";
+import {
+  deepEqual,
+  NoteParseError,
+  parseNote,
+  patch,
+  PatchError,
+  splitNote,
+  type Diff,
+  type PatchOp,
+  type PlanItem,
+  type YamlValue,
+} from "@brainiac/core";
 
 import type { NeedsApproval } from "./approvals.ts";
 import { connectionOf } from "./connections.ts";
-import { side, stateOf, type State } from "./diff.ts";
+import { diff, side, stateOf, type State } from "./diff.ts";
 import type { Action, Proposed } from "./hold.ts";
 import {
   mutate,
@@ -16,7 +27,7 @@ import {
   type MutationResult,
   type UndoResult,
 } from "./mutate.ts";
-import { getNote } from "./notes.ts";
+import { getNote, type NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
 
 interface ProposalRow {
@@ -75,26 +86,42 @@ const towards = (now: State, d: Diff): Diff => ({
 });
 
 /**
- * Runs a change proposal's action. A note changed since the proposal was made applies it only if the change was a
- * field patch whose fields nobody has touched since; otherwise the proposal becomes a conflict for the person.
+ * Whether a held field patch, replayed on the note as it is now, does exactly what was held. An op that did
+ * nothing then (a field set to the value it had) may undo someone's edit now, so the whole effect must match.
+ */
+function rebases(note: NoteRow, ops: readonly PatchOp[], held: Diff): boolean {
+  if (note.deletedAt !== null) return false;
+  let raw: string;
+  try {
+    raw = patch(note.raw, ops);
+    const data: unknown = JSON.parse(JSON.stringify(parseNote(raw).data));
+    const after = diff(stateOf(note), { data: data as State["data"], body: splitNote(raw).body, live: true });
+    return deepEqual(JSON.parse(JSON.stringify(after)), held);
+  } catch (error) {
+    if (error instanceof PatchError || error instanceof NoteParseError) return false;
+    throw error;
+  }
+}
+
+/**
+ * Runs a change proposal's action, as `ctx` (the person accepting it, or its connection when its hold ran out). A
+ * note changed since the proposal was made takes it only if it is a field patch that still does exactly what was
+ * held; otherwise the proposal becomes a conflict for the person.
  */
 function apply(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
   return sql.transaction((): Decided => {
     const action: Action = JSON.parse(proposal.action ?? "null");
-    const run: Context = {
-      ...ctx,
-      actor: proposal.actor,
-      ...(proposal.runId !== null && { runId: proposal.runId }),
-    };
+    const run: Context = { ...ctx, ...(proposal.runId !== null && { runId: proposal.runId }) };
     let result: Decided;
-    if (action.op === "undo") result = releaseUndo(sql, action.runId, run);
+    if (action.op === "undo") result = releaseUndo(sql, action, run);
     else {
       let mutation = action;
       const note = mutation.op === "create" ? undefined : getNote(sql, mutation.noteId);
       if (note && mutation.op !== "create" && note.rev !== mutation.baseRev) {
         const items: PlanItem[] = JSON.parse(proposal.patch);
         const d = items.find((item) => item.noteId === note.id)?.patch ?? { fields: {} };
-        if (mutation.op === "patch" && at(stateOf(note), d)) mutation = { ...mutation, baseRev: note.rev };
+        if (mutation.op === "patch" && rebases(note, mutation.ops, d))
+          mutation = { ...mutation, baseRev: note.rev };
         else {
           sql.all(
             "UPDATE proposals SET kind = 'conflict', patch = ?, action = NULL, autoApplyAt = NULL WHERE id = ?",
@@ -141,8 +168,9 @@ function pick(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
 }
 
 /**
- * The person accepts or rejects a proposal. Accepting applies it now, as its author's change on the person's
- * authority (the approval list still binds: a `needsApproval` is signed, then accepted again with the approval).
+ * The person accepts or rejects a proposal. Accepting applies it now as the person's own change, in its author's
+ * run; the proposal keeps who made it. The approval list still binds: a `needsApproval` is signed (or covered by
+ * the person's review session), then accepted again.
  * Accepting a conflict writes its kept-out side. No connection may decide.
  */
 export function decide(sql: Sql, proposalId: string, decision: "accept" | "reject", ctx: Context): Decided {
@@ -180,10 +208,14 @@ export function releaseDue(sql: Sql, now: number): void {
   );
   for (const proposal of due) {
     const connection = connectionOf(sql, proposal.actor);
-    const result =
-      connection?.level === "write"
-        ? apply(sql, proposal, { actor: proposal.actor, now, connection })
-        : undefined;
+    let result: Decided | undefined;
+    try {
+      if (connection?.level === "write")
+        result = apply(sql, proposal, { actor: proposal.actor, now, connection });
+    } catch (error) {
+      // A bug, not a refusal: it rolled back. The person gets it rather than every alarm failing on it.
+      console.error("held proposal failed to apply", proposal.id, error);
+    }
     if (result?.status !== "applied" && result?.status !== "conflict")
       sql.all("UPDATE proposals SET autoApplyAt = NULL WHERE id = ?", proposal.id);
   }
