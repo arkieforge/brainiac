@@ -1,4 +1,6 @@
+import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
@@ -6,5 +8,11 @@ import { defineConfig } from "vite-plus";
 // the edge caches only the shell and static assets (docs/internals/architecture.md) and the client renders the
 // record from sync.
 export default defineConfig({
-  plugins: [tanstackStart({ spa: { enabled: true, prerender: { outputPath: "/index.html" } } }), react()],
+  // `@/` is src/, the alias shadcn writes into the components it adds (components.json).
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  plugins: [
+    tailwindcss(),
+    tanstackStart({ spa: { enabled: true, prerender: { outputPath: "/index.html" } } }),
+    react(),
+  ],
 });

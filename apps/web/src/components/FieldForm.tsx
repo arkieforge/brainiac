@@ -1,8 +1,9 @@
-import type { Manifest } from "@brainiac/core";
+import { parseNote, type Manifest } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 import { useEffect, useRef, useState } from "react";
 
-import { commitField, editField, inputOf, type Field } from "../fields.ts";
+import { commitField, editField, inputOf, type Field, type SaveOnline } from "../fields.ts";
+import { calm } from "../motion.ts";
 import { saveOnline } from "../record.ts";
 
 /** How long typing pauses before a text field's edit is sent. */
@@ -27,16 +28,57 @@ function FieldInput({
   const [issue, setIssue] = useState<string>();
   const editing = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  // A change from elsewhere shows at once, unless the person is typing in this field.
+  const row = useRef<HTMLLabelElement>(null);
+  const seen = useRef(stored);
+  /**
+   * The person's saves still on their way, in the order they were made, each with the value it will read back as
+   * in stored form (a date, select or number can differ from what was typed). An arriving value that matches one is
+   * their own change, and it retires that save and every earlier one (they were overtaken). Anything else is from
+   * elsewhere. A save that fails, or turns out to change nothing, is taken out.
+   */
+  const queue = useRef<{ readonly value: string }[]>([]);
+  const drop = (save: { readonly value: string }) => {
+    queue.current = queue.current.filter((queued) => queued !== save);
+  };
+  // A change from elsewhere shows at once, unless the person is typing in this field, and rings the field once.
   useEffect(() => {
-    if (!editing.current) setText(stored);
+    // Bookkeeping runs even while the person types, so a later commit compares against what the record holds.
+    const own = queue.current.findIndex((save) => save.value === stored);
+    const elsewhere = stored !== seen.current && own === -1;
+    if (own !== -1) queue.current = queue.current.slice(own + 1);
+    seen.current = stored;
+    if (editing.current) return;
+    setText(stored);
+    if (!elsewhere || calm()) return;
+    row.current?.animate([{ opacity: 0 }, { opacity: 1, offset: 0.2 }, { opacity: 0 }], {
+      duration: 1100,
+      easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+      pseudoElement: "::after",
+    });
   }, [stored]);
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const commit = (input: string | boolean) => {
     clearTimeout(timer.current);
     editing.current = false;
-    void commitField(client, noteId, manifest, field, input, saveOnline).then(setIssue);
+    const raw = client.working(noteId);
+    const edited = raw === undefined ? undefined : editField(raw, manifest, field, input);
+    const value = edited && "raw" in edited ? inputOf(parseNote(edited.raw).data[field.name]) : undefined;
+    // Compared with the newest save still on its way, so A, then B, then back to A counts the last A.
+    const save =
+      value !== undefined && value !== (queue.current.at(-1)?.value ?? seen.current) ? { value } : undefined;
+    if (save) queue.current = [...queue.current, save];
+    // An online save that turns out to change nothing (the record already had it) resolves to undefined.
+    let unchanged = false;
+    const online: SaveOnline = (id, edit, base) =>
+      saveOnline(id, edit, base).then((saved) => {
+        unchanged = saved === undefined;
+        return saved;
+      });
+    void commitField(client, noteId, manifest, field, input, online).then((problem) => {
+      if (save && (problem || unchanged)) drop(save);
+      setIssue(problem);
+    });
   };
   const typed = (input: string) => {
     editing.current = true;
@@ -103,7 +145,7 @@ function FieldInput({
       />
     );
   return (
-    <label htmlFor={id}>
+    <label htmlFor={id} ref={row}>
       <span>
         {field.name}
         {spec.required ? " *" : ""}

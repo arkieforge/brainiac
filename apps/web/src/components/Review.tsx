@@ -9,13 +9,31 @@ import {
   type Item,
   type PatchOp,
 } from "@brainiac/core";
+import { Tooltip } from "@base-ui/react/tooltip";
+import NumberFlow from "@number-flow/react";
+import {
+  ArrowUUpLeft,
+  Check as CheckMark,
+  Info,
+  PaperPlaneTilt,
+  PencilSimple,
+  Question,
+  SkipForward,
+  Wrench,
+  type Icon,
+} from "@phosphor-icons/react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { toast } from "@yusufceng1z/ding-react";
+import { AnimatePresence, motion, useMotionValue, useTransform } from "motion/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { typeIcon } from "../icons.ts";
 import { reviewBase, saveReviewed, useRecord } from "../record.ts";
 import { endSession, openSession, overviewOf, sessionFor, SESSION_ITEMS } from "../review.ts";
+import { Burst } from "./Burst.tsx";
 import { Paste } from "./Drift.tsx";
-import { MARKS } from "./Overview.tsx";
+import { MarkIcon, titleTransition } from "./Overview.tsx";
+import { Pip } from "./Pip.tsx";
 
 type Base = { readonly rev: number; readonly raw: string };
 
@@ -25,21 +43,93 @@ type Base = { readonly rev: number; readonly raw: string };
  */
 interface Step {
   readonly at: number;
+  /** Which way the card left (Fly), so an undo brings it back from that side. */
+  readonly dx: 1 | -1;
   readonly edit?: { readonly noteId: string; readonly before: string; readonly after: Base };
 }
 
 const KEYS = [
-  ["y", "Correct"],
-  ["e", "Edit"],
-  ["f", "Apply the fix"],
-  ["?", "Not sure"],
-  ["s", "Skip"],
-  ["u", "Undo"],
-] as const;
+  ["y", "Correct", CheckMark, "Every value shown is right, at this version"],
+  ["e", "Edit", PencilSimple, "Open the note to change it"],
+  ["f", "Apply the fix", Wrench, "Set the value the check suggests"],
+  ["?", "Not sure", Question, "Come back to it later"],
+  ["s", "Skip", SkipForward, "Next item, nothing saved"],
+  ["u", "Undo", ArrowUUpLeft, "Put the last step back"],
+] as const satisfies readonly (readonly [string, string, Icon, string])[];
 type Key = (typeof KEYS)[number][0];
 
 /** How far a swipe must travel to count: right is Correct, left is Skip. */
 const SWIPE_PX = 80;
+
+/**
+ * A card rises out of the stack and leaves the way it was sent: right and tilted for Correct, left for Skip. An
+ * undo brings it back in from the side it left by, and the card it covers sinks back into the stack.
+ */
+const CARD = {
+  enter: ({ dx, back }: Fly) =>
+    back ? { opacity: 0, x: dx * 400, rotate: dx * 12 } : { opacity: 0, y: 10, scale: 0.96 },
+  shown: { opacity: 1, x: 0, y: 0, scale: 1, rotate: 0 },
+  gone: ({ dx, back }: Fly) =>
+    back ? { opacity: 0, y: 10, scale: 0.96 } : { opacity: 0, x: dx * 400, rotate: dx * 12 },
+};
+
+/** Which way the last card went (1 right, -1 left), and whether this move is an undo bringing one back. */
+interface Fly {
+  readonly dx: 1 | -1;
+  readonly back: boolean;
+}
+
+/**
+ * The card on top of the deck. It follows the finger with a tilt, a CORRECT or SKIP stamp fades in with the
+ * distance, and past SWIPE_PX letting go counts; short of it, it springs back.
+ */
+function TopCard({
+  item,
+  fly,
+  onSwipe,
+  children,
+}: {
+  readonly item: Item;
+  readonly fly: Fly;
+  readonly onSwipe: (key: "y" | "s") => void;
+  readonly children: ReactNode;
+}) {
+  const x = useMotionValue(0);
+  const rotate = useTransform(x, [-240, 240], [-10, 10]);
+  const yes = useTransform(x, [20, SWIPE_PX], [0, 1]);
+  const no = useTransform(x, [-SWIPE_PX, -20], [1, 0]);
+  return (
+    <motion.article
+      key={item.noteId}
+      className="card"
+      data-mark={item.mark}
+      custom={fly}
+      variants={CARD}
+      initial="enter"
+      animate="shown"
+      exit="gone"
+      style={{ x, rotate }}
+      drag="x"
+      dragSnapToOrigin
+      dragElastic={0.7}
+      onDragEnd={(_, { offset }) => {
+        if (offset.x > SWIPE_PX) onSwipe("y");
+        else if (offset.x < -SWIPE_PX) onSwipe("s");
+      }}
+    >
+      <motion.span className="swipe-stamp yes" style={{ opacity: yes }} aria-hidden>
+        CORRECT
+      </motion.span>
+      <motion.span className="swipe-stamp no" style={{ opacity: no }} aria-hidden>
+        SKIP
+      </motion.span>
+      {children}
+    </motion.article>
+  );
+}
+
+/** What the record kept after a key, said in the toast; skips change nothing, so they say nothing. */
+const DONE = { y: "Marked correct", f: "Fix applied" } as const;
 
 const fixOf = (item: Item | undefined): Check | undefined => item?.checks.find((check) => check.fix);
 
@@ -57,7 +147,7 @@ export function Review() {
   const [unsure, setUnsure] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | undefined>(undefined);
-  const swipe = useRef<number | undefined>(undefined);
+  const [fly, setFly] = useState<Fly>({ dx: 1, back: false });
   // Fixed only once the record answered: this device's copy lacks sensitive notes and the schema's checks.
   const ready = status === "live" && schemaLoaded;
   if (order === undefined && client && ready && health.items.length > 0)
@@ -92,6 +182,7 @@ export function Review() {
   function undone(last: Step, rest: readonly Step[]) {
     setSteps(rest);
     setUnsure(unsure.filter((id) => id !== order?.[last.at]));
+    setFly({ dx: last.dx, back: true });
     setAt(last.at);
   }
 
@@ -108,6 +199,7 @@ export function Review() {
         setBusy(false);
         if (saved && "error" in saved) return setMessage(saved.error);
         // The step before left the text this undo restored: it now stands at the undo's revision.
+        if (saved) toast.success("Undone");
         if (saved)
           return undone(
             last,
@@ -126,7 +218,8 @@ export function Review() {
     if (key === "e") return void navigate({ to: "/n/$noteId", params: { noteId: item.noteId } });
     if (key === "s" || key === "?") {
       if (key === "?") setUnsure([...unsure, item.noteId]);
-      setSteps([...steps, { at }]);
+      setSteps([...steps, { at, dx: -1 }]);
+      setFly({ dx: -1, back: false });
       return setAt(at + 1);
     }
     const fix = fixOf(item)?.fix;
@@ -145,10 +238,14 @@ export function Review() {
     if (saved && "error" in saved) return setMessage(saved.error);
     setSteps([
       ...steps,
-      saved ? { at, edit: { noteId: item.noteId, before: shown.raw, after: saved } } : { at },
+      saved ? { at, dx: 1, edit: { noteId: item.noteId, before: shown.raw, after: saved } } : { at, dx: 1 },
     ]);
+    toast.success(DONE[key]);
     // A fix leaves the item here to check again; Correct moves on.
-    if (key === "y") setAt(at + 1);
+    if (key === "y") {
+      setFly({ dx: 1, back: false });
+      setAt(at + 1);
+    }
   }
 
   const latest = useRef(act);
@@ -170,38 +267,35 @@ export function Review() {
     return () => removeEventListener("keydown", onKey);
   }, []);
 
-  const onPointerDown = (event: PointerEvent) => {
-    swipe.current = event.clientX;
-  };
-  const onPointerUp = (event: PointerEvent) => {
-    const start = swipe.current;
-    swipe.current = undefined;
-    if (start === undefined) return;
-    const dx = event.clientX - start;
-    if (dx > SWIPE_PX) void act("y");
-    else if (dx < -SWIPE_PX) void act("s");
-  };
-
-  if (!client) return <p className="empty">{status === "loading" ? "Loading" : "No record yet."}</p>;
+  if (!client) return <p className="empty">{status === "loading" ? "Loading…" : "No record yet."}</p>;
   if (!order && !ready)
     return (
       <p className="empty">
-        {status === "offline" ? "Review needs the record: you're offline." : "Loading your record"}
+        {status === "offline" ? "Review needs the record: you're offline." : "Loading your record…"}
       </p>
     );
-  if (!order || order.length === 0) return <p className="empty">Nothing to review.</p>;
+  if (!order || order.length === 0)
+    return (
+      <div className="empty">
+        <Pip sticker="coffee" say="Nothing to review. Everything your Claude filed is checked." />
+      </div>
+    );
   if (!item)
     return (
       <section className="review done">
-        <h1>All done</h1>
-        <p>
-          {steps.filter((s) => s.edit).length} changed, {unsure.length} not sure, {order.length} reviewed.
+        <Burst />
+        <Pip sticker="rocket" size={84} say={`All ${order.length} reviewed.`} />
+        <p className="progress">
+          <NumberFlow value={steps.filter((s) => s.edit).length} /> changed,{" "}
+          <NumberFlow value={unsure.length} /> not sure.
         </p>
-        <p>
+        <p className="row">
           <button type="button" onClick={() => void act("u")} disabled={steps.length === 0 || busy}>
-            Undo the last one
-          </button>{" "}
-          <Link to="/">Back to the overview</Link>
+            <ArrowUUpLeft size={14} /> Undo the last one
+          </button>
+          <Link to="/" className="stamp">
+            Back to the overview
+          </Link>
         </p>
         {message && <p role="alert">{message}</p>}
       </section>
@@ -216,83 +310,123 @@ export function Review() {
   }
   const verified = new Set(item.verified);
   const fix = fixOf(item)?.fix;
-  const mark = MARKS[item.mark];
+  const TypeIcon = typeIcon(item.type);
+  // The next two items peek out under the card, so the deck reads as a stack.
+  const behind = order.slice(at + 1, at + 3).flatMap((id) => items.get(id) ?? []);
   return (
     <section className="review">
-      <p className="muted small">
-        {at + 1} of {order.length}
-        {item.usedBy.length > 0 && ` · an open application uses this`}
-      </p>
-      <article
-        className="card"
-        data-mark={item.mark}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => (swipe.current = undefined)}
-      >
-        <header>
-          <span className="mark" role="img" aria-label={mark.label} title={mark.label}>
-            {mark.glyph}
-          </span>
-          <span className="badge">{item.type}</span>
-          <h1>{item.headline}</h1>
-          <div className="path">{item.path}</div>
-        </header>
-        {item.checks.length > 0 && (
-          <ul className="checks">
-            {item.checks.map((check, i) => (
-              <li key={i}>
-                <strong>{check.field ?? "this item"}</strong>: {check.evidence}
-                {check.fix && (
-                  <span className="muted">
-                    {" "}
-                    Fix: set {check.fix.field} to {show(check.fix.value)}.
-                  </span>
-                )}
-                {check.paste !== undefined && (
-                  <>
-                    {" "}
-                    <Paste text={check.paste} />
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        <dl className="values">
-          {reviewFields(data, manifest).map((field) => (
-            <div key={field}>
-              <dt>
-                {field}
-                {verified.has(field) && (
-                  <span className="ok" aria-label="checked">
-                    {" "}
-                    ✓
-                  </span>
-                )}
-              </dt>
-              <dd>{show(data[field])}</dd>
-            </div>
-          ))}
-        </dl>
-      </article>
-      <div className="keys" role="toolbar" aria-label="Review">
-        {KEYS.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => void act(key)}
-            disabled={busy || (key === "f" && !fix) || (key === "u" && steps.length === 0)}
-          >
-            <kbd>{key}</kbd> {label}
-          </button>
-        ))}
+      <div className="progress-row">
+        <span className="muted small progress">
+          <NumberFlow value={at + 1} /> of {order.length}
+        </span>
+        <span className="progress-bar" aria-hidden>
+          <motion.i animate={{ scaleX: at / order.length }} />
+        </span>
       </div>
-      <p className="muted small">
-        Correct checks every value shown, at this version. One passkey signature covers the next{" "}
-        {SESSION_ITEMS} items for 10 minutes. On a phone, swipe right for Correct and left to skip.
+      <div className="deck">
+        {behind.map((next, depth) => (
+          <div key={next.noteId} className="card ghost" data-depth={depth + 1} aria-hidden>
+            <span className="ghost-title">{next.headline}</span>
+          </div>
+        ))}
+        <AnimatePresence mode="popLayout" initial={false} custom={fly}>
+          <TopCard key={item.noteId} item={item} fly={fly} onSwipe={(key) => void act(key)}>
+            <header>
+              <MarkIcon mark={item.mark} />
+              <span className="badge">
+                <TypeIcon size={12} weight="duotone" /> {item.type}
+              </span>
+              {item.usedBy.length > 0 && (
+                <span className="badge used">
+                  <PaperPlaneTilt size={12} weight="duotone" /> used by an open application
+                </span>
+              )}
+              <h1 style={titleTransition(item.noteId)}>{item.headline}</h1>
+              <div className="path">{item.path}</div>
+            </header>
+            {item.checks.length > 0 && (
+              <ul className="checks">
+                {item.checks.map((check, i) => (
+                  <li key={i}>
+                    <strong>{check.field ?? "this item"}</strong>: {check.evidence}
+                    {check.fix && (
+                      <span className="muted">
+                        {" "}
+                        Fix: set {check.fix.field} to {show(check.fix.value)}.
+                      </span>
+                    )}
+                    {check.paste !== undefined && (
+                      <>
+                        {" "}
+                        <Paste text={check.paste} />
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <dl className="values">
+              {reviewFields(data, manifest).map((field) => (
+                <div key={field}>
+                  <dt>
+                    {field}
+                    {verified.has(field) && (
+                      <svg className="drawn-check" viewBox="0 0 16 16" aria-label="checked" role="img">
+                        <path d="M3 8.5l3.2 3L13 4.5" />
+                      </svg>
+                    )}
+                  </dt>
+                  <dd>{show(data[field])}</dd>
+                </div>
+              ))}
+            </dl>
+          </TopCard>
+        </AnimatePresence>
+      </div>
+      <Tooltip.Provider delay={450}>
+        <div className="keys" role="toolbar" aria-label="Review">
+          {KEYS.map(([key, label, KeyIcon, hint]) => (
+            <Tooltip.Root key={key}>
+              <Tooltip.Trigger
+                render={
+                  <button
+                    type="button"
+                    className={key === "y" ? "primary" : undefined}
+                    onClick={() => void act(key)}
+                    disabled={busy || (key === "f" && !fix) || (key === "u" && steps.length === 0)}
+                  />
+                }
+              >
+                <KeyIcon size={14} weight={key === "y" ? "bold" : "regular"} />
+                {label} <kbd>{key}</kbd>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Positioner sideOffset={6}>
+                  <Tooltip.Popup className="tip">{hint}</Tooltip.Popup>
+                </Tooltip.Positioner>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          ))}
+        </div>
+      </Tooltip.Provider>
+      <p className="muted small rule">
+        Correct checks every value shown, at this version. Swipe right to correct, left to skip.
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            render={<button type="button" className="ghost info" aria-label="About the passkey session" />}
+          >
+            <Info size={14} />
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Positioner sideOffset={6}>
+              <Tooltip.Popup className="tip">
+                One passkey signature covers the next {SESSION_ITEMS} items for 10 minutes.
+              </Tooltip.Popup>
+            </Tooltip.Positioner>
+          </Tooltip.Portal>
+        </Tooltip.Root>
       </p>
-      {busy && <p className="muted">Saving</p>}
+      {busy && <p className="muted">Saving…</p>}
       {message && <p role="alert">{message}</p>}
     </section>
   );
