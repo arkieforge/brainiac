@@ -10,19 +10,22 @@ export interface AuditEntry {
   readonly noteIds: readonly string[];
   readonly approvalId?: string;
   readonly secretName?: string;
+  /** The call came from a background run (the daemon's headless filer), not a session the person is in. */
+  readonly background?: boolean;
   readonly at: number;
 }
 
 /** Writes one row; the caller's transaction holds it, so a call that rolls back leaves none. */
 export function recordAudit(sql: Sql, entry: AuditEntry): void {
   sql.all(
-    "INSERT INTO audit (at, actor, tool, noteIds, secretName, approvalId) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO audit (at, actor, tool, noteIds, secretName, approvalId, background) VALUES (?, ?, ?, ?, ?, ?, ?)",
     entry.at,
     entry.actor,
     entry.tool,
     JSON.stringify(entry.noteIds),
     entry.secretName ?? null,
     entry.approvalId ?? null,
+    entry.background ? 1 : 0,
   );
 }
 
@@ -33,6 +36,8 @@ export interface AuditCall {
   readonly notes: readonly { readonly id: string; readonly path: string | null }[];
   readonly approvalId: string | null;
   readonly secretName: string | null;
+  /** A background run made it: it shares the device's connection with the person's own sessions. */
+  readonly background: boolean;
 }
 
 /** How many calls the account page shows per connection. */
@@ -46,8 +51,9 @@ export function auditOf(sql: Sql, connectionId: string, limit = AUDIT_PAGE): Aud
     noteIds: string;
     approvalId: string | null;
     secretName: string | null;
+    background: number;
   }>(
-    "SELECT at, tool, noteIds, approvalId, secretName FROM audit WHERE actor = ? ORDER BY id DESC LIMIT ?",
+    "SELECT at, tool, noteIds, approvalId, secretName, background FROM audit WHERE actor = ? ORDER BY id DESC LIMIT ?",
     `connection:${connectionId}`,
     limit,
   );
@@ -64,6 +70,7 @@ export function auditOf(sql: Sql, connectionId: string, limit = AUDIT_PAGE): Aud
       })),
       approvalId: row.approvalId,
       secretName: row.secretName,
+      background: row.background === 1,
     };
   });
 }

@@ -588,7 +588,8 @@ export const cases: Record<string, Case> = {
     ok(note);
     putChunks(sql, id, 1, chunkNote(note));
     // Back to the version before the tokenizer migration, without what the ones after it added (the leases' rev,
-    // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names).
+    // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names, the audit
+    // rows' background mark).
     sql.all("ALTER TABLE inbox_leases DROP COLUMN rev");
     sql.all("DROP TABLE fills");
     sql.all("ALTER TABLE clients DROP COLUMN actor");
@@ -596,10 +597,14 @@ export const cases: Record<string, Case> = {
     sql.all("DROP INDEX files_path");
     sql.all("ALTER TABLE files DROP COLUMN path");
     sql.all("ALTER TABLE files DROP COLUMN name");
-    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 6));
+    sql.all("ALTER TABLE audit DROP COLUMN background");
+    sql.all("INSERT INTO audit (at, actor, tool, noteIds) VALUES (1, 'connection:old', 'get', '[]')");
+    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 7));
     // The bug: a fragment matched inside other words.
     same(hitIds(search(sql, AGENT, "কম")), [id]);
-    same(migrate(sql), { from: SCHEMA_VERSION - 6, to: SCHEMA_VERSION });
+    same(migrate(sql), { from: SCHEMA_VERSION - 7, to: SCHEMA_VERSION });
+    // A row from before the background mark reads as a foreground call.
+    same(sql.all("SELECT background FROM audit"), [{ background: 0 }]);
     same(hitIds(search(sql, AGENT, "কম্পিউটার")), [id]);
     same(hitIds(search(sql, AGENT, "কম")), []);
   },

@@ -186,22 +186,24 @@ describe("connections", () => {
     const cli = await base.addConnection({ kind: "cli" });
     await base.tool({ connectionId: cli.id }, "get", { ids: [tum, ielts] });
     await base.tool({ oauthClientId: "https://claude.ai/oauth/brainiac" }, "describe", {});
+    await base.tool({ connectionId: cli.id, background: true }, "describe", {});
 
     const activity = await base.activity();
     expect(activity.map((a) => [a.connection.id, a.calls.map((c) => c.tool)]).toSorted()).toEqual(
       [
         [app.id, ["describe"]],
-        [cli.id, ["get"]],
+        [cli.id, ["describe", "get"]],
       ].toSorted(),
     );
     // The sensitive note was hidden from the CLI connection, so its read names only the one it saw.
-    expect(activity.find((a) => a.connection.id === cli.id)?.calls[0]?.notes).toEqual([
-      { id: tum, path: TUM },
-    ]);
+    const cliCalls = activity.find((a) => a.connection.id === cli.id)?.calls;
+    expect(cliCalls?.map((c) => c.background)).toEqual([true, false]);
+    expect(cliCalls?.[1]?.notes).toEqual([{ id: tum, path: TUM }]);
 
     const html = await accountPage("nadia@example.com", [], 0, [], activity).text();
     expect(html).toContain("What your connections did");
-    expect(html).toContain(`get: ${TUM}`);
+    expect(html).toContain(`get: ${TUM}</span>`);
+    expect(html).toContain('describe <span class="note">by background filing</span>');
     expect(html).toContain("claude.ai");
     expect(html).toContain("Brainiac CLI");
   });
