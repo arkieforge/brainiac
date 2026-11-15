@@ -27,6 +27,7 @@ import { approvalCases } from "./approval-cases.ts";
 import { fillCases } from "./fill-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { githubCases } from "./github-cases.ts";
+import { importCases } from "./import-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
 import { linksCases } from "./links-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
@@ -150,6 +151,7 @@ export const cases: Record<string, Case> = {
   ...toolCases,
   ...githubCases,
   ...orcidCases,
+  ...importCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);

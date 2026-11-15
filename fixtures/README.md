@@ -10,3 +10,6 @@ ICAO's specimen state Utopia (UTO) and the same passport scanned to PDF, a scann
 transcript with its university's wordmark, all printed to PDF by Chrome, and a made-up bank account number and
 IBAN drawn the ways OCR must still read (on transparent pixels, cropped to the edges). They are drawn, not
 photographed; nobody real is in them either.
+
+`imports/` is what she brings in with `brainiac import`: a LinkedIn data export (a few of its CSVs, one of them
+her connections, which is never read) and her CV as a PDF.

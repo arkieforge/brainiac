@@ -101,8 +101,12 @@ function takenPaths(sql: Sql): string[] {
  */
 export function freePath(sql: Sql, type: string, name: string, id: string): string {
   const folder = manifestOf(sql)?.types[type]?.folder ?? BUILT_IN_TYPES[type]?.folder;
-  const base = [folder, slug(name) || id.toLowerCase()].filter(Boolean).join("/");
-  return findClash(takenPaths(sql), `${base}.md`) === undefined
-    ? `${base}.md`
-    : `${base}-${id.slice(-6).toLowerCase()}.md`;
+  return freeAt(sql, `${[folder, slug(name) || id.toLowerCase()].filter(Boolean).join("/")}.md`, id);
+}
+
+/** `path` (a note's, ending in `.md`), or with the end of `id` before `.md` when a note or an open proposal has it. */
+export function freeAt(sql: Sql, path: string, id: string): string {
+  return findClash(takenPaths(sql), path) === undefined
+    ? path
+    : `${path.slice(0, -".md".length)}-${id.slice(-6).toLowerCase()}.md`;
 }
