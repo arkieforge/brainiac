@@ -601,13 +601,14 @@ async function seedFixture(userId: string) {
 }
 
 describe("the /mcp resource seed", () => {
-  it("reads Neon at most once across the Better Auth instances the Worker builds per request", async () => {
+  it("isn't read again by the Better Auth instances the Worker builds per request", async () => {
     const { auth, perRequest, resourceReads } = setup();
     await auth.$context;
+    const seeded = resourceReads();
     for (const request of [perRequest(), perRequest()]) {
       expect((await request.handler(new Request(`${ORIGIN}/api/auth/ok`))).status).toBe(200);
     }
-    expect(resourceReads()).toBeLessThanOrEqual(1);
+    expect(resourceReads()).toBe(seeded);
   });
 });
 
