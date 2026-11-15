@@ -40,7 +40,7 @@ const signature = () => ({ credentialId: "passkey-1", counter: ++signatures, ass
 
 function setUp(sql: Sql, level: Level = "write") {
   migrate(sql);
-  const key = dataKey(sql, "a stage's vault key");
+  const key = dataKey(sql, { current: "a stage's vault key", previous: undefined });
   const saved = saveSecret(
     sql,
     key,

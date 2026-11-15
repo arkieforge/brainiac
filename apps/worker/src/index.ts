@@ -2,6 +2,7 @@ import {
   oauthProviderAuthServerMetadata,
   oauthProviderOpenIdConfigMetadata,
 } from "@better-auth/oauth-provider";
+import { vaultKeyId } from "@brainiac/base";
 import { Client, Pool } from "pg";
 
 import { type AuthConfig, createAuth } from "./auth/config.ts";
@@ -29,6 +30,7 @@ import {
 import { serveMcp, type Records } from "./mcp/handler.ts";
 import { baseOf } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
+import { rewrapRecords, VAULT_SWEEP_CRON, waitingToRewrap } from "./vault-rotation.ts";
 
 export { Base } from "./base.ts";
 export type { Env } from "./env.ts";
@@ -44,6 +46,22 @@ async function checkDb(env: Env, ctx: ExecutionContext): Promise<Response> {
   } catch (error) {
     console.error("db health check failed", error);
     return Response.json({ ok: false }, { status: 503 });
+  } finally {
+    ctx.waitUntil(client.end());
+  }
+}
+
+/**
+ * Whether a vault key rotation is running and how many records still wait to rewrap, for the doctor. Counts only,
+ * and only during a rotation: one query against the registry, never a wake of any record.
+ */
+async function checkVault(env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (!env.VAULT_KEY_PREVIOUS) return Response.json({ rotating: false });
+  const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
+  try {
+    await client.connect();
+    const waiting = await waitingToRewrap(client, vaultKeyId(await env.VAULT_KEY.get()));
+    return Response.json({ rotating: true, waiting });
   } finally {
     ctx.waitUntil(client.end());
   }
@@ -305,6 +323,7 @@ export default {
     const { pathname } = url;
     if (pathname === "/health") return Response.json({ ok: true });
     if (pathname === "/health/db") return checkDb(env, ctx);
+    if (pathname === "/health/vault") return checkVault(env, ctx);
     if (pathname.startsWith("/dev/")) {
       // Dev sign-in (dev.ts) exists only where the token is bound, and never on prod even if it were.
       const token = env.DEV_SIGN_IN_TOKEN;
@@ -368,6 +387,20 @@ export default {
   },
   queue: (batch, env) => consume(batch, env),
   async scheduled(controller, env, ctx) {
+    if (controller.cron === VAULT_SWEEP_CRON) {
+      if (!env.VAULT_KEY_PREVIOUS) return;
+      const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+      try {
+        const current = vaultKeyId(await env.VAULT_KEY.get());
+        const swept = await rewrapRecords(pool, current, (baseId) =>
+          env.BASE.get(env.BASE.idFromString(baseId)),
+        );
+        console.log("vault key rewrap sweep", { ...swept, waiting: await waitingToRewrap(pool, current) });
+      } finally {
+        ctx.waitUntil(pool.end());
+      }
+      return;
+    }
     if (controller.cron === SWEEP_CRON) {
       const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
       try {

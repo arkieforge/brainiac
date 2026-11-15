@@ -34,8 +34,9 @@ when you are done with a personal stage.
 
 Auth settings are optional: each feature stays off until its values exist, so a stage deploys without them.
 The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state. So does the
-vault key (`VAULT_KEY`), which it stores in the account's Cloudflare Secrets Store as `brainiac_vault_key_<stage>`;
-it wraps every record's data key, so replacing it leaves every sealed file and secret on that stage unreadable.
+vault key (`VAULT_KEY`), which it stores in the account's Cloudflare Secrets Store as `brainiac_vault_key_<stage>`
+(`brainiac_vault_key_<stage>__g<n>` from generation 2); it wraps every record's data key, so replacing it leaves every sealed file and secret
+on that stage unreadable. Rotate it by the runbook below instead.
 
 | Secret                                                                                                                       | Turns on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -50,6 +51,32 @@ it wraps every record's data key, so replacing it leaves every sealed file and s
 
 GitHub gets read-only Doppler service tokens: `DOPPLER_TOKEN_DEV` as a repo secret (previews), and
 `DOPPLER_TOKEN_PRD` in the `production` environment, which only `main` can deploy to.
+
+## Rotating the vault key
+
+Two optional settings in the stage's Doppler config pick the vault keys: `VAULT_KEY_GENERATION` (default 1) is
+the one that wraps data keys, and `VAULT_KEY_PREVIOUS`, while set, is the generation before it, bound to the Worker
+as `VAULT_KEY_PREVIOUS`. Each record says which key wraps its data key (`meta.vaultKeyId`); one wrapped by the
+previous key rewraps under the current one the first time it wakes, in one write. Every non-prod stage shares
+`dev`, so set them there only to rotate them all; to rotate one stage, export them for one deploy from a laptop
+instead. From generation `n` to `n+1`:
+
+1. **Add the new key.** `doppler secrets set VAULT_KEY_GENERATION=<n+1> VAULT_KEY_PREVIOUS=<n> --config prd`, then
+   deploy (for prod, re-run the latest `main` CI run). Alchemy makes `brainiac_vault_key_<stage>__g<n+1>` and keeps
+   generation `n` bound beside it.
+2. **Wait for every record to rewrap.** Records rewrap as they wake, and a sweep every 10 minutes (only while
+   `VAULT_KEY_PREVIOUS` is set) wakes the rest. `vp run doctor --stage <stage>` warns
+   `No record waiting on the previous vault key` with the count still waiting, and passes at 0. A record that
+   keeps failing is in `vp run logs --stage <stage>` as `vault key rewrap failed`; fix it before going on.
+3. **Remove the old key.** `doppler secrets delete VAULT_KEY_PREVIOUS --config prd`, then deploy. Other stages
+   delete the old secret with the deploy. Prod keeps it in the Secrets Store (Alchemy retains it, which is what
+   lets the deploy pass `protect()`), so delete `brainiac_vault_key_prod` (or `__g<n>`) there by hand once the
+   doctor has passed.
+
+Never lower `VAULT_KEY_GENERATION` or remove `VAULT_KEY_PREVIOUS` early. A record whose data key is wrapped by a key
+the Worker no longer holds refuses every file and secret with an error naming that key, and never makes a new data
+key. Don't set `VAULT_KEY_PREVIOUS` again after step 3 to fix one: Alchemy no longer holds that key's value and
+would make a new one. Rotating the per-record data keys themselves is not built.
 
 ## Migrations
 

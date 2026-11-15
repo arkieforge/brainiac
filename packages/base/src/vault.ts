@@ -50,22 +50,85 @@ export function unseal(key: Uint8Array, sealed: Uint8Array, context: string): Ui
 }
 
 /**
- * The record's data key: made on first use and kept in `meta`, wrapped by the vault key from Cloudflare's
- * Secrets Store, so the record's own storage never holds a key that opens it. A vault key that doesn't open
- * it throws rather than making a new one, which would orphan every sealed value.
+ * The stage's vault keys from Cloudflare's Secrets Store: `current` wraps every data key, and `previous` is
+ * bound only while a rotation runs (infra/README.md#rotating-the-vault-key), so records wrapped by it still open.
  */
-export function dataKey(sql: Sql, vaultKey: string): Uint8Array {
-  const wrapping = createHash("sha256").update(vaultKey).digest();
+export interface VaultKeys {
+  readonly current: string;
+  readonly previous: string | undefined;
+}
+
+/**
+ * Names a vault key without saying anything that opens what it wraps: a different hash from the wrapping key's,
+ * so the id kept beside a data key and in the registry can't stand in for the key.
+ */
+export const vaultKeyId = (vaultKey: string): string =>
+  createHash("sha256").update(`brainiac vault key id\0${vaultKey}`).digest("hex").slice(0, 16);
+
+const wrapping = (vaultKey: string) => createHash("sha256").update(vaultKey).digest();
+
+/**
+ * The record's data key if it has one, rewrapped under the current vault key if another wraps it, in the caller's
+ * transaction. A record sealed before key ids were kept has none, and was wrapped by the stage's first key, which
+ * is `current` until the first rotation and `previous` during it. No key it holds opening the stored one is a
+ * throw, never a new data key: that would orphan every file and secret the old one sealed.
+ */
+function unwrap(sql: Sql, keys: VaultKeys): Uint8Array | undefined {
+  const rows = sql.all<{ key: string; value: string }>(
+    "SELECT key, value FROM meta WHERE key IN ('dataKey', 'vaultKeyId')",
+  );
+  const wrapped = rows.find((row) => row.key === "dataKey")?.value;
+  if (wrapped === undefined) return undefined;
+  const id = rows.find((row) => row.key === "vaultKeyId")?.value;
+  const held = [keys.current, keys.previous].filter((key) => key !== undefined);
+  for (const vaultKey of held.filter((key) => id === undefined || vaultKeyId(key) === id)) {
+    let key: Uint8Array;
+    try {
+      key = unseal(wrapping(vaultKey), Buffer.from(wrapped, "base64"), "dataKey");
+    } catch {
+      continue;
+    }
+    if (vaultKey !== keys.current || id === undefined) store(sql, key, keys.current);
+    return key;
+  }
+  throw new Error(
+    `This record's data key is wrapped by vault key ${id ?? "(unrecorded)"}, which this Worker doesn't hold ` +
+      `(it holds ${held.map(vaultKeyId).join(", ")}). Bind that key again as VAULT_KEY_PREVIOUS ` +
+      "(infra/README.md#rotating-the-vault-key); a new data key would orphan everything the record sealed.",
+  );
+}
+
+/** Wraps `key` under `vaultKey` and records which key that was, in one write. */
+function store(sql: Sql, key: Uint8Array, vaultKey: string) {
+  sql.all(
+    "INSERT OR REPLACE INTO meta (key, value) VALUES ('dataKey', ?), ('vaultKeyId', ?)",
+    Buffer.from(seal(wrapping(vaultKey), key, "dataKey")).toString("base64"),
+    vaultKeyId(vaultKey),
+  );
+}
+
+/**
+ * The record's data key: made on first use and kept in `meta`, wrapped by the vault key from Cloudflare's
+ * Secrets Store, so the record's own storage never holds a key that opens it. A key wrapped by the previous
+ * vault key is rewrapped under the current one as it opens.
+ */
+export function dataKey(sql: Sql, keys: VaultKeys): Uint8Array {
   return sql.transaction(() => {
-    const [row] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'dataKey'");
-    if (row) return unseal(wrapping, Buffer.from(row.value, "base64"), "dataKey");
+    const existing = unwrap(sql, keys);
+    if (existing) return existing;
     const key = randomBytes(32);
-    sql.all(
-      "INSERT INTO meta (key, value) VALUES ('dataKey', ?)",
-      Buffer.from(seal(wrapping, key, "dataKey")).toString("base64"),
-    );
+    store(sql, key, keys.current);
     return key;
   });
+}
+
+/**
+ * Moves the record's data key onto the current vault key if the previous one wraps it, and makes none if it has
+ * none (the rotation sweep wakes every record). The id of the key everything it seals is under from now on.
+ */
+export function rewrapDataKey(sql: Sql, keys: VaultKeys): string {
+  sql.transaction(() => unwrap(sql, keys));
+  return vaultKeyId(keys.current);
 }
 
 /**

@@ -21,9 +21,11 @@ import {
   readText,
   recordUpload,
   restrict,
+  rewrapDataKey,
   saveSecret,
   sealFile,
   unseal,
+  vaultKeyId,
   withdraw,
   type Classified,
   type Connection,
@@ -52,6 +54,12 @@ const PASSPORT = [
 const TRANSCRIPT = "Northvale University\nStudent ID: 2019331001\nCGPA 3.82 on a scale of 4\n";
 const STATEMENT = "Monthly statement\nIBAN: DE89 3704 0044 0532 0130 00\n";
 
+/** The stage's vault keys outside a rotation: one. */
+const only = (current: string) => ({ current, previous: undefined });
+/** The id of the vault key the record's data key is wrapped by. */
+const wrappedBy = (sql: Sql) =>
+  sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'vaultKeyId'")[0]?.value;
+
 let signatures = 0;
 const signed = (): Signature => ({ credentialId: "passkey-1", counter: ++signatures, assertion: "{}" });
 
@@ -60,7 +68,7 @@ function record(sql: Sql, fixtures: readonly Fixture[]) {
   const manifest = fixtures.find((f) => f.path === "okf-base.yaml");
   ok(manifest);
   sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", manifest.raw);
-  return dataKey(sql, "the stage's vault key");
+  return dataKey(sql, { current: "the stage's vault key", previous: undefined });
 }
 
 function connectionFor(sql: Sql, grants: Partial<Pick<Connection, "level" | "sensitive">> = {}) {
@@ -500,11 +508,54 @@ export const vaultCases: Record<string, Case> = {
 
   "the data key is made once, kept wrapped, and opens only with its vault key": (sql) => {
     migrate(sql);
-    const key = dataKey(sql, "vault key one");
-    same(dataKey(sql, "vault key one"), key);
+    const key = dataKey(sql, only("vault key one"));
+    same(dataKey(sql, only("vault key one")), key);
     const [stored] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'dataKey'");
     ok(stored && !Buffer.from(stored.value, "base64").includes(Buffer.from(key)));
-    throws(() => dataKey(sql, "vault key two"));
+    throws(() => dataKey(sql, only("vault key two")));
     equal(sql.all("SELECT key FROM meta WHERE key = 'dataKey'").length, 1);
+  },
+
+  "rotating the vault key rewraps the data key under the new one, and the old key opens nothing after": (
+    sql,
+  ) => {
+    migrate(sql);
+    const key = dataKey(sql, only("vault key one"));
+    equal(wrappedBy(sql), vaultKeyId("vault key one"));
+    const rotating = { current: "vault key two", previous: "vault key one" };
+    same(dataKey(sql, rotating), key);
+    equal(wrappedBy(sql), vaultKeyId("vault key two"));
+    same(dataKey(sql, only("vault key two")), key);
+    throws(() => dataKey(sql, only("vault key one")), /wrapped by vault key/);
+  },
+
+  "a record that missed the rotation fails loudly once the old key is gone, and keeps its data key": (
+    sql,
+  ) => {
+    migrate(sql);
+    dataKey(sql, only("vault key one"));
+    const before = sql.all("SELECT key, value FROM meta WHERE key IN ('dataKey', 'vaultKeyId') ORDER BY key");
+    throws(() => dataKey(sql, only("vault key two")), new RegExp(vaultKeyId("vault key one")));
+    throws(() => rewrapDataKey(sql, only("vault key two")), /wrapped by vault key/);
+    same(sql.all("SELECT key, value FROM meta WHERE key IN ('dataKey', 'vaultKeyId') ORDER BY key"), before);
+  },
+
+  "a data key sealed before key ids were kept opens with either key, and rewraps under the current": (
+    sql,
+  ) => {
+    migrate(sql);
+    const key = dataKey(sql, only("vault key one"));
+    sql.all("DELETE FROM meta WHERE key = 'vaultKeyId'");
+    same(dataKey(sql, { current: "vault key two", previous: "vault key one" }), key);
+    equal(wrappedBy(sql), vaultKeyId("vault key two"));
+  },
+
+  "the rotation sweep makes no data key for a record that has none": (sql) => {
+    migrate(sql);
+    equal(
+      rewrapDataKey(sql, { current: "vault key two", previous: "vault key one" }),
+      vaultKeyId("vault key two"),
+    );
+    equal(sql.all("SELECT key FROM meta WHERE key IN ('dataKey', 'vaultKeyId')").length, 0);
   },
 };

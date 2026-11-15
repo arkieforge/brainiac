@@ -7,8 +7,13 @@ export interface Env {
   AI: Ai;
   BASE: DurableObjectNamespace<Base>;
   BLOBS: R2Bucket;
-  /** Wraps every record's data key (packages/base/src/vault.ts). A Secrets Store secret, made once per stage. */
+  /** Wraps every record's data key (packages/base/src/vault.ts). A Secrets Store secret, one per stage and generation. */
   VAULT_KEY: SecretsStoreSecret;
+  /**
+   * The vault key `VAULT_KEY` replaced, bound only while a rotation runs (infra/README.md#rotating-the-vault-key)
+   * so records it still wraps open and rewrap.
+   */
+  VAULT_KEY_PREVIOUS?: SecretsStoreSecret;
   JOBS: Queue<JobMessage>;
   /** Postgres (this stage's Neon branch) for accounts, billing and the base registry. */
   HYPERDRIVE: Hyperdrive;

@@ -6,7 +6,7 @@
 user, session, account, verification, passkey                  // Better Auth core + passkey plugin
 oauthClient, oauthAccessToken, oauthRefreshToken, oauthConsent  // Better Auth MCP / OAuth provider; a CIMD
 oauthResource, oauthClientResource, oauthClientAssertion        //   client's row is keyed by its metadata URL
-bases        { id, ownerId, jurisdiction?, createdAt, deletedAt? }         // id: the Base DO's id (newUniqueId), as in CLI tokens; one per owner
+bases        { id, ownerId, jurisdiction?, createdAt, deletedAt?, vaultKeyId? } // id: the Base DO's id (newUniqueId), as in CLI tokens; one per owner. vaultKeyId: the vault key the record last said wraps its data key (the rotation sweep)
 billing      { userId, polarCustomerId, plan, periodEnd }
 usage_daily  { baseId, day, toolCalls, ingestPages, storageBytes, tregCents }
 ```
@@ -19,7 +19,7 @@ objects. Migrations are additive for one release, so the previous Worker still r
 each DO migrates itself the first time it wakes after a deploy.
 
 ```
-meta         { key PK, value }                                      // schemaVersion (the SQL schema's), seq (the last one assigned), questionEmails (off when the person turned the weekly email off)
+meta         { key PK, value }                                      // schemaVersion (the SQL schema's), seq (the last one assigned), questionEmails (off when the person turned the weekly email off), dataKey and vaultKeyId (the wrapped data key and which vault key wraps it)
 notes        { id ULID, path, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt?,
                type, title, kind, status, date, deadline, expires }  // the last row generated from fm
 revisions    { noteId, rev, raw, patch, actor, runId, at }         // patch: each field's before and after; undo applies it in reverse
