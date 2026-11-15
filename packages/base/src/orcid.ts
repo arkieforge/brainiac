@@ -73,9 +73,14 @@ function setOrcid(sql: Sql, orcid: string | undefined, now: number): void {
 
 const plain = (text: string) => text.toLowerCase().replaceAll(/\s+/g, " ").trim();
 
-/** What a work is known by across reads: its DOI when it has one, else its put-code. */
-const keyOf = (work: Work, doi: string | undefined) =>
-  doi === undefined ? `put:${work.putCode}` : `doi:${doi.toLowerCase()}`;
+/**
+ * What a work is known by across reads: its put-code, and its DOI when it has one. Either one seen before means
+ * proposed before, so a work that gains a DOI after the person turned it down stays turned down.
+ */
+const keysOf = (work: Work, doi: string | undefined) => [
+  `put:${work.putCode}`,
+  ...(doi === undefined ? [] : [`doi:${doi.toLowerCase()}`]),
+];
 
 /** Proposes a Paper for a work. Returns the proposal's id. */
 function proposePaper(sql: Sql, work: Work, doi: string | undefined, now: number): string | undefined {
@@ -114,13 +119,14 @@ export function linkOrcid(
   let proposed = 0;
   for (const work of works) {
     const doi = bareDoi(work.doi ?? "");
-    const key = keyOf(work, doi);
+    const keys = keysOf(work, doi);
     if (doi === undefined ? titles.has(plain(work.title)) : dois.has(doi.toLowerCase())) continue;
-    if (sql.all("SELECT 1 FROM orcid_works WHERE key = ?", key).length > 0) continue;
+    if (keys.some((key) => sql.all("SELECT 1 FROM orcid_works WHERE key = ?", key).length > 0)) continue;
     sql.transaction(() => {
       const proposalId = proposePaper(sql, work, doi, now);
       if (proposalId === undefined) return;
-      sql.all("INSERT INTO orcid_works (key, proposalId) VALUES (?, ?)", key, proposalId);
+      for (const key of keys)
+        sql.all("INSERT OR IGNORE INTO orcid_works (key, proposalId) VALUES (?, ?)", key, proposalId);
       proposed++;
     });
   }

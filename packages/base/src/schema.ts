@@ -351,7 +351,7 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   // Which calls a background run made (the daemon's headless filer), since it shares the device's connection
   // with the person's own sessions. Rows from before say foreground.
   ["ALTER TABLE audit ADD COLUMN background INTEGER NOT NULL DEFAULT 0"],
-  // Each ORCID work the connector proposed as a paper (orcid.ts), by DOI or ORCID's put-code, so one the person
+  // Each ORCID work the connector proposed as a paper (orcid.ts), by ORCID's put-code and its DOI, so one the person
   // turned down is never proposed again. The linked iD itself is in `meta`.
   [
     `CREATE TABLE orcid_works (

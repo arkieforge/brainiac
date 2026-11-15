@@ -92,6 +92,9 @@ export const orcidCases: Record<string, Case> = {
         "applied",
       );
       same(linkOrcid(sql, NADIA, [NER, SEATS, POSTER], T0 + 3), { proposed: 0 });
+      // Nor the poster she turned down once ORCID gives it a DOI.
+      const posterWithDoi = { ...POSTER, doi: "10.5555/brainiac.poster.2026" };
+      same(linkOrcid(sql, NADIA, [posterWithDoi], T0 + 3), { proposed: 0 });
       same(openProposals(sql), []);
 
       // Unlinking forgets the iD; the papers stay.
