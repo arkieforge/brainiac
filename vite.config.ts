@@ -40,5 +40,16 @@ export default defineConfig({
       "brainiac/no-em-dash-copy": "error",
       "brainiac/no-unreasoned-skip": "error",
     },
+    overrides: [
+      {
+        // Copied from T3 Code and kept as upstream wrote it, so taking their fixes stays a plain diff.
+        files: ["packages/render/src/office/**"],
+        rules: {
+          "eslint/no-shadow": "off",
+          "unicorn/consistent-function-scoping": "off",
+          "unicorn/no-array-sort": "off",
+        },
+      },
+    ],
   },
 });

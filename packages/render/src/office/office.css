@@ -1,0 +1,203 @@
+/* The Office viewer's layout, from T3 Code's Tailwind classes (apps/web/src/components/files), MIT License,
+   Copyright (c) 2026 T3 Tools Inc. See packages/render/NOTICE.md. Colours come from the site's tokens. */
+.office {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 75vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.office .office {
+  height: auto;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+}
+.office-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.office-count {
+  flex: 1;
+  text-align: center;
+  font-size: var(--small);
+  font-variant-numeric: tabular-nums;
+}
+.office-notice {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--warn);
+}
+.office-failure {
+  padding: var(--gap);
+  text-align: center;
+}
+
+/* Pages and slides: a column of canvases fitted to the pane's width. */
+.office-pages {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-raised);
+}
+.office-pages-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0;
+}
+.office-page {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 12px;
+}
+.office-page-sheet {
+  position: relative;
+  flex-shrink: 0;
+}
+.office-page-sheet canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.office-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: pre;
+  color: transparent;
+  user-select: text;
+}
+.office-text-layer ::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: transparent;
+}
+.office-text-layer span {
+  position: absolute;
+  transform-origin: 0 0;
+}
+.office-hidden-slide {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgb(255 255 255 / 50%);
+}
+.office-slide-failed {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 80%);
+}
+.office-notes p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  user-select: text;
+}
+
+/* A workbook: the canvas grid, then its sheet tabs. */
+.office-grid {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.office-grid-scroller {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+  user-select: none;
+  outline: none;
+}
+.office-grid-scroller:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.office-grid-spacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.office-grid-pin {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+.office-grid-pin canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+.office-grid-columns {
+  position: absolute;
+  top: 0;
+  left: 44px;
+  height: 20px;
+  touch-action: none;
+}
+.office-grid-rows {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  width: 44px;
+  touch-action: none;
+}
+.office-grid-notice {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.office-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+}
+.office-tabs [role="tab"] {
+  flex-shrink: 0;
+  border-color: transparent;
+  background: none;
+  font-size: var(--small);
+  color: var(--fg-muted);
+}
+.office-tabs [role="tab"][aria-selected="true"] {
+  background: var(--bg-input);
+  color: var(--fg);
+}
+.office-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

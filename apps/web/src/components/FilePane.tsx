@@ -1,10 +1,22 @@
-import { ImageViewer, SandboxedFrame } from "@brainiac/render";
+import { ImageViewer, MediaPlayer, SandboxedFrame, TableViewer } from "@brainiac/render";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { api, refresh, useRecord, type FileItem } from "../record.ts";
 import { fileLabel } from "./Files.tsx";
 
 const PdfViewer = lazy(() => import("@brainiac/render/pdf").then((m) => ({ default: m.PdfViewer })));
+const OfficeViewer = lazy(() => import("@brainiac/render/office").then((m) => ({ default: m.OfficeViewer })));
+
+/** The Office Open XML types the Office viewer draws. */
+const OFFICE = new Map<string, "docx" | "xlsx" | "pptx">([
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
+  ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+]);
+const TABLES = new Map<string, "," | "\t">([
+  ["text/csv", ","],
+  ["text/tab-separated-values", "\t"],
+]);
 
 const KINDS = [
   "transcript",
@@ -83,6 +95,28 @@ function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }
           </Suspense>
         )}
       </Bytes>
+    );
+  const office = OFFICE.get(mime);
+  if (office)
+    return (
+      <Bytes url={url}>
+        {(bytes) => (
+          <Suspense fallback={<p className="muted">Loading the Office viewer</p>}>
+            <OfficeViewer bytes={bytes} kind={office} />
+          </Suspense>
+        )}
+      </Bytes>
+    );
+  const delimiter = TABLES.get(mime);
+  if (delimiter)
+    return (
+      <Bytes url={url}>
+        {(bytes) => <TableViewer bytes={bytes} delimiter={delimiter} name={fileLabel(file)} />}
+      </Bytes>
+    );
+  if (mime.startsWith("audio/") || mime.startsWith("video/"))
+    return (
+      <Bytes url={url}>{(bytes) => <MediaPlayer bytes={bytes} mime={mime} label={fileLabel(file)} />}</Bytes>
     );
   if (mime === "text/html" || mime === "image/svg+xml")
     return <SandboxedFrame src={url} title={fileLabel(file)} />;
