@@ -231,10 +231,10 @@ function judged<T extends { readonly status: string }>(
   });
 }
 
-/** The normal Question notes whose `about` names `note`. */
+/** The normal Question notes whose `about` names `note`, deleted ones too: a restore brings back their values. */
 const questionsAbout = (sql: Sql, note: NoteRow) =>
   sql
-    .all<NoteRow>(`SELECT * FROM notes WHERE type = 'Question' AND class = 'normal' AND deletedAt IS NULL`)
+    .all<NoteRow>(`SELECT * FROM notes WHERE type = 'Question' AND class = 'normal'`)
     .filter((question) => relationTarget(sql, question, JSON.parse(question.fm)["about"])?.id === note.id);
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");

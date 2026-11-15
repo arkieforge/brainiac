@@ -259,6 +259,21 @@ describe("asked questions", () => {
     expect(ids(record)).toEqual([]);
   });
 
+  it("a correction of case is a change: it sets the field, and the change closes the question", () => {
+    const record = fixture();
+    const id = asked(record, {
+      title: "Is the org right?",
+      about: `../${ROLE}`,
+      field: "org",
+      was: "Acme Robotics",
+    });
+    expect(answerEdits(one(record, id), { value: "ACME Robotics" })).toEqual([
+      { noteId: idAt(record, ROLE), ops: [{ op: "set", path: ["org"], value: "ACME Robotics" }] },
+    ]);
+    answer(record, one(record, id), { value: "ACME Robotics" });
+    expect(ids(record)).toEqual([]);
+  });
+
   it("a reply that keeps the value it has records the answer and closes the question", () => {
     const record = fixture();
     const id = asked(record, {

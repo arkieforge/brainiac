@@ -126,7 +126,7 @@ export function show(value: unknown): string {
 }
 
 /** Equal as values: numbers as numbers, text ignoring case and spacing, collections item by item. */
-export function same(a: unknown, b: unknown): boolean {
+function same(a: unknown, b: unknown): boolean {
   if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
   if (typeof a === "string" && typeof b === "string")
     return a.trim().replaceAll(/\s+/g, " ").toLowerCase() === b.trim().replaceAll(/\s+/g, " ").toLowerCase();

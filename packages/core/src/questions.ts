@@ -3,8 +3,8 @@
 // site, the record's tools and a laptop copy find the same ones. An answer is an ordinary edit to the note it's
 // about, so it spreads like any edit, and the question is gone everywhere once the gap is: nothing stores
 // whether a found question is open.
-import type { PatchOp, YamlValue } from "./patch.ts";
-import { resolver, same, show, usedBy, type ReviewNote } from "./review.ts";
+import { deepEqual, type PatchOp, type YamlValue } from "./patch.ts";
+import { resolver, show, usedBy, type ReviewNote } from "./review.ts";
 import { BUILT_IN_TYPES, type Manifest } from "./schema.ts";
 
 /** A note as questions read it: its front-matter, and whether it's sensitive. */
@@ -218,8 +218,8 @@ export function findQuestions(
   return rank([...asked, ...found]);
 }
 
-/** Absent and empty are one value: an asked field that was empty and still is hasn't changed. */
-const sameValue = (a: unknown, b: unknown) => (empty(a) || empty(b) ? empty(a) && empty(b) : same(a, b));
+/** Exactly equal, absent and empty as one: a field empty when asked and still empty hasn't changed, a new case has. */
+const sameValue = (a: unknown, b: unknown) => (empty(a) || empty(b) ? empty(a) && empty(b) : deepEqual(a, b));
 
 /** Soonest deadline first, then what an agent asked, then in the record's order. */
 function rank(questions: readonly Question[]): Question[] {
@@ -273,7 +273,7 @@ export function answerEdits(question: Question, reply: Reply): Edit[] {
     return [{ noteId: question.noteId, ops: [{ op: "set", path: ["current"], value: true }] }];
   }
   if (question.field === undefined) return [close("answered", reply.value)];
-  if (question.kind === "asked" && question.current !== undefined && same(question.current, reply.value))
+  if (question.kind === "asked" && question.current !== undefined && deepEqual(question.current, reply.value))
     return [close("answered", reply.value)];
   return [
     { noteId: question.noteId, ops: [{ op: "set", path: question.field.split("."), value: reply.value }] },

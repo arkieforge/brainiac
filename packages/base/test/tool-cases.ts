@@ -523,6 +523,20 @@ export const toolCases: Record<string, Case> = {
     equal(getNote(sql, asked)?.class, "sensitive");
     same(call(sql, floor, "get", { ids: [asked] })["missing"], [asked]);
     ok(!rows(sql, floor, { type: "Question" }).some((r) => r.id === asked));
+    // A deleted question too, so restoring it brings back nothing the floor may read.
+    const bsc = String(
+      call(sql, floor, "request_info", { question: "Is the degree right?", note: n.bsc, field: "degree" })[
+        "question"
+      ],
+    );
+    const person = { actor: "human", now: T0 };
+    equal(mutate(sql, { op: "delete", noteId: bsc, baseRev: revOf(sql, bsc) }, person).status, "applied");
+    equal(
+      mutate(sql, { op: "classify", noteId: n.bsc, baseRev: revOf(sql, n.bsc), class: "sensitive" }, person)
+        .status,
+      "applied",
+    );
+    equal(getNote(sql, bsc)?.class, "sensitive");
   },
 
   "the weekly email says a normal question's words, only counts a sensitive one, and stops when turned off": (
