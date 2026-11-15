@@ -9,6 +9,15 @@ export const nextPasskeyStep = (passkeys: readonly unknown[]) =>
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/**
+ * Where to land after signing in: only somewhere on this origin, as an absolute URL. Browsers read `/\\host` as
+ * `//host`, and `/.//host` normalizes to a path of `//host`, so neither a prefix check nor a bare path is safe.
+ */
+export const landing = (next: string | null, origin: string) => {
+  const target = next ? URL.parse(next, origin) : null;
+  return target?.origin === origin ? target.href : `${origin}/account`;
+};
+
 const page = (title: string, body: string, script: string, head = "") =>
   new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -57,13 +66,20 @@ ${script}
   );
 
 export interface SignInPageOptions {
+  /** Where signing in lands, from `landing`: the account page, or the page that sent the person here. */
+  next: string;
   turnstileSiteKey: string;
   providers: readonly ("google" | "github")[];
   /** Whether this stage can send email. Better Auth reports a code as sent even when sending failed. */
   emailCodes: boolean;
 }
 
-export function signInPage({ turnstileSiteKey, providers, emailCodes }: SignInPageOptions): Response {
+export function signInPage({
+  next: landsOn,
+  turnstileSiteKey,
+  providers,
+  emailCodes,
+}: SignInPageOptions): Response {
   const labels = { google: "Google", github: "GitHub" };
   const social = providers
     .map(
@@ -80,7 +96,8 @@ ${emailCodes ? "" : '<p class="note">Email codes aren\'t set up on this server y
 <form id="code" hidden><label>Enter the code we sent.
 <input name="otp" required inputmode="numeric" autocomplete="one-time-code"></label><button>Continue</button></form>
 ${social ? `<section>${social}</section>` : ""}`,
-    `let widget;
+    `const landsOn = ${JSON.stringify(landsOn).replace(/</g, "\\u003c")};
+let widget;
 window.onTurnstileLoad = () => { widget = turnstile.render("#turnstile", { sitekey: ${JSON.stringify(turnstileSiteKey)} }); };
 const captcha = () => {
   const token = turnstile.getResponse(widget);
@@ -89,7 +106,7 @@ const captcha = () => {
   return { "x-captcha-response": token };
 };
 let email;
-document.getElementById("passkey").onclick = run(async () => next(await passkeySignIn(), "/account"));
+document.getElementById("passkey").onclick = run(async () => next(await passkeySignIn(), landsOn));
 document.getElementById("email").onsubmit = run(async (event) => {
   email = new FormData(event.target).get("email");
   await api("/email-otp/send-verification-otp", { method: "POST", headers: captcha(), body: JSON.stringify({ email, type: "sign-in" }) });
@@ -98,11 +115,11 @@ document.getElementById("email").onsubmit = run(async (event) => {
 });
 document.getElementById("code").onsubmit = run(async (event) => {
   const otp = new FormData(event.target).get("otp");
-  next(await api("/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp, oauth_query: oauthQuery }) }), "/account");
+  next(await api("/sign-in/email-otp", { method: "POST", body: JSON.stringify({ email, otp, oauth_query: oauthQuery }) }), landsOn);
 });
 for (const button of document.querySelectorAll("[data-provider]")) {
   button.onclick = run(async () => {
-    const { url } = await api("/sign-in/social", { method: "POST", headers: captcha(), body: JSON.stringify({ provider: button.dataset.provider, callbackURL: "/account", oauth_query: oauthQuery }) });
+    const { url } = await api("/sign-in/social", { method: "POST", headers: captcha(), body: JSON.stringify({ provider: button.dataset.provider, callbackURL: landsOn, oauth_query: oauthQuery }) });
     location.href = url;
   });
 }`,
@@ -229,3 +246,49 @@ export const consentExpired = () =>
     `<p>This link has expired. Go back to the app you were connecting and start again.</p>`,
     "",
   );
+
+export interface CliLoginOptions {
+  email: string;
+  /** The name the CLI gave its machine. The CLI says it, so the page shows it as a name, never as proof. */
+  device: string;
+  /** Where the CLI listens on this machine's loopback, and the value only it knows to expect back. */
+  port: number;
+  state: string;
+}
+
+/** `brainiac login`: whether the CLI in a terminal on this machine may sync this account's record. */
+export function cliLoginPage({ email, device, port, state }: CliLoginOptions): Response {
+  return page(
+    "Connect a laptop",
+    `<p>The <strong>brainiac</strong> command on <strong>${escape(device)}</strong> wants to sync your Brainiac record.</p>
+<p class="note">Continue only if you just ran <code>brainiac login</code>. It won't see your sensitive notes unless you allow it. You're signed in as ${escape(email)}.</p>
+<form method="post"><input type="hidden" name="port" value="${port}"><input type="hidden" name="state" value="${escape(state)}"><input type="hidden" name="device" value="${escape(device)}">
+<button>Connect</button></form>`,
+    "",
+  );
+}
+
+/**
+ * Hands the new token to the CLI listening on this machine's loopback, in a POST body, so it stays out of the
+ * address bar, history and request logs. Only ever 127.0.0.1: the port comes from the page, never the host.
+ */
+export function cliLoginDone({
+  port,
+  state,
+  token,
+}: Omit<CliLoginOptions, "email" | "device"> & { token: string }) {
+  return page(
+    "Connect a laptop",
+    `<p>Handing the connection to your terminal…</p>
+<form id="hand" method="post" action="http://127.0.0.1:${port}/callback"><input type="hidden" name="state" value="${escape(state)}"><input type="hidden" name="token" value="${escape(token)}">
+<noscript><button>Continue</button></noscript></form>`,
+    `document.getElementById("hand").submit();`,
+  );
+}
+
+/** The login page when its link isn't one `brainiac login` made. */
+export const cliLoginInvalid = () =>
+  new Response("This link isn't one brainiac login made. Run brainiac login again in your terminal.", {
+    status: 400,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });

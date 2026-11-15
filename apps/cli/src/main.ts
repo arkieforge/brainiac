@@ -2,7 +2,7 @@
 // `brainiac`: the laptop side. Built into one binary with `bun build --compile`.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -11,9 +11,12 @@ import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
 import { socketLink } from "./link.ts";
 import { serveStdio } from "./mcp.ts";
+import { logout, openBrowser, startLogin } from "./login.ts";
 import { service } from "./service.ts";
 
-const USAGE = `brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
+const USAGE = `brainiac login [--server <url>]
+brainiac logout
+brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
 brainiac mcp serve [--server <url>]
@@ -55,22 +58,58 @@ async function main(argv: readonly string[]): Promise<void> {
   });
   const dir = configDir();
   let config: Config = loadConfig(dir);
-  const token = process.env["BRAINIAC_TOKEN"];
+  const [command, sub, ...rest] = positionals;
+  // A saved token belongs to the server it was minted on, so the two change only together: a new server is saved
+  // with the token `brainiac login` gets from it, and while a token is saved no other command may point elsewhere.
+  const saved = { server: config.server, token: config.token };
+  const otherServer = values.server !== undefined && values.server !== config.server;
+  if (otherServer && config.token && command !== "login")
+    fail(
+      `This computer is logged in to ${config.server}. Run brainiac logout first, or brainiac login --server ${values.server}.`,
+    );
   // Flags given once are remembered, so the login service needs none.
-  if (values.vault || values.server || token) {
+  if (values.vault || values.server) {
     config = {
       ...config,
       // Stored resolved, so the daemon and every command name one vault, even through an alias.
       ...(values.vault && {
         vault: existsSync(values.vault) ? realpathSync(values.vault) : resolve(values.vault),
       }),
-      ...(values.server && { server: values.server }),
-      ...(token && { token }),
+      // Login saves its server only with the token it gets from it.
+      ...(values.server && command !== "login" && { server: values.server }),
     };
     saveConfig(dir, config);
   }
+  // For CI and scripts: BRAINIAC_TOKEN stands in for the saved token while it is set, and is never saved.
+  const token = process.env["BRAINIAC_TOKEN"] || config.token;
   const vault = config.vault;
-  const [command, sub, ...rest] = positionals;
+
+  if (command === "login") {
+    const server = values.server ?? config.server;
+    if (!server) fail("brainiac login needs --server <url> once.");
+    const login = await startLogin(server, hostname());
+    console.log(`Opening your browser to connect this computer. If it doesn't open, go to:\n${login.url}`);
+    openBrowser(login.url);
+    const fresh = await login.token;
+    saveConfig(dir, { ...config, server, token: fresh });
+    // The token it replaces is gone from this machine, so its connection is ended rather than left behind.
+    if (saved.server && saved.token) await logout(saved.server, saved.token).catch(() => {});
+    console.log("Logged in. Restart the daemon if it is running, so it syncs with the new connection.");
+    return;
+  }
+  if (command === "logout") {
+    if (!saved.server || !saved.token) fail("Not logged in on this computer.");
+    try {
+      await logout(saved.server, saved.token);
+    } catch (error) {
+      // Kept, so logging out can be tried again: the connection would otherwise outlive the only copy of its token.
+      fail(`Couldn't reach ${saved.server} to end this connection, so it is still saved: ${String(error)}`);
+    }
+    const { token: _ended, ...kept } = config;
+    saveConfig(dir, kept);
+    console.log("Logged out: this computer's connection is ended, and its token deleted.");
+    return;
+  }
 
   if (command === "daemon" && sub === "run") {
     if (!vault || !config.server) fail("brainiac daemon run needs --vault <dir> and --server <url> once.");
@@ -83,7 +122,7 @@ async function main(argv: readonly string[]): Promise<void> {
     const daemon = await Daemon.start({
       root: vault,
       deviceId: config.deviceId,
-      connect: socketLink(config.server, config.token),
+      connect: socketLink(config.server, token),
       ...(config.keepSensitive && { keepSensitive: true }),
       ...(values.repair && { repair: true }),
     });
@@ -127,12 +166,12 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "mcp" && sub === "serve") {
     // stdout carries the protocol, so nothing else may print there.
-    if (!config.server || !config.token)
-      fail("brainiac mcp serve needs --server <url> once and this device's token in BRAINIAC_TOKEN.");
+    if (!config.server || !token)
+      fail("brainiac mcp serve needs --server <url> once, and brainiac login (or BRAINIAC_TOKEN).");
     try {
       await serveStdio({
         server: config.server,
-        token: config.token,
+        token,
         input: process.stdin,
         write: (line) => process.stdout.write(`${line}\n`),
       });

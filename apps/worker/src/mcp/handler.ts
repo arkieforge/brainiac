@@ -25,9 +25,10 @@ export interface RecordStub {
   authenticate(token: string): Promise<Connection | null>;
 }
 
-/** How /mcp finds a record. The base comes from the token: a user id, or the id inside a CLI token. */
+/** How /mcp finds a record. The base comes from the token: its user's registry row, or the id inside a CLI token. */
 export interface Records {
-  of(userId: string): RecordStub;
+  /** The person's record, from the base registry; undefined once it was deleted. */
+  of(userId: string): Promise<RecordStub | undefined>;
   /** The record a CLI token names, if that is a record id at all. */
   byId(baseId: string): RecordStub | undefined;
 }
@@ -173,7 +174,9 @@ async function caller(
     });
     if (!consent) throw unauthorized("this app was disconnected", "invalid_token");
   }
-  return { record: records.of(userId), via: { oauthClientId: clientId } };
+  const record = await records.of(userId);
+  if (!record) throw unauthorized("this record was deleted", "invalid_token");
+  return { record, via: { oauthClientId: clientId } };
 }
 
 /** A request without a valid token for this origin's `/mcp` gets the 401 that starts a client's sign-in. */

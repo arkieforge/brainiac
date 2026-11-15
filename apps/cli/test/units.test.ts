@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { configDir } from "../src/config.ts";
+import { configDir, loadConfig, saveConfig } from "../src/config.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
+import { logout, startLogin, type Waiting } from "../src/login.ts";
 import { service } from "../src/service.ts";
 
 describe("what the daemon takes from disk", () => {
@@ -111,5 +112,54 @@ describe("the config folder", () => {
     expect(configDir({ XDG_CONFIG_HOME: "/xdg" }, "linux", homedir())).toBe("/xdg/brainiac");
     expect(configDir({ APPDATA: "D:\\Roaming" }, "win32", "C:\\Users\\nadia")).toBe("D:\\Roaming\\brainiac");
     expect(configDir({}, "win32", "C:\\Users\\nadia")).toBe("C:\\Users\\nadia\\AppData\\Roaming\\brainiac");
+  });
+});
+
+// What the site's page posts to the loopback listener once the person confirms.
+const postBack = (url: URL, form: Record<string, string>) =>
+  fetch(`http://127.0.0.1:${url.searchParams.get("port")}/callback`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(form),
+  });
+
+describe("brainiac login", () => {
+  let dir = "";
+  let login: Waiting | undefined;
+  afterEach(() => {
+    login?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("takes the token only with its own state, and saves it readable by this user alone", async () => {
+    login = await startLogin("https://brainiac.test", "Ada's laptop");
+    const url = new URL(login.url);
+    expect(url.origin + url.pathname).toBe("https://brainiac.test/cli/login");
+    expect(url.searchParams.get("device")).toBe("Ada's laptop");
+    const state = url.searchParams.get("state") ?? "";
+    expect(state.length).toBeGreaterThanOrEqual(32);
+    const token = `brn_${"a".repeat(64)}_${"b".repeat(43)}`;
+
+    // Another page posting to this port, without the state only this terminal and its browser tab know.
+    expect((await postBack(url, { token, state: "x".repeat(state.length) })).status).toBe(400);
+    expect((await postBack(url, { token, state: "" })).status).toBe(400);
+    expect((await postBack(url, { token: "not-a-token", state })).status).toBe(400);
+    const pending = Symbol("pending");
+    expect(await Promise.race([login.token, pending])).toBe(pending);
+
+    expect((await postBack(url, { token, state })).status).toBe(200);
+    expect(await login.token).toBe(token);
+
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "brainiac-login-")));
+    saveConfig(dir, { ...loadConfig(dir), token });
+    expect(loadConfig(dir).token).toBe(token);
+    // Windows has no mode bits; the config folder there is in the user's own AppData.
+    const mode = process.platform === "win32" ? 0o600 : statSync(join(dir, "config.json")).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("never sends a token to logout in the clear, except to this machine", async () => {
+    const token = `brn_${"a".repeat(64)}_${"b".repeat(43)}`;
+    await expect(logout("http://brainiac.test", token)).rejects.toThrow(/isn't https/);
   });
 });

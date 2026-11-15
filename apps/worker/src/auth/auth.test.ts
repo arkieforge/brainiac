@@ -515,10 +515,10 @@ afterAll(() => mf.dispose());
 
 // The stub's RPC methods are the DO's own; Miniflare's types describe only fetch.
 const stub = (id: DurableObjectId) => bases.get(id) as unknown as DurableObjectStub<TestBase>;
-/** A person's record, as index.ts finds it. */
+/** A person's record; index.ts finds it in the base registry (registry.test.ts), here one per user id. */
 const recordOf = (userId: string) => stub(bases.idFromName(userId));
 const records: Records = {
-  of: recordOf,
+  of: async (userId) => recordOf(userId),
   byId: (baseId) => {
     try {
       return stub(bases.idFromString(baseId));
@@ -1131,7 +1131,7 @@ describe("MCP clients", () => {
     const { auth, access, neon } = await fixtureStudent();
     const leaky: Records = {
       ...records,
-      of: (userId) => ({
+      of: async (userId) => ({
         tool: () => Promise.reject(new Error("pg: password authentication failed for user brainiac_owner")),
         authenticate: (bearer) => recordOf(userId).authenticate(bearer),
       }),

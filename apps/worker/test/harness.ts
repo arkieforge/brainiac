@@ -15,7 +15,8 @@ import {
   type Principal,
 } from "@brainiac/base";
 
-import { ACTOR_HEADER, Base } from "../src/base.ts";
+import { Base } from "../src/base.ts";
+import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts";
 import type { Env } from "../src/env.ts";
 import { consume } from "../src/jobs.ts";
 
@@ -152,13 +153,26 @@ export class TestBase extends Base {
   }
 }
 
+/**
+ * Stands in for Better Auth and the registry, and only them: the cookie `user=<name>` is a session for the person
+ * whose record is the one named `<name>`. The routes themselves are the real ones (devices.ts).
+ */
+const fakeSession =
+  (request: Request, env: Env): SignedIn =>
+  async () => {
+    const user = /(?:^|; )user=([\w-]+)/.exec(request.headers.get("cookie") ?? "")?.[1];
+    // The fixture student (fictional).
+    if (user === undefined) return undefined;
+    return { email: "ada.okafor@example.edu", baseId: env.BASE.idFromName(user).toString() };
+  };
+
 export default {
   queue: consume,
-  // Stands in for the authenticated route (#87): every socket reaches one record, as "tester" (the person), or as
-  // the actor `?as=` names, like `connection:<id>`. The real route takes the actor from the session or token.
   fetch: (request: Request, env: Env) => {
-    const headers = new Headers(request.headers);
-    headers.set(ACTOR_HEADER, new URL(request.url).searchParams.get("as") ?? "tester");
-    return env.BASE.get(env.BASE.idFromName("sync")).fetch(request.url, { headers });
+    const { pathname } = new URL(request.url);
+    if (pathname === "/sync") return openSync(request, env, fakeSession(request, env));
+    if (pathname === "/cli/login") return cliLogin(request, env, fakeSession(request, env));
+    if (pathname === "/cli/logout") return cliLogout(request, env);
+    return new Response("Not found", { status: 404 });
   },
 };

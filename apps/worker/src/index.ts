@@ -7,13 +7,15 @@ import { Client, Pool } from "pg";
 import { type AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
-import { accountPage, signInPage } from "./auth/pages.ts";
+import { accountPage, landing, signInPage } from "./auth/pages.ts";
 import { vouchedUntil } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
 import { serveDev } from "./dev.ts";
+import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
 import { consume } from "./jobs.ts";
 import { serveMcp, type Records } from "./mcp/handler.ts";
+import { baseOf } from "./registry.ts";
 
 export { Base } from "./base.ts";
 export type { Env } from "./env.ts";
@@ -41,65 +43,70 @@ const mailer =
     await env.EMAIL.send({ from: { name: "Brainiac", email: env.EMAIL_FROM }, to, subject, text });
   };
 
-/**
- * A signed-in person's record. The base comes from the session or token, never the request.
- * shortcut: it is the DO named by their user id; #87's base registry in Neon replaces the lookup.
- */
-const recordOf = (env: Env, userId: string) => env.BASE.get(env.BASE.idFromName(userId));
+/** The record a CLI token names, if that is an id this namespace made at all. */
+const recordById = (env: Env, baseId: string) => {
+  try {
+    return env.BASE.get(env.BASE.idFromString(baseId));
+  } catch {
+    return undefined;
+  }
+};
 
-/** The records /mcp reaches: a user's, or the one a CLI token names. */
-const records = (env: Env): Records => ({
-  of: (userId) => recordOf(env, userId),
-  byId: (baseId) => {
-    try {
-      return env.BASE.get(env.BASE.idFromString(baseId));
-    } catch {
-      return undefined; // not an id this namespace made
-    }
-  },
+/** A signed-in person's record, from the base registry; undefined once it was deleted. */
+const recordOf = async (env: Env, pool: Pool, userId: string) => {
+  const baseId = await baseOf(pool, userId, () => env.BASE.newUniqueId().toString());
+  return baseId === undefined ? undefined : recordById(env, baseId);
+};
+
+/** The records /mcp reaches: a signed-in person's, or the one a CLI token names. */
+const records = (env: Env, pool: Pool): Records => ({
+  of: (userId) => recordOf(env, pool, userId),
+  byId: (baseId) => recordById(env, baseId),
 });
 
 const oauthApp = (clientId: string | undefined, clientSecret: string | undefined) =>
   clientId && clientSecret ? { clientId, clientSecret } : undefined;
 
-const authConfig = (request: Request, env: Env, database: AuthConfig["database"]): AuthConfig => ({
-  database,
+const authConfig = (request: Request, env: Env, pool: Pool): AuthConfig => ({
+  database: pool,
   baseURL: new URL(request.url).origin,
   secret: env.BETTER_AUTH_SECRET,
   sendEmail: mailer(env),
   turnstileSecret: env.TURNSTILE_SECRET_KEY,
   google: oauthApp(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
   github: oauthApp(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
-  onDisconnect: (userId, clientId) => recordOf(env, userId).disconnectApp(clientId),
+  onDisconnect: async (userId, clientId) => {
+    await (await recordOf(env, pool, userId))?.disconnectApp(clientId);
+  },
 });
 
 /**
  * Auth's config per request, over a pool Hyperdrive backs (it keeps the real connections warm). `keepOpen` hands
  * over work that may still use the pool after the response; the pool ends once it settles.
  */
-async function withAuthConfig(
+async function withAuthConfig<T>(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
-  use: (config: AuthConfig, keepOpen: (work: Promise<unknown>) => void) => Promise<Response>,
-): Promise<Response> {
+  use: (config: AuthConfig, keepOpen: (work: Promise<unknown>) => void, pool: Pool) => Promise<T>,
+): Promise<T> {
   // Up to 5, because Better Auth runs some queries beside an open transaction.
   const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 5 });
   const pending: Promise<unknown>[] = [];
   try {
-    return await use(authConfig(request, env, pool), (work) => pending.push(work));
+    return await use(authConfig(request, env, pool), (work) => pending.push(work), pool);
   } finally {
     ctx.waitUntil(Promise.allSettled(pending).then(() => pool.end()));
   }
 }
 
-const withAuth = (
+const withAuth = <T>(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
-  use: (auth: ReturnType<typeof createAuth>) => Promise<Response>,
+  use: (auth: ReturnType<typeof createAuth>, pool: Pool) => Promise<T>,
 ) =>
-  withAuthConfig(request, env, ctx, (config, keepOpen) => {
+  withAuthConfig(request, env, ctx, (config, keepOpen, pool) => {
     const auth = createAuth(config);
     // Better Auth starts its setup (seeding the /mcp resource) as soon as it's made; a quick answer, like /mcp's
     // 401, mustn't end the pool under it.
@@ -107,8 +114,25 @@ const withAuth = (
     // (Better Auth awaits plugin setup before any handler), because its "done" mark is per Better Auth instance and a Worker can't keep a pool
     // across requests; upgrade when Better Auth can skip the seed or remember it per isolate (#83).
     keepOpen(auth.$context);
-    return use(auth);
+    return use(auth, pool);
   });
+
+/**
+ * The signed-in person and their record, from the session and the registry. `fresh` reads the session from Neon
+ * rather than the cookie's 5-minute cache, for minting a credential: a session ended elsewhere can't make one.
+ */
+const signedIn =
+  (request: Request, env: Env, ctx: ExecutionContext, fresh = false): SignedIn =>
+  () =>
+    withAuth(request, env, ctx, async (auth, pool) => {
+      const session = await auth.api.getSession({
+        headers: request.headers,
+        query: { disableCookieCache: fresh },
+      });
+      if (!session) return undefined;
+      const baseId = await baseOf(pool, session.user.id, () => env.BASE.newUniqueId().toString());
+      return baseId === undefined ? undefined : { email: session.user.email, baseId };
+    });
 
 async function account(request: Request, auth: ReturnType<typeof createAuth>): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
@@ -165,19 +189,23 @@ export default {
     if (pathname.startsWith("/api/auth/") || pathname.startsWith("/.well-known/oauth-protected-resource"))
       return withAuth(request, env, ctx, (auth) => auth.handler(request));
     if (pathname === "/mcp")
-      return withAuth(request, env, ctx, (auth) =>
-        serveMcp(auth, request, records(env), {
+      return withAuth(request, env, ctx, (auth, pool) =>
+        serveMcp(auth, request, records(env, pool), {
           devTokens: Boolean(env.DEV_SIGN_IN_TOKEN) && env.STAGE !== "prod",
         }),
       );
     if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
     if (pathname === "/account") return withAuth(request, env, ctx, (auth) => account(request, auth));
+    if (pathname === "/sync") return openSync(request, env, signedIn(request, env, ctx));
+    if (pathname === "/cli/login") return cliLogin(request, env, signedIn(request, env, ctx, true));
+    if (pathname === "/cli/logout") return cliLogout(request, env);
     if (pathname === "/sign-in") {
       const providers = [
         ...(env.GOOGLE_CLIENT_ID ? (["google"] as const) : []),
         ...(env.GITHUB_CLIENT_ID ? (["github"] as const) : []),
       ];
       return signInPage({
+        next: landing(url.searchParams.get("next"), url.origin),
         turnstileSiteKey: env.TURNSTILE_SITE_KEY,
         providers,
         emailCodes: Boolean(env.EMAIL && env.EMAIL_FROM),

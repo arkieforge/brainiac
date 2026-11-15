@@ -76,11 +76,10 @@ import type { Env } from "./env.ts";
 const RETRY_MS = 60_000;
 
 /**
- * Who a sync socket speaks for: the person, or `connection:<id>`. The Worker's authenticated route sets it on the
- * upgrade request; nothing outside the Worker can reach a DO, so the header can't come from a client. What the
- * socket may read comes from the connection's own row, read again for every message and push, so narrowing a
- * connection reaches its open sockets at once.
- * shortcut: no route forwards sockets yet; /sync lands with #87, routing a CLI token by the base id inside it.
+ * Who a sync socket speaks for: the person, or `connection:<id>`. The Worker's `/sync` route (devices.ts) sets it
+ * on the upgrade request from the session or a CLI token, after dropping any the client sent; nothing outside the
+ * Worker can reach a DO. What the socket may read, and whether it may write, comes from the connection's own row,
+ * read again for every message and push, so narrowing a connection reaches its open sockets at once.
  */
 export const ACTOR_HEADER = "x-brainiac-actor";
 
@@ -221,9 +220,8 @@ export class Base extends DurableObject<Env> {
     return result;
   }
 
-  // Connections. Only the site's session route may call these, for the record's owner; the Worker routes a CLI
+  // Connections. Only the site's session routes may call these, for the record's owner; the Worker routes a CLI
   // token to its record by the id inside it (`tokenBase`), and `authenticate` decides whether it is good.
-  // shortcut: no route calls them yet but /mcp's `authenticate`; /sync and `brainiac login` arrive with #87.
 
   /** A new connection at the floor (propose, no sensitive notes, a 3-day hold), or an MCP client's existing one. */
   // Not `connect`: a Durable Object's `connect` is its TCP socket handler.
@@ -238,6 +236,18 @@ export class Base extends DurableObject<Env> {
 
   authenticate(token: string): Connection | null {
     return authenticate(this.sql, token, Date.now()) ?? null;
+  }
+
+  /** `brainiac login`: a new CLI connection at the floor and its token, for the person's session route. Shown once. */
+  login(): string {
+    return this.mintToken(this.addConnection({ kind: "cli" }).id);
+  }
+
+  /** `brainiac logout`: ends the connection a CLI token belongs to, closing its sockets. False if the token is no good here. */
+  logout(token: string): boolean {
+    const connection = authenticate(this.sql, token, Date.now());
+    if (connection) this.disconnect(connection.id);
+    return connection !== undefined;
   }
 
   /** Loosens a connection with the person's passkey over `grantHash(plan)` (contract §4). */
@@ -406,7 +416,7 @@ export class Base extends DurableObject<Env> {
     if (request.headers.get("upgrade") !== "websocket")
       return new Response("Expected a WebSocket", { status: 426 });
     const actor = request.headers.get(ACTOR_HEADER);
-    if (!actor || !this.reader(actor)) return new Response("Unauthorized", { status: 401 });
+    if (!actor || !this.sender(actor)) return new Response("Unauthorized", { status: 401 });
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ actor, clientId: null } satisfies Socket);
@@ -418,15 +428,16 @@ export class Base extends DurableObject<Env> {
     const message = decodeClientMessage(typeof data === "string" ? data : new TextDecoder().decode(data));
     if ("error" in message) return send({ type: "error", message: message.error });
     const socket: Socket = ws.deserializeAttachment();
-    const reader = this.reader(socket.actor);
-    if (!reader) return ws.close(4001, "This connection was disconnected.");
+    const sender = this.sender(socket.actor);
+    if (!sender) return ws.close(4001, "This connection was disconnected.");
     if (message.type === "hello")
       ws.serializeAttachment({ ...socket, clientId: message.clientId } satisfies Socket);
     else if (message.clientId !== socket.clientId)
       return send({ type: "error", message: "Say hello first." });
     let served;
     try {
-      served = serve(this.sql, message, { actor: socket.actor, now: Date.now() }, reader);
+      const ctx = { actor: socket.actor, now: Date.now(), readOnly: sender.readOnly };
+      served = serve(this.sql, message, ctx, sender.reader);
     } catch (error) {
       // A bug, not a refusal (refusals come back as results): the transaction rolled back and the change
       // keeps its number, so the client resends it once the bug is fixed. Say so rather than going quiet.
@@ -438,11 +449,14 @@ export class Base extends DurableObject<Env> {
     this.wake();
   }
 
-  /** What a socket's actor may read now: the person everything, a connection its grants; `undefined` once it is gone. */
-  private reader(actor: string): Principal | undefined {
-    if (!actor.startsWith("connection:")) return PERSON;
+  /**
+   * What a socket's actor may do now: the person reads and writes everything; a connection reads what its grants
+   * allow and, above read level, syncs file edits as unattributed ones (contract §3). `undefined` once it is gone.
+   */
+  private sender(actor: string): { readonly reader: Principal; readonly readOnly: boolean } | undefined {
+    if (!actor.startsWith("connection:")) return { reader: PERSON, readOnly: false };
     const connection = connectionOf(this.sql, actor);
-    return connection && principalOf(connection);
+    return connection && { reader: principalOf(connection), readOnly: connection.level === "read" };
   }
 
   /** After a change from anywhere: re-arm the alarm and push what changed to every sync socket. */
@@ -458,7 +472,7 @@ export class Base extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) {
       const socket: Socket | null = ws.deserializeAttachment();
       if (!socket?.clientId) continue;
-      const reader = this.reader(socket.actor);
+      const reader = this.sender(socket.actor)?.reader;
       if (!reader) {
         ws.close(4001, "This connection was disconnected.");
         continue;

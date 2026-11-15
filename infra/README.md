@@ -1,7 +1,7 @@
 # Infra
 
 Cloud resources are declared in [`alchemy.run.ts`](../alchemy.run.ts) at the repo root, one stack per stage.
-This folder will also hold Neon migrations for the shared account tables and runbooks for restore drills
+This folder also holds the Neon migrations for the shared tables, and will hold runbooks for restore drills
 ([docs/internals/security.md](../docs/internals/security.md)).
 
 ## Stages
@@ -51,7 +51,7 @@ GitHub gets read-only Doppler service tokens: `DOPPLER_TOKEN_DEV` as a repo secr
 
 ## Migrations
 
-`infra/migrations/*.sql` holds the Neon schema (Better Auth's tables so far). Every deploy applies new files to
+`infra/migrations/*.sql` holds the Neon schema: Better Auth's tables and the base registry. Every deploy applies new files to
 the stage's branch, in order, before the Worker updates; `vp run plan` shows the branch as an update while a file is pending (read the diff for which). History is forward only: an
 applied file is never edited, and a change goes in a new file that sorts after the others.
 
