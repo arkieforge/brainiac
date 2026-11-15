@@ -94,6 +94,19 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       status: { values: ["open", "answered", "not-applicable"], required: true },
     },
   },
+  // What the GitHub connector proposes for a repo (packages/base/src/github.ts). `synced` is the connector's own
+  // block, which it refreshes directly; every other field is the person's.
+  Project: {
+    version: 1,
+    held: true,
+    folder: "facts/projects",
+    fields: {
+      role: { kind: "text", example: "Lead developer (team of 3)" },
+      summary: { kind: "text" },
+      sources: { kind: "list" },
+      synced: { kind: "mapping", example: "{repo_id: R_kgDOJx, stars: 214}" },
+    },
+  },
 };
 
 // Every note has these, whatever its type.

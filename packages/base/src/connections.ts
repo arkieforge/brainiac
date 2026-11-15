@@ -20,7 +20,8 @@ const MAX_HOLD_DAYS = 365;
 
 export interface Connection {
   readonly id: string;
-  readonly kind: "oauth" | "cli";
+  /** `connector`: a built-in connector acting at the floor (github.ts); never stored, so never granted more. */
+  readonly kind: "oauth" | "cli" | "connector";
   /** The MCP client's metadata URL; null for a CLI connection. */
   readonly oauthClientId: string | null;
   readonly level: Level;

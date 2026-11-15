@@ -17,6 +17,7 @@ import {
 import type { NeedsApproval } from "./approvals.ts";
 import { connectionOf } from "./connections.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
+import { caughtUp } from "./github.ts";
 import type { Action, Proposed } from "./hold.ts";
 import {
   mutate,
@@ -187,7 +188,12 @@ export function decide(sql: Sql, proposalId: string, decision: "accept" | "rejec
     sql.all("UPDATE proposals SET status = 'rejected', autoApplyAt = NULL WHERE id = ?", proposal.id);
     return { status: "rejected" };
   }
-  if (proposal.kind === "change") return apply(sql, proposal, ctx);
+  if (proposal.kind === "change") {
+    const result = apply(sql, proposal, ctx);
+    // A GitHub project accepted after its repo changed catches up to what GitHub said last.
+    if (result.status === "applied" && "noteId" in result) caughtUp(sql, result.noteId, ctx.now);
+    return result;
+  }
   if (proposal.kind === "conflict") return pick(sql, proposal, ctx);
   return refused("Schema proposals are decided in organize.");
 }

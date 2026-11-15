@@ -139,8 +139,9 @@ export default Alchemy.Stack(
         // Strictly public fetch: a fetch to one of our own hostnames goes through Cloudflare's front door, not
         // straight to an origin. The MCP client metadata fetch relies on it (apps/worker/src/auth/cimd-fetch.ts).
         compatibility: { flags: ["nodejs_compat", "global_fetch_strictly_public"] },
-        // The weekly questions email (apps/worker/src/digest.ts, DIGEST_CRON).
-        crons: ["0 8 * * 1"],
+        // The weekly questions email (apps/worker/src/digest.ts, DIGEST_CRON) and the GitHub connector's daily
+        // sweep (apps/worker/src/connectors/github.ts, SWEEP_CRON).
+        crons: ["0 8 * * 1", "0 3 * * *"],
         env: {
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),
@@ -163,6 +164,12 @@ export default Alchemy.Stack(
           ...(yield* secretIf("GOOGLE_CLIENT_SECRET")),
           ...(yield* secretIf("GITHUB_CLIENT_ID")),
           ...(yield* secretIf("GITHUB_CLIENT_SECRET")),
+          // The GitHub connector's App (apps/worker/src/connectors/github.ts); off until all five are set.
+          ...(yield* secretIf("GITHUB_APP_SLUG")),
+          ...(yield* secretIf("GITHUB_APP_CLIENT_ID")),
+          ...(yield* secretIf("GITHUB_APP_CLIENT_SECRET")),
+          ...(yield* secretIf("GITHUB_APP_PRIVATE_KEY")),
+          ...(yield* secretIf("GITHUB_APP_WEBHOOK_SECRET")),
           ...email,
         },
       });

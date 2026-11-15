@@ -20,6 +20,12 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  /** The GitHub App the connector runs as (connectors/github.ts); the connector is off until all five exist. */
+  GITHUB_APP_SLUG?: string;
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_WEBHOOK_SECRET?: string;
   /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;

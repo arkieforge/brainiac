@@ -105,4 +105,31 @@ describe("Base DO", () => {
     expect(result).toMatchObject({ undone: [noteId], conflicts: [] });
     expect(await base.rev(noteId)).toBe(3);
   });
+
+  it("takes a GitHub repo as a proposal, and refreshes its project once accepted", async () => {
+    const base = (await record("github"))();
+    // The fixture student's private repo (fictional), as the connector hands it over.
+    const repo = {
+      id: "R_kgDOJxThesis",
+      name: "nadia-karim/thesis-notes",
+      url: "https://github.com/nadia-karim/thesis-notes",
+      private: true,
+      archived: false,
+      stars: 0,
+      language: null,
+      pushed: "2026-10-02",
+    };
+    expect(await base.githubRepos([repo])).toEqual({ proposed: 1, refreshed: 0 });
+    expect(await base.notes(human)).toEqual([]);
+    const [proposal] = await base.proposals();
+    if (!proposal) throw new Error("no proposal");
+    expect(await base.decide(proposal, "accept", human)).toMatchObject({ status: "applied" });
+    const [project] = await base.notes(human).then((notes) => (Array.isArray(notes) ? notes : []));
+    expect(project?.class).toBe("sensitive");
+
+    expect(await base.githubRepos([{ ...repo, stars: 3 }])).toEqual({ proposed: 0, refreshed: 1 });
+    await base.githubRepoDeleted(repo.id);
+    const [after] = await base.notes(human).then((notes) => (Array.isArray(notes) ? notes : []));
+    expect(JSON.parse(after?.fm ?? "{}").synced).toMatchObject({ stars: 3, archived: true });
+  });
 });

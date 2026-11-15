@@ -4,6 +4,7 @@
 // the note can't escape it, and moving any note out of a held type's folder is held too. A new note is never
 // held, since it starts unverified, unless it supersedes a held-type note.
 import {
+  BUILT_IN_TYPES,
   deepEqual,
   parseManifest,
   pathKey,
@@ -35,7 +36,7 @@ export interface Proposed {
 
 export const DAY_MS = 24 * 60 * 60_000;
 
-/** The record's manifest, or undefined before it has one (then no type is held). */
+/** The record's manifest, or undefined before it has one (then only built-in types can be held). */
 export function manifestOf(sql: Sql): Manifest | undefined {
   const [schema] = sql.all<{ manifest: string }>("SELECT manifest FROM schema ORDER BY version DESC LIMIT 1");
   return schema && parseManifest(schema.manifest);
@@ -57,7 +58,8 @@ const keyOf = (path: string) => {
 function heldOf(manifest: Manifest | undefined) {
   const types = new Set<string>();
   const areas: string[] = [];
-  for (const [name, spec] of Object.entries(manifest?.types ?? {})) {
+  // Built-in types count too (a Project is a fact type); a manifest type of the same name wins.
+  for (const [name, spec] of Object.entries({ ...BUILT_IN_TYPES, ...manifest?.types })) {
     if (!spec.held) continue;
     types.add(name);
     const area = spec.folder === undefined ? undefined : keyOf(spec.folder);
