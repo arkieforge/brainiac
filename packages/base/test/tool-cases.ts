@@ -629,6 +629,23 @@ export const toolCases: Record<string, Case> = {
     });
     same([made["status"], made["id"], made["path"]], ["applied", held["id"], held["path"]]);
     match(refused(sql, writer, "create", { ...args, id: held["id"] }), /id must be removed/);
+
+    // Another connection citing an approval for a note it can't see gets a note of its own, whether that note
+    // exists or not: the approval tells it nothing.
+    const other = { ...args, fields: { ...args.fields, title: "IELTS Academic, June 2027" } };
+    const again = call(sql, writer, "create", other);
+    equal(again["status"], "needsApproval");
+    const approval = recordApproval(sql, again["items"] as PlanItem[], signature(), T0);
+    ok("approvalId" in approval);
+    const floor = as(connection(sql));
+    const { link: _hidden, ...unlinked } = other;
+    const cited = call(sql, floor, "create", {
+      ...unlinked,
+      approval_id: approval.approvalId,
+      dry_run: true,
+    });
+    const note = cited["note"] as { readonly id: string };
+    same([cited["status"], typeof note.id, note.id === again["id"]], ["proposed", "string", false]);
   },
 
   "link fills a list field the note doesn't have yet as a list": (sql, fixtures) => {

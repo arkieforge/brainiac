@@ -550,18 +550,24 @@ const slug = (text: string) =>
 const fold = (text: string) => text.normalize("NFKC").toLowerCase().trim();
 
 /**
- * The note an unused approval signed into being, if it signed exactly one: a create sent again with the
- * approval makes that note, so its plan matches what the person signed. Taken from the approval, never from the
- * caller, so no argument can ask whether some id exists.
+ * The note an unused approval signed into being, if it signed exactly one of this type that the caller may see:
+ * a create sent again with the approval makes that note, so its plan matches what the person signed. Taken from
+ * the approval, never from the caller, and only when every answer it leads to is about notes the caller may see;
+ * otherwise the call gets a new id, as if it cited no approval.
  */
-function approvedCreate(sql: Sql, approvalId: string): string | undefined {
+function approvedCreate(sql: Sql, ctx: Context, approvalId: string, noteType: string): string | undefined {
   const [signed] = sql.all<{ items: string }>(
     "SELECT items FROM approvals WHERE id = ? AND usedAt IS NULL",
     approvalId,
   );
   const items: PlanItem[] = signed ? JSON.parse(signed.items) : [];
   const created = items.filter((item) => item.baseRev === 0 && item.patch.live?.after === true);
-  return created.length === 1 ? created[0]?.noteId : undefined;
+  const [item] = created;
+  if (created.length !== 1 || !item || item.patch.fields["type"]?.after !== noteType) return undefined;
+  if (!project({ class: item.class, type: noteType }, principal(ctx))) return undefined;
+  // A note made at that id since and hidden from the caller must answer as if there were none.
+  const existing = getNote(sql, item.noteId);
+  return existing && !project(existing, principal(ctx)) ? undefined : item.noteId;
 }
 
 const create = tool(
@@ -587,7 +593,9 @@ const create = tool(
       if (!isYaml(value)) return fail(`fields.${key} isn't a value front-matter can hold.`);
       fieldOps.push({ op: "set", path: [key], value });
     }
-    const id = (args.approval_id !== undefined && approvedCreate(sql, args.approval_id)) || ulid(ctx.now);
+    const id =
+      (args.approval_id !== undefined && approvedCreate(sql, ctx, args.approval_id, args.type)) ||
+      ulid(ctx.now);
     const title = typeof fields["title"] === "string" ? fields["title"] : undefined;
     const spec = typesOf(sql)[args.type];
     const live = sql
