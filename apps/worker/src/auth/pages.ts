@@ -205,13 +205,18 @@ export function accountPage(
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
+<p id="signed-out" role="status" hidden>Passkey removed. Every other device and browser was signed out, including whoever added it. Sign in again on your own devices.</p>
 ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" id="add">Add a passkey</button></section>`}
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
 ${githubSection}
 ${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, and when it used your approval.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
-    `// Changing passkeys asks for one that can approve first (the proof lasts 10 minutes, and a security key can
+    `if (new URLSearchParams(location.search).has("signed-out")) {
+  document.getElementById("signed-out").hidden = false;
+  history.replaceState(null, "", location.pathname);
+}
+// Changing passkeys asks for one that can approve first (the proof lasts 10 minutes, and a security key can
 // take a while to find), so a new one needn't wait 72 hours. Someone who lost theirs can carry on when adding,
 // and the server applies the wait.
 const proofEnds = Date.now() + ${vouchLeftMs} - 120_000;
@@ -233,10 +238,12 @@ document.getElementById("add").onclick = run(async () => {
 for (const button of document.querySelectorAll("[data-remove]")) {
   button.onclick = run(async () => {
     if (button.dataset.last === "true" && !confirm("This is your last passkey that can approve. Without one you can't approve changes, and a new passkey waits 72 hours first. Remove it?")) return;
-    // A passkey that's still waiting can go without proof; that's how you remove one you didn't add.
-    if (button.dataset.approves === "true") await confirmPasskey();
-    await api("/passkey/delete-passkey", { method: "POST", body: JSON.stringify({ id: button.dataset.remove }) });
-    location.reload();
+    // A passkey that can't approve yet can go without proof; that's how you remove one you didn't add. With
+    // proof, removing one also signs out whoever added it.
+    await confirmPasskey(button.dataset.approves === "true" ? undefined : "Couldn't confirm with a passkey that can approve. Remove this one anyway? Whoever added it stays signed in.");
+    const reply = await api("/passkey/delete-passkey", { method: "POST", body: JSON.stringify({ id: button.dataset.remove }) });
+    if (reply?.signedOut) location.search = "?signed-out";
+    else location.reload();
   });
 }
 for (const button of document.querySelectorAll("[data-disconnect]")) {
