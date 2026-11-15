@@ -160,8 +160,8 @@ export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title"
   let fenced = false;
   for (const line of body.split("\n")) {
     if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
-    const h2 = fenced ? null : /^## +(.+?)\s*#*\s*$/.exec(line);
-    if (h2?.[1]) sections.push({ heading: h2[1], lines: [] });
+    const heading = fenced ? undefined : h2(line);
+    if (heading) sections.push({ heading, lines: [] });
     else sections.at(-1)?.lines.push(line);
   }
   const [lead, ...rest] = sections.map((s) => ({ heading: s.heading, text: s.lines.join("\n").trim() }));
@@ -169,6 +169,20 @@ export function chunkNote(note: Pick<NoteRow, "raw" | "class" | "type" | "title"
     chunk([fields, lead?.text].filter(Boolean).join("\n\n")),
     ...rest.map((s) => chunk(s.text, s.heading)),
   ].filter((c) => c.text.length > 0 || c.header !== header);
+}
+
+/**
+ * An H2 heading's text (`## Plan ##` is `Plan`), or `undefined` for any other line. Plain string steps, not a
+ * regex, so a long line of spaces or `#` costs linear time.
+ */
+function h2(line: string): string | undefined {
+  if (!line.startsWith("## ")) return undefined;
+  let text = line.slice(3).trim();
+  // A closing run of `#` goes only after a space, as in CommonMark: `## C#` stays `C#`.
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end--;
+  if (end === 0 || /\s/.test(text[end - 1] ?? "")) text = text.slice(0, end).trim();
+  return text || undefined;
 }
 
 /**

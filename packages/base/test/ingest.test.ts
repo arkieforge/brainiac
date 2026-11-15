@@ -264,6 +264,14 @@ describe("chunkNote", () => {
     });
   });
 
+  it("reads H2 headings as CommonMark does, in time linear in the line", () => {
+    const last = (line: string) =>
+      chunkNote(note(`${IELTS}\n${"Detail. ".repeat(LONG_BODY / 8)}\n${line}\n\nText.\n`)).at(-1)?.header;
+    expect(last("## Plan ##")).toBe("[TestScore · IELTS Academic, November 2026 › Plan]");
+    expect(last("## C#")).toBe("[TestScore · IELTS Academic, November 2026 › C#]");
+    expect(last(`## ${" ".repeat(50_000)}x`)).toBe("[TestScore · IELTS Academic, November 2026 › x]");
+  });
+
   it("reads a value an alias repeats", () => {
     const raw =
       "---\ntype: TestScore\noverall: &band 8.0\nsections: {writing: *band, listening: 8.5}\nlater: *band\n---\n";
