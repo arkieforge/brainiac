@@ -21,6 +21,10 @@ const ManifestSpec = type({
       "folder?": "string",
       /** A fact type: a connection's change to an existing value waits out the hold window (contract §3). */
       "held?": "boolean",
+      /** One line per item in the overview: `{degree} · {institution} · {end|year}` (review.ts). */
+      "headline?": "string",
+      /** The fields that name one item: two notes with the same values are the same thing (review.ts). */
+      "key?": "string[]",
       fields: { "[string]": FieldSpec },
     },
   },

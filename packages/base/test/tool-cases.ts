@@ -324,6 +324,53 @@ export const toolCases: Record<string, Case> = {
     match(refused(sql, proposer, "request_info", { question: "x", note: n.ielts }), /No note with id/);
   },
 
+  "checks list what the detectors flag, only from notes the connection may see": (sql, fixtures) => {
+    const n = record(sql, fixtures);
+    const floor = as(connection(sql));
+    const scoped = as(connection(sql, { sensitive: true }));
+    // A second copy of the November score with another overall: one item, two values, both sensitive.
+    const copy = fixtures.find((f) => f.path === PATHS.ielts)?.raw ?? "";
+    const id = "01M6ADBH80DEGPEVAAVR2625V2";
+    const created = mutate(
+      sql,
+      {
+        op: "create",
+        path: "facts/tests/ielts-2026-11-copy.md",
+        raw: copy
+          .replace(/^id: .*$/m, `id: ${id}`)
+          .replace("overall: 8.0", "overall: 7.5")
+          .replace(/^verified: .*\n/m, ""),
+        class: "sensitive",
+      },
+      { actor: "human", now: T0 },
+    );
+    equal(created.status, "applied");
+    const checks = (ctx: Context) =>
+      rows(sql, ctx, { type: "Check" }).map((r) => [
+        r.fields["note"],
+        r.fields["detector"],
+        r.fields["field"],
+      ]);
+    // The role has no source; the floor connection never hears of the sensitive scores.
+    same(checks(floor), [[n.role, "proof", undefined]]);
+    same(checks(scoped), [
+      [id, "conflict", "overall"],
+      [id, "impossible", "overall"],
+      [n.role, "proof", undefined],
+    ]);
+    // The verified score isn't flagged; the copy is, with the verified value as its fix.
+    const [row] = rows(sql, scoped, {
+      type: "Check",
+      where: { detector: { eq: "conflict" } },
+      fields: ["evidence", "fix"],
+    });
+    same(row?.fields, {
+      evidence: "IELTS Academic, November 2026 says 8",
+      fix: { field: "overall", value: 8 },
+    });
+    match(refused(sql, scoped, "update", { type: "Check", set: { status: "done" } }), /not Checks/);
+  },
+
   "proposals and questions list for the connection that may see them": (sql, fixtures) => {
     const n = record(sql, fixtures);
     const proposer = as(connection(sql));

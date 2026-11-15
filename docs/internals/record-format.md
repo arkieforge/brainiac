@@ -33,6 +33,12 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 
 - **No file stands alone**: every PDF, scan or photo has a sidecar note (Document or Photo) saying what it is, who issued it, when it expires and which fields it proves.
 - **Relations are relative paths** in front-matter (readable, Obsidian-friendly, valid OKF). Every note also has a ULID `id` for sync. When a note moves (by you, an agent or `organize`), the DO rewrites every reference to it, in front-matter and in body links, in the same transaction, and every copy receives the rewritten notes.
+- **Headlines and keys**: a type's `headline` template (`"{degree} · {institution} · {end|year}"`) is its one
+  line in the overview; a part whose value is missing is left out, never guessed. Its `key` lists the fields that
+  name one item (`[test, date]`), so two notes with the same key values are one item: a conflict if they
+  disagree, a duplicate if not. A type without a `key` is never checked for either.
+- **What a document says**: a Document's `extracted` mapping holds the values it prints, and a note's source
+  (`{resource, page, fields}`) names which of them it proves. The detectors compare the two field by field.
 - **Held types**: a type marked `held: true` in `okf-base.yaml` is a fact type. A connection's change to its existing values waits out the hold window, and its folder is a held area (see "The contract").
 - **Names**: kebab-case `<what>-<when>`. Portal file names (`Karim_Nadia_Transcript.pdf`) are applied only when building a packet.
 - **Distinct events are distinct notes**: two IELTS attempts are two TestScore notes, the newer one `supersedes` the older. "Current score" is a query, and history stays queryable.

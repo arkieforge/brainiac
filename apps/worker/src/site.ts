@@ -2,20 +2,25 @@
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import type { FileToken } from "@brainiac/base";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
+import type { Approver } from "./approvals.ts";
 import type { Env } from "./env.ts";
 import { isUsercontent, serveUsercontent } from "./usercontent.ts";
 
 /**
  * The signed-in person and their record, from the session and the registry; `undefined` when nobody is. With
  * `passkey`, the session is read fresh from Neon and `passkey` says whether it proved a passkey that can approve in
- * the last 10 minutes (`vouchedUntil`), which an unclassified or vault file's original needs (contract §5).
+ * the last 10 minutes (`vouchedUntil`), which an unclassified or vault file's original needs (contract §5). With
+ * `approver` (a credential id from a signature), `approver` is that passkey as Neon holds it, if it is one of the
+ * signed-in person's own: never a key or counter from the request.
  */
-export type Session = (opts?: { readonly passkey?: boolean }) => Promise<
+export type Session = (opts?: { readonly passkey?: boolean; readonly approver?: string }) => Promise<
   | {
       readonly userId: string;
       readonly baseId: string;
       readonly passkey: boolean;
+      readonly approver?: Approver;
     }
   | undefined
 >;
@@ -24,6 +29,9 @@ export type Session = (opts?: { readonly passkey?: boolean }) => Promise<
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const SHA = /^[0-9a-f]{64}$/;
+const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+/** The most items one review session may cover. */
+const REVIEW_ITEMS = 200;
 const MIME = /^[a-z0-9][\w.+-]*\/[\w.+-]+$/;
 const PERSON = { actor: "human" } as const;
 
@@ -63,14 +71,35 @@ async function serveApi(
   if (post ? !sameOrigin(request) : request.method !== "GET") return failed(403, "Forbidden");
   const file = /^\/api\/files\/([^/]+)\/(token|kind)$/.exec(pathname);
   const token = post && file?.[2] === "token";
-  const person = await session({ passkey: token });
+  // Every POST but an upload is JSON.
+  const body: unknown = post && pathname !== "/api/files" ? await request.json().catch(() => null) : null;
+  // Opening a review: the passkey that signed, as Neon holds it for this person.
+  const signed = pathname === "/api/review/open" && post ? signatureOf(body) : undefined;
+  const person = await session({ passkey: token, ...(signed && { approver: signed.response.id }) });
   if (!person) return failed(401, "Sign in first.");
   const record = env.BASE.get(env.BASE.idFromString(person.baseId));
 
   if (pathname === "/api/session" && !post) return json({ user: person.userId });
   if (pathname === "/api/schema" && !post) return json({ manifest: await record.manifest() });
   const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
-  if (note !== undefined && post) return saveNote(request, record, note);
+  if (note !== undefined && post) return saveNote(body, record, note);
+  if (pathname === "/api/review" && post) {
+    const ids = typeof body === "object" && body !== null && "noteIds" in body ? body.noteIds : undefined;
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      ids.length > REVIEW_ITEMS ||
+      !ids.every((id) => ULID.test(id))
+    )
+      return failed(400, `Send the ids of the notes to review, up to ${REVIEW_ITEMS}.`);
+    return json({ nonce: await record.startReview(ids, PERSON) });
+  }
+  if (pathname === "/api/review/open" && post) {
+    if (!signed) return failed(400, "Send the review's nonce and your passkey's answer.");
+    if (!person.approver) return failed(403, "That passkey isn't one of yours.");
+    const opened = await record.openReview(signed.nonce, signed.response, person.approver, PERSON);
+    return "error" in opened ? failed(403, opened.error) : json({ review: opened.review });
+  }
   if (pathname === "/api/files") {
     if (!post) {
       const files = await record.files(PERSON);
@@ -95,7 +124,6 @@ async function serveApi(
   const sha256 = file?.[1];
   if (!post || !file || sha256 === undefined || !SHA.test(sha256)) return failed(404, "Not found");
   if (file[2] === "kind") {
-    const body: unknown = await request.json().catch(() => null);
     const kind = typeof body === "object" && body !== null && "kind" in body ? body.kind : undefined;
     if (typeof kind !== "string") return failed(400, "Say what the file is, like transcript.");
     const classified = await record.classifyFile(sha256, kind, PERSON);
@@ -117,23 +145,41 @@ async function serveApi(
   return json({ url: `${env.USERCONTENT_ORIGIN}/f/${minted.token}`, expiresAt: minted.expiresAt });
 }
 
+/** A review's nonce and the passkey's answer over it, from a request body; shapes only, the DO checks the rest. */
+function signatureOf(body: unknown) {
+  if (typeof body !== "object" || body === null || !("nonce" in body) || !("response" in body))
+    return undefined;
+  const { nonce, response } = body;
+  if (typeof nonce !== "string" || typeof response !== "object" || response === null) return undefined;
+  if (!("id" in response) || typeof response.id !== "string") return undefined;
+  // SimpleWebAuthn checks every other part of the response against the passkey and the nonce.
+  return { nonce, response: response as AuthenticationResponseJSON };
+}
+
 /**
- * `POST /api/notes/<id>` `{ raw, baseRev }`: the site's edit to a sensitive note, as the person. A tab never
- * queues one in its sync client, whose queue lives in IndexedDB on a device the person may not have marked as
- * theirs (contract §5), so it goes straight to the record's mutation path instead, online only. A `baseRev` the
- * note has moved past is a conflict, never an overwrite; the change reaches every tab through the sync push.
+ * `POST /api/notes/<id>` `{ raw, baseRev, review? }`: the site's edit to a note straight to the record, as the
+ * person. A sensitive note's edits always come here: a tab never queues one in its sync client, whose queue lives
+ * in IndexedDB on a device the person may not have marked as theirs (contract §5). Review mode's edits come here
+ * too, with the review session they were made in (`review`), which the record checks covers this note. Online
+ * only. A `baseRev` the note has moved past is a conflict, never an overwrite; the change reaches every tab
+ * through the sync push.
  */
 async function saveNote(
-  request: Request,
+  body: unknown,
   record: ReturnType<Env["BASE"]["get"]>,
   noteId: string,
 ): Promise<Response> {
-  const body: unknown = await request.json().catch(() => null);
-  const raw = typeof body === "object" && body !== null && "raw" in body ? body.raw : undefined;
-  const baseRev = typeof body === "object" && body !== null && "baseRev" in body ? body.baseRev : undefined;
+  const given = typeof body === "object" && body !== null ? body : {};
+  const raw = "raw" in given ? given.raw : undefined;
+  const baseRev = "baseRev" in given ? given.baseRev : undefined;
+  const review = "review" in given ? given.review : undefined;
   if (typeof raw !== "string" || typeof baseRev !== "number" || !Number.isInteger(baseRev))
     return failed(400, "Send the note's text and the revision it was edited from.");
-  const result = await record.mutate({ op: "put", noteId, baseRev, raw }, PERSON);
+  if (review !== undefined && typeof review !== "string") return failed(400, "review is a session's nonce.");
+  const result = await record.mutate(
+    { op: "put", noteId, baseRev, raw },
+    { ...PERSON, ...(review !== undefined && { review }) },
+  );
   switch (result.status) {
     case "applied":
       return json({ rev: result.rev });
@@ -147,7 +193,16 @@ async function saveNote(
   // The RPC stub's mapped type drops `needsApproval` (its plan holds `unknown` values), so it's read as an object.
   const answer: object = result;
   if ("planHash" in answer)
-    return json({ needsApproval: true, error: "This change needs your passkey approval." }, 409);
+    return json(
+      {
+        needsApproval: true,
+        error:
+          review === undefined
+            ? "This change needs your passkey approval."
+            : "Your review session doesn't cover this change: it ended, or the change reaches past its items.",
+      },
+      409,
+    );
   return failed(409, "This change is waiting for you as a proposal.");
 }
 

@@ -5,6 +5,8 @@ types:
     version: 1
     held: true
     folder: facts/education
+    headline: "{degree} · {institution} · {start|year}–{end|year} · CGPA {cgpa|2}"
+    key: [institution, degree]
     fields:
       institution: {kind: text, required: true, example: Northvale University}
       degree: {kind: text, required: true, example: BSc Computer Science}
@@ -17,6 +19,8 @@ types:
     version: 1
     held: true
     folder: facts/tests
+    headline: "{test} · {overall|1} · {date} · expires {expires|month}"
+    key: [test, date]
     fields:
       test: {values: [ielts-academic, toefl-ibt, gre], required: true}
       overall: {kind: number, required: true, example: 8.0}
@@ -31,6 +35,8 @@ types:
     version: 1
     held: true
     folder: facts/roles
+    headline: "{title} · {org} · {start|month}–{end|month}"
+    key: [org, title, start]
     fields:
       org: {kind: text, required: true, example: Acme Robotics}
       title: {kind: text, required: true, example: Software Engineering Intern}
@@ -40,6 +46,7 @@ types:
   Application:
     version: 1
     folder: applications
+    headline: "{title} · {status} · deadline {deadline}"
     fields:
       kind: {values: [university, scholarship, job], required: true}
       deadline: {kind: date, required: true}
@@ -50,6 +57,7 @@ types:
   Document:
     version: 1
     folder: documents
+    headline: "{title} · {kind} · issued {issued}"
     fields:
       kind: {values: [transcript, test-report, certificate, id], required: true}
       issuer: {kind: text}
@@ -57,10 +65,13 @@ types:
       expires: {kind: date}
       file: {kind: text, example: files/transcript-bsc.pdf}
       proves: {kind: list}
+      extracted: {kind: mapping, example: "{cgpa: 3.82, scale: 4}"}
   IdDocument:
     version: 1
     held: true
     folder: identity
+    headline: "{kind} · {issuer} · expires {expires}"
+    key: [kind, issuer, number]
     fields:
       kind: {values: [passport, national-id, visa], required: true}
       issuer: {kind: text, required: true, example: UTO}
@@ -74,6 +85,7 @@ types:
   Person:
     version: 1
     folder: people
+    headline: "{title} · {role} · {org}"
     fields:
       role: {values: [referee, advisor, family], required: true}
       org: {kind: text}

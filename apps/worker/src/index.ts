@@ -141,22 +141,34 @@ const signedIn =
  */
 const siteSession =
   (request: Request, env: Env, ctx: ExecutionContext): Session =>
-  ({ passkey = false } = {}) =>
+  ({ passkey = false, approver } = {}) =>
     withAuth(request, env, ctx, async (auth, pool) => {
+      const fresh = passkey || approver !== undefined;
       const found = await auth.api.getSession({
         headers: request.headers,
-        query: { disableCookieCache: passkey },
+        query: { disableCookieCache: fresh },
       });
       if (!found) return undefined;
       const baseId = await baseOf(pool, found.user.id, () => env.BASE.newUniqueId().toString());
       if (baseId === undefined) return undefined;
-      const passkeys: ApprovingPasskey[] = passkey
+      // The session's own user's passkeys, from Neon: an approver is one of them or none.
+      const passkeys: ApprovingPasskey[] = fresh
         ? await auth.api.listPasskeys({ headers: request.headers })
         : [];
+      const signer = approver === undefined ? undefined : passkeys.find((p) => p.credentialID === approver);
       return {
         userId: found.user.id,
         baseId,
         passkey: passkey && vouchedUntil(found.session, passkeys) >= Date.now(),
+        ...(signer && {
+          approver: {
+            credentialId: signer.credentialID,
+            publicKey: signer.publicKey,
+            counter: signer.counter,
+            approvesAt: signer.approvesAt ?? null,
+            origin: new URL(request.url).origin,
+          },
+        }),
       };
     });
 

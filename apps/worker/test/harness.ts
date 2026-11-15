@@ -15,6 +15,7 @@ import {
   type Principal,
 } from "@brainiac/base";
 
+import type { Approver } from "../src/approvals.ts";
 import { Base, type JobMessage } from "../src/base.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts";
 import type { Env } from "../src/env.ts";
@@ -187,7 +188,8 @@ const fakeSession =
 
 /**
  * The site routes' session, faked the same way: `user=<name>` names the record, and `passkey=1` says the session
- * proved a passkey lately (Better Auth's part, tested in auth.test.ts).
+ * proved a passkey lately (Better Auth's part, tested in auth.test.ts). The person's one passkey, as Neon would
+ * hold it, comes in `x-test-passkey` (JSON); it is the approver only for a signature by that credential.
  */
 const fakeSiteSession =
   (request: Request, env: Env): Session =>
@@ -196,10 +198,16 @@ const fakeSiteSession =
     const user = /(?:^|; )user=([\w-]+)/.exec(cookie)?.[1];
     if (user === undefined) return undefined;
     const proved = /(?:^|; )passkey=1(?:;|$)/.test(cookie);
+    const held = request.headers.get("x-test-passkey");
+    const passkey: (Omit<Approver, "approvesAt"> & { approvesAt: string }) | null = held && JSON.parse(held);
     return {
       userId: user,
       baseId: env.BASE.idFromName(user).toString(),
       passkey: Boolean(opts?.passkey) && proved,
+      ...(passkey &&
+        opts?.approver === passkey.credentialId && {
+          approver: { ...passkey, approvesAt: new Date(passkey.approvesAt) },
+        }),
     };
   };
 

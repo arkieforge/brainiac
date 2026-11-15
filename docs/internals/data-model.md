@@ -34,7 +34,7 @@ passkey_keys { credentialId PK, publicKey, counter }                // the last 
 connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, rev, createdAt }   // rev: bumped by every grant change; a grant signature names it
 inbox_leases { itemId, agent, expiresAt }                            // one filer per item
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
-checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }
+checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }   // unused: checks are computed on read from the notes (review.ts), so none goes stale
 jobs         { id, kind: index | file, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed; a file job's noteId is file:<sha256> and its rev the file's
 files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion,
                checks: clean | found | unreadable, findings JSON, kind?, confirmedAt?, noteId?, rev, uploadedBy? }   // sha256: an HMAC of the bytes under the data key; kind counts only once the person confirms it; rev: bumped by each confirmation; pipelineVersion: the extraction that produced checks (0 while a PDF waits for its first)

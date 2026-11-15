@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ReviewRouteImport } from './routes/review'
 import { Route as FilesFileIdRouteImport } from './routes/files.$fileId'
 import { Route as NNoteIdRouteImport } from './routes/n.$noteId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewRoute = ReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FilesFileIdRoute = FilesFileIdRouteImport.update({
@@ -31,30 +37,34 @@ const NNoteIdRoute = NNoteIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/files/$fileId' | '/n/$noteId'
+  fullPaths: '/' | '/review' | '/files/$fileId' | '/n/$noteId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/files/$fileId' | '/n/$noteId'
-  id: '__root__' | '/' | '/files/$fileId' | '/n/$noteId'
+  to: '/' | '/review' | '/files/$fileId' | '/n/$noteId'
+  id: '__root__' | '/' | '/review' | '/files/$fileId' | '/n/$noteId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ReviewRoute: typeof ReviewRoute
   FilesFileIdRoute: typeof FilesFileIdRoute
   NNoteIdRoute: typeof NNoteIdRoute
 }
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/review': {
+      id: '/review'
+      path: '/review'
+      fullPath: '/review'
+      preLoaderRoute: typeof ReviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/files/$fileId': {
@@ -87,6 +104,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ReviewRoute: ReviewRoute,
   FilesFileIdRoute: FilesFileIdRoute,
   NNoteIdRoute: NNoteIdRoute,
 }

@@ -45,6 +45,8 @@ let status: Status = "loading";
 let client: SyncClient | undefined;
 let manifest: Manifest | null = null;
 let files: readonly FileItem[] = [];
+/** The record has answered with its manifest this visit: until then, checks that need the schema can't run. */
+let schemaLoaded = false;
 let release: (() => Promise<void>) | undefined;
 let socket: WebSocket | undefined;
 let retry = 0;
@@ -131,12 +133,12 @@ function connect() {
 /** What a sensitive note's online save says when the tab is offline. */
 export const OFFLINE_SENSITIVE = "Sensitive notes save only while you're online on this device.";
 
-/** The latest text and revision the record accepted from this tab's online saves, per sensitive note. */
+/** The latest text and revision the record accepted from this tab's online saves, per note. */
 const accepted = new Map<string, { readonly rev: number; readonly raw: string }>();
-/** Each sensitive note's online saves, in order: the next builds on what the last one wrote. */
+/** Each note's online saves, in order: the next builds on what the last one wrote. */
 const saving = new Map<string, Promise<unknown>>();
 
-/** The latest text of a sensitive note: what an online save wrote, until the sync push brings it. */
+/** The latest text of a note saved online: what the save wrote, until the sync push brings it. */
 const latest = (noteId: string) => {
   const remote = client?.state.remote.get(noteId);
   const mine = accepted.get(noteId);
@@ -144,9 +146,30 @@ const latest = (noteId: string) => {
 };
 
 /** Saves a sensitive note's edit straight to the record, as the person; never through the client's queue. */
-export const saveOnline: SaveOnline = (noteId, edit, from) => {
-  const run = async (): Promise<Saved> => {
-    if (status !== "live") return { error: OFFLINE_SENSITIVE };
+export const saveOnline: SaveOnline = (noteId, edit, from) => post(noteId, edit, from);
+
+/** What a review edit came to; `ended` when the record says the review session no longer covers it. */
+export type Reviewed = Saved | { readonly error: string; readonly ended: true };
+
+/**
+ * A review mode edit, straight to the record inside the review session the person signed (`review`), whatever the
+ * note's class: the session is an online thing, and its edits never wait in this device's queue.
+ */
+export const saveReviewed = (
+  noteId: string,
+  edit: (raw: string) => string,
+  review: string,
+): Promise<Reviewed> => post(noteId, edit, undefined, review);
+
+function post(
+  noteId: string,
+  edit: (raw: string) => string,
+  from?: { readonly rev: number; readonly raw: string },
+  review?: string,
+): Promise<Reviewed> {
+  const run = async (): Promise<Reviewed> => {
+    if (status !== "live")
+      return { error: review ? "You're offline: review needs the record." : OFFLINE_SENSITIVE };
     const base = from ?? latest(noteId);
     if (!base) return { error: "This note is gone." };
     const raw = edit(base.raw);
@@ -154,10 +177,11 @@ export const saveOnline: SaveOnline = (noteId, edit, from) => {
     const res = await api(`/api/notes/${noteId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ raw, baseRev: base.rev }),
+      body: JSON.stringify({ raw, baseRev: base.rev, ...(review !== undefined && { review }) }),
     }).catch(() => undefined);
     if (!res) return { error: "You're offline, so this edit wasn't saved." };
     const body = await res.json().catch(() => ({}));
+    if (review !== undefined && body.needsApproval) return { error: body.error, ended: true };
     if (!res.ok) return { error: body.error ?? "This edit wasn't saved." };
     accepted.set(noteId, { rev: body.rev, raw });
     return { rev: body.rev, raw };
@@ -165,17 +189,18 @@ export const saveOnline: SaveOnline = (noteId, edit, from) => {
   const next = (saving.get(noteId) ?? Promise.resolve()).then(run).finally(changed);
   saving.set(noteId, next);
   return next;
-};
+}
 
 /** Loads the manifest and the file list; both come from the record over HTTP, not the sync socket. */
 export async function refresh() {
   const [schema, list] = await Promise.all([api("/api/schema"), api("/api/files")]);
   const next = {
     manifest: schema.ok ? (await schema.json()).manifest : manifest,
+    schemaLoaded: schema.ok || schemaLoaded,
     files: list.ok ? (await list.json()).files : files,
   };
   if (stopped) return;
-  ({ manifest, files } = next);
+  ({ manifest, files, schemaLoaded } = next);
   changed();
 }
 
@@ -193,6 +218,7 @@ async function stop() {
   accepted.clear();
   files = [];
   manifest = null;
+  schemaLoaded = false;
   await release?.();
   release = undefined;
   status = "signed-out";
@@ -257,7 +283,7 @@ export function useRecord() {
     () => version,
     () => 0,
   );
-  return { status, client, manifest, files };
+  return { status, client, manifest, files, schemaLoaded };
 }
 
 /** Every note this tab can show, as the person sees it (remote + pending). */
