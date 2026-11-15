@@ -19,6 +19,8 @@ export interface Device {
   readonly name: string;
   readonly client: SyncClient;
   readonly link: Link;
+  /** Who its socket speaks for: the person on every device, unless a test re-issues its connection. */
+  actor: string;
 }
 
 export class World {
@@ -59,7 +61,7 @@ export class World {
       appVersion: "test",
       ...(store && { store }),
     });
-    const device = { name, client, link };
+    const device = { name, client, link, actor: "human" };
     this.devices.push(device);
     return device;
   }
@@ -96,7 +98,7 @@ export class World {
     const [message] = device.link.up.splice(pick % Math.max(device.link.up.length, 1), 1);
     if (!message) return false;
     // Every device reads as the person; what other principals see is proved in packages/base.
-    const { replies, push } = serve(this.sql, message, { actor: device.name, now: ++this.#now }, PERSON);
+    const { replies, push } = serve(this.sql, message, { actor: device.actor, now: ++this.#now }, PERSON);
     device.link.down.push(...replies);
     const pushed = push?.(PERSON);
     if (pushed) for (const other of this.devices) if (other.link.connected) other.link.down.push(pushed);

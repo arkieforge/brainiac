@@ -128,9 +128,15 @@ export type ServerMessage =
     }
   /**
    * `clientSeq` was already used by a different change, or already acknowledged: two machines share this id.
-   * The client that still holds that change as pending repairs under a new id; any other ignores it.
+   * The client that still holds that change as pending repairs under a new id; any other ignores it. Without a
+   * `clientSeq`, the id belongs to another actor (a connection re-issued since, say): the client repairs.
    */
-  | { readonly type: "reset"; readonly clientId: string; readonly clientSeq: number; readonly reason: string }
+  | {
+      readonly type: "reset";
+      readonly clientId: string;
+      readonly clientSeq?: number;
+      readonly reason: string;
+    }
   /** Every live note, for a client with no cursor or one older than the change feed; withheld ones only as such. */
   | {
       readonly type: "snapshot";

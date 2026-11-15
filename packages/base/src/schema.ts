@@ -334,6 +334,9 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       expiresAt INTEGER NOT NULL
     ) WITHOUT ROWID`,
   ],
+  // The actor that registered each sync client id; only it may use the id. Rows from before have none and go
+  // to the next actor that uses them.
+  ["ALTER TABLE clients ADD COLUMN actor TEXT"],
 ];
 
 /** The SQL schema version this code writes. */

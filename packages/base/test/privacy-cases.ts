@@ -128,7 +128,7 @@ function leaks(outputs: readonly unknown[], hidden: ReadonlySet<string>): string
 }
 
 /** What a reader gets from every read surface there is: the feed on hello, a later feed, a push, search. */
-function readEverything(sql: Sql, reader: Principal, clientId: string): unknown[] {
+function readEverything(sql: Sql, reader: Principal, clientId: string, actor = ctx.actor): unknown[] {
   // "British Council" finds the test report, whose `proves` names a sensitive score: a graph neighbor.
   const words = [
     "CANARY-TRF-7Q3X",
@@ -139,7 +139,7 @@ function readEverything(sql: Sql, reader: Principal, clientId: string): unknown[
     "British Council",
   ];
   return [
-    ...serve(sql, hello(clientId, null), ctx, reader).replies,
+    ...serve(sql, hello(clientId, null), { ...ctx, actor }, reader).replies,
     changesSince(sql, 0, reader),
     ...words.map((word) => search(sql, reader, word)),
   ];
@@ -159,7 +159,7 @@ export const privacyCases: Record<string, Case> = {
     const ielts = ids[IELTS];
     ok(ielts);
     // The person sees the canaries, so the suite isn't passing on an empty record.
-    ok(leaks(readEverything(sql, PERSON, "person-tab"), hidden).length > 0);
+    ok(leaks(readEverything(sql, PERSON, "person-tab", "human"), hidden).length > 0);
 
     const outputs = readEverything(sql, AGENT, "agent");
     // Its own changes to a note it can't see are refused exactly as for a note that doesn't exist.
@@ -602,6 +602,51 @@ export const privacyCases: Record<string, Case> = {
       afterPurge.map((m) => (m.type === "result" ? m.error : m.type)),
       [`No note with id ${role}.`],
     );
+  },
+
+  // Ids are random and never sent to another client, but a socket that learned one must get nothing under it.
+  "a client id belongs to the actor that first used it": (sql, fixtures) => {
+    const { ids } = record(sql, fixtures);
+    const role = ids[ROLE];
+    ok(role);
+    const other = { actor: "connection:other", now: T0 };
+    const edit: ClientMessage = {
+      type: "mutate",
+      clientId: "agent",
+      clientSeq: 1,
+      changeId: "c-agent",
+      ackedUpTo: 0,
+      noteId: role,
+      baseRev: 1,
+      change: { kind: "put", raw: "---\nid: [CANARY-STORED\n---\n", base: "" },
+    };
+    serve(sql, hello("agent", null), ctx, AGENT);
+    ok(JSON.stringify(serve(sql, edit, ctx, AGENT).replies).includes("CANARY-STORED"));
+
+    const refusal = {
+      type: "reset",
+      clientId: "agent",
+      reason: "This client id belongs to another connection.",
+    };
+    // Another actor's hello gets none of the stored results, nor the id's counters; its mutate (acknowledging
+    // everything, or under the next number) changes nothing.
+    same(serve(sql, hello("agent", null), other, PERSON).replies, [refusal]);
+    same(serve(sql, { ...edit, ackedUpTo: 1 }, other, PERSON).replies, [refusal]);
+    same(serve(sql, { ...edit, clientSeq: 2, changeId: "c-other" }, other, PERSON).replies, [refusal]);
+    same(getNote(sql, role)?.rev, 1);
+    // The owner still has its result, and its high-water mark is its own.
+    const back = serve(sql, hello("agent", null), ctx, AGENT).replies;
+    same(
+      back.map((m) =>
+        m.type === "welcome" ? [m.highWater, m.ackedUpTo] : m.type === "result" ? m.clientSeq : m.type,
+      ),
+      [[1, 0], "snapshot", 1],
+    );
+
+    // A row from before ids had owners goes to the next actor that uses it, and is then that actor's alone.
+    sql.all("UPDATE clients SET actor = NULL WHERE clientId = 'agent'");
+    equal(serve(sql, hello("agent", null), other, PERSON).replies[0]?.type, "welcome");
+    same(serve(sql, hello("agent", null), ctx, AGENT).replies, [refusal]);
   },
 
   // Nothing changed in the record, so the feed after the cursor is empty: only a snapshot shows the difference.

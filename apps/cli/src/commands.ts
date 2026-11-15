@@ -188,7 +188,8 @@ export async function doctor(config: string, vault: string, service?: string): P
     const client = await SyncClient.open({
       store: state.store,
       send: () => {},
-      newClientId: () => "doctor",
+      // Never sent, but per run: a fixed id would be every vault's, and an id belongs to whoever used it first.
+      newClientId: () => crypto.randomUUID(),
       keepSensitive: true, // read-only: never rewrites the stored remote layer
       schemaVersion: 0,
       appVersion: "doctor",

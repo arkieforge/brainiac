@@ -432,8 +432,10 @@ export class SyncClient {
         return;
       }
       case "reset":
-        // Only the copy that still holds the change repairs; a late duplicate of a finished one is ignored.
-        if (state.pending.some((p) => p.clientSeq === message.clientSeq)) this.#repair();
+        // Only the copy that still holds the change repairs; a late duplicate of a finished one is ignored. One
+        // naming no change says the id isn't ours (another actor registered it), so we can't use it at all.
+        if (message.clientSeq === undefined || state.pending.some((p) => p.clientSeq === message.clientSeq))
+          this.#repair();
         return;
       case "error":
         return;
