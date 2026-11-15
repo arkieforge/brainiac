@@ -146,6 +146,7 @@ describe("brainiac hook", () => {
       ["Bash", { command: "cat ../brainiac/me.md" }],
       ["Bash", { command: "cat \\\n../brainiac/identity/passport.md" }],
       ["Bash", { command: 'echo "$(cat ../brainiac/identity/passport.md)"' }],
+      ["Bash", { command: 'echo "seen: `cat ../brainiac/me.md`"' }],
     ];
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);
@@ -193,6 +194,7 @@ describe("brainiac hook", () => {
       ["Bash", { command: "ls -la" }],
       ["Bash", { command: 'git commit -m "brainiac notes"' }],
       ["Bash", { command: `cat ${home}/brainiac-notes.md ${home}/brainiac.bak` }],
+      ["Bash", { command: 'cat "../brainiac backup.md" "$(date)"' }],
       ["Grep", { pattern: "cgpa", path: join(vault, "facts/roles") }],
       ["Glob", { pattern: "facts/roles/*.md", path: vault }],
       ["Glob", { pattern: "src/**/*.ts" }],

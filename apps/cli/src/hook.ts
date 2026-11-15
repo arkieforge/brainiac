@@ -48,19 +48,33 @@ function shellWords(command: string): string[] {
   const words: string[] = [];
   let word = "";
   let quote = "";
+  // Inside double quotes, `$(` and a backtick start a command read unquoted again; each entry is its closer.
+  const inner: string[] = [];
+  const end = () => {
+    if (word) words.push(word);
+    word = "";
+  };
   for (let i = 0; i < command.length; i++) {
     const char = command.charAt(i);
-    if (quote && char === quote) quote = "";
+    if (quote === '"' && (char === "`" || (char === "$" && command.charAt(i + 1) === "("))) {
+      end();
+      inner.push(char === "`" ? "`" : ")");
+      quote = "";
+      if (char === "$") i++;
+    } else if (!quote && char === inner.at(-1)) {
+      end();
+      inner.pop();
+      quote = '"';
+    } else if (quote && char === quote) quote = "";
     else if (quote === "'") word += char;
     else if (char === "\\") word += command.charAt(++i);
     else if (quote) word += char;
     else if (char === "'" || char === '"') quote = char;
-    else if (/[\s;|&<>()=`]/.test(char)) {
-      if (word) words.push(word);
-      word = "";
-    } else word += char;
+    else if (/[\s;|&<>()=`]/.test(char)) end();
+    else word += char;
   }
-  return word ? [...words, word] : words;
+  end();
+  return words;
 }
 
 /** Whether `path` is `folder` or inside it. */
@@ -93,9 +107,8 @@ export function refusal(call: ToolCall, configured: string, home = homedir()): s
     return `${at(file)} is in the person's Brainiac record, which changes only through Brainiac. ${tools}, so the change is attributed and checked.`;
 
   if (call.tool_name === "Bash") {
-    // Every word read as a path from the working folder, as the shell reads it and also split at any quote, `$` or
-    // operator (`"$(cat x)"`), and the vault's path anywhere in the text (`-o/vault/x`, not `/vault-notes.md`).
-    // Best effort: a variable or glob can still reach the vault.
+    // Every word read as a path from the working folder, and the vault's path anywhere in the text (`-o/vault/x`,
+    // not `/vault-notes.md`). Best effort: a variable or glob can still reach the vault.
     const command = (text(input["command"]) ?? "")
       .replaceAll(/\\\r?\n/g, "") // line continuations
       .replaceAll(/\$\{HOME\}|\$HOME(?!\w)/g, home);
@@ -103,8 +116,7 @@ export function refusal(call: ToolCall, configured: string, home = homedir()): s
       .split(vault)
       .slice(1)
       .some((after) => !/^[\w.-]/.test(after));
-    const words = [".", ...shellWords(command), ...command.split(/[\s'"`;|&<>()=$]+/)];
-    if (named || words.some((word) => word !== "" && within(at(word), vault)))
+    if (named || [".", ...shellWords(command)].some((word) => within(at(word), vault)))
       return `This command touches ${vault}, the person's Brainiac record. Don't read or change it from the shell. ${tools}.`;
   }
 
