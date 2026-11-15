@@ -1386,7 +1386,12 @@ const cases: Record<string, () => Promise<void>> = {
     record.seed(A, "notes/a.md");
     record.seed(B, "notes/b.md");
     record.asConnection();
-    const v = await open(record, folder("brainiac-vault-"), { tokenKey: tokenKey("brn_e0a1_daemon") });
+    let clock = Date.UTC(2026, 10, 15, 9);
+    const v = await open(record, folder("brainiac-vault-"), {
+      tokenKey: tokenKey("brn_e0a1_daemon"),
+      now: () => clock,
+    });
+    clock += 60 * 60_000; // an hour on, with nothing received: stopping must not make the copy look fresher
     v.daemon.stop();
     const ask = (token: string, deviceId = "laptop") => {
       const copy = localCopy({ vault: v.root, deviceId, token, keepSensitive: false });
@@ -1394,7 +1399,9 @@ const cases: Record<string, () => Promise<void>> = {
       copy.close();
       return answer;
     };
-    equal(ask("brn_e0a1_daemon").ok, true);
+    const mine = ask("brn_e0a1_daemon");
+    ok(mine.ok && typeof mine.value === "object" && mine.value !== null && "syncedAt" in mine.value);
+    equal(mine.value.syncedAt, new Date(Date.UTC(2026, 10, 15, 9)).toISOString(), "as of the last sync");
     const other = ask("brn_e0a1_narrower");
     ok(!other.ok && /hasn't synced as this connection/.test(other.error), JSON.stringify(other));
     const copied = ask("brn_e0a1_daemon", "another-laptop");

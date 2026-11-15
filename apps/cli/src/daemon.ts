@@ -274,22 +274,10 @@ export class Daemon {
     this.#client.subscribe((ids) => this.#reflect(ids));
   }
 
-  /** Caught up on the open socket: the copy stays the record's until it drops (or the daemon stops). */
-  #live = false;
-
-  /** The copy was the record's until now, if it was caught up; offline answers say since when. */
-  #dropped(): void {
-    if (this.#live && !this.#gone) this.#state.synced(this.#now());
-    this.#live = false;
-  }
-
   #connect(): void {
     this.#link = this.#options.connect({
       open: () => this.#client.connect(),
-      close: () => {
-        this.#dropped();
-        this.#client.disconnect();
-      },
+      close: () => this.#client.disconnect(),
       message: (message) => {
         const { tokenKey } = this.#options;
         // Grants changed online close the socket, so every connect brings the current ones.
@@ -302,7 +290,7 @@ export class Daemon {
         this.#client.receive(message);
         if (message.type !== "snapshot" && message.type !== "changes") return;
         if (this.#client.state.cursor === null) return;
-        this.#live = true;
+        // Only what arrived counts: a socket that died unnoticed must not make the copy look fresher.
         if (!this.#gone) this.#state.synced(this.#now());
         // The first catch-up after a repair starts: now there is something to compare the files with.
         const first = !this.#caughtUp;
@@ -320,7 +308,6 @@ export class Daemon {
     clearTimeout(this.#timer);
     clearTimeout(this.#grace);
     this.#watcher?.close();
-    this.#dropped(); // before state.db closes: the socket's close event comes later
     this.#link?.close();
     this.#index.close();
     this.#state.close();
