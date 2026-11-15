@@ -1,10 +1,13 @@
 import type { Base, JobMessage } from "./base.ts";
+import type { Ocr } from "./jobs.ts";
 
 export interface Env {
   /** The web app's build (apps/web): its shell and static assets. */
   ASSETS: Fetcher;
   /** Workers AI: document-to-text and embeddings for search (jobs.ts). Brainiac runs no generation model. */
   AI: Ai;
+  /** The OCR Worker (apps/ocr), over RPC: the text of photos and scans, for the vault's checks only (jobs.ts). */
+  OCR: Ocr;
   BASE: DurableObjectNamespace<Base>;
   BLOBS: R2Bucket;
   /** Wraps every record's data key (packages/base/src/vault.ts). A Secrets Store secret, one per stage and generation. */

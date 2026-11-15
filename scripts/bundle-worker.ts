@@ -12,7 +12,8 @@ export async function bundleWorker(entry: string): Promise<string> {
       write: false,
       ssr: entry,
       minify: false,
-      rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
+      // Wasm stays an import: workerd takes it as its own module, compiled (scripts/ocr-worker.ts).
+      rolldownOptions: { external: [/^node:/, /^cloudflare:/, /\.wasm$/] },
     },
     ssr: { noExternal: true, target: "webworker" },
   });

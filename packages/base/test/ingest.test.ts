@@ -1,5 +1,7 @@
 // The pure half of ingest: how notes and pages are cut into chunks, which pages the checks can't trust, and the
 // int8 vectors. The record's half (installs, families, stale results) runs on both engines in ingest-cases.ts.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vite-plus/test";
@@ -11,6 +13,7 @@ import {
   LONG_BODY,
   needsReading,
   pdfHidesText,
+  pdfJpegs,
   quantize,
   splitPages,
 } from "../src/index.ts";
@@ -250,6 +253,32 @@ describe("pdfHidesText", () => {
   it("stops inflating at a limit, and counts that as hiding text", () => {
     const bomb = deflateSync(Buffer.alloc(17 * 1024 * 1024));
     expect(pdfHidesText(pdf(PAGE, ["<< /Filter /FlateDecode >>", bomb]))).toBe(true);
+  });
+});
+
+describe("pdfJpegs", () => {
+  it("hands OCR a PDF's JPEGs as they are, and nothing else", () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]);
+    const image =
+      "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8";
+    const found = pdfJpegs(
+      pdf(
+        PAGE,
+        TEXT,
+        [`${image} /Filter /DCTDecode >>`, jpeg],
+        [`${image} /Filter [/DCTDecode] >>`, jpeg],
+        [`${image} /Filter /FlateDecode >>`, deflateSync(Buffer.alloc(4))],
+      ),
+    );
+    expect(found.map((bytes) => [...bytes])).toEqual([[...jpeg], [...jpeg]]);
+    // Copies, not views: RPC sends a view's whole buffer, which would be the whole PDF.
+    expect(found.map((bytes) => bytes.buffer.byteLength)).toEqual([jpeg.length, jpeg.length]);
+    // What Chrome writes: a scan's page is one JPEG; a logo is pixels, which OCR doesn't get.
+    const scans = join(import.meta.dirname, "../../../fixtures/scans");
+    expect(
+      pdfJpegs(readFileSync(join(scans, "transcript-scan.pdf"))).map((bytes) => [...bytes.subarray(0, 3)]),
+    ).toEqual([[0xff, 0xd8, 0xff]]);
+    expect(pdfJpegs(readFileSync(join(scans, "transcript-logo.pdf")))).toEqual([]);
   });
 });
 

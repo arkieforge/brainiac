@@ -1,0 +1,54 @@
+diff --git a/dist/lib.js b/dist/lib.js
+index da85d1f502391901c22405e4718584c8e2b2f8b8..dd1a09043f2c93d52aafb529ba2e431426e78e63 100644
+--- a/dist/lib.js
++++ b/dist/lib.js
+@@ -872,7 +872,19 @@ function supportsFastBuild() {
+ /**
+  * Initialize the OCR library and return a new {@link OCREngine}.
+  */
+-async function createOCREngine({ wasmBinary, progressChannel, } = {}) {
++async function createOCREngine({ wasmBinary, wasmModule, progressChannel, } = {}) {
++    // A Worker can't compile wasm from bytes: it instantiates the module its bundle imported.
++    if (wasmModule) {
++        const tessLib = await Module({
++            // Without it, the module resolves its wasm's URL against `import.meta.url`, which a Worker lacks.
++            locateFile: (path) => path,
++            instantiateWasm: (imports, receive) => {
++                WebAssembly.instantiate(wasmModule, imports).then((instance) => receive(instance, wasmModule));
++                return {};
++            },
++        });
++        return new OCREngine(tessLib, progressChannel);
++    }
+     if (!wasmBinary) {
+         const wasmPath = supportsFastBuild()
+             ? "./tesseract-core.wasm"
+diff --git a/dist/ocr-engine.d.ts b/dist/ocr-engine.d.ts
+index 2bef07afce1bc11a86bca7cb130da585a9f2e3db..b3dca406b77598b2a06873a86ee740d8134f6b9d 100644
+--- a/dist/ocr-engine.d.ts
++++ b/dist/ocr-engine.d.ts
+@@ -175,6 +175,8 @@ export type CreateOCREngineOptions = {
+      * determine which build to load.
+      */
+     wasmBinary?: Uint8Array | ArrayBuffer;
++    /** A compiled module, for runtimes that can't compile wasm from bytes (Workers). */
++    wasmModule?: WebAssembly.Module;
+     progressChannel?: MessagePort;
+ };
+ /**
+diff --git a/package.json b/package.json
+index 329f6dade807a7425de34b96d5c037baf9114af3..93d1bbb171518c3052ebd2775dba0e18907d41dd 100644
+--- a/package.json
++++ b/package.json
+@@ -5,8 +5,9 @@
+   "type": "module",
+   "main": "./dist/lib.js",
+   "exports": {
+-    ".": "./dist/lib.js",
+-    "./node": "./src/node-worker.js"
++    ".": { "types": "./dist/index.d.ts", "default": "./dist/lib.js" },
++    "./node": "./src/node-worker.js",
++    "./tesseract-core.wasm": "./dist/tesseract-core.wasm"
+   },
+   "scripts": {
+     "test": "make test"

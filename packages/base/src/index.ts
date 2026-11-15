@@ -104,7 +104,16 @@ export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
 export { digest, questionEmails, setQuestionEmails, type Digest } from "./questions.ts";
 export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
-export { extracts, needsReading, pdfHidesText, PIPELINE, splitPages } from "./pages.ts";
+export {
+  extracts,
+  isImage,
+  mediaType,
+  needsReading,
+  pdfHidesText,
+  pdfJpegs,
+  PIPELINE,
+  splitPages,
+} from "./pages.ts";
 export {
   chunkFile,
   CHUNKS,
@@ -168,6 +177,7 @@ export {
   type Classified,
   type FileToken,
   type Extracted,
+  type OcrReading,
   type FileRow,
   type FileView,
   type Uploaded,

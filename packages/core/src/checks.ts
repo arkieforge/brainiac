@@ -6,12 +6,13 @@ export type Finding = "mrz" | "iban" | "id-number" | "account-number";
 
 /**
  * Every finding in `text`, each named once, in a stable order. Empty means the checks found nothing; whether
- * the text was all of the file is the caller's to know.
+ * the text was all of the file is the caller's to know. Text OCR read (`ocr`) may have a digit wrong, so an IBAN
+ * there counts by its shape, without its check digits.
  */
-export function scan(text: string): Finding[] {
+export function scan(text: string, read: "text" | "ocr" = "text"): Finding[] {
   const found = new Set<Finding>();
   if (mrzRuns(text).some(isMrz)) found.add("mrz");
-  if (hasIban(text)) found.add("iban");
+  if (hasIban(text, read === "ocr")) found.add("iban");
   if (hasLabelled(ID_NUMBER, text) || SSN.test(text)) found.add("id-number");
   if (hasLabelled(ACCOUNT_NUMBER, text)) found.add("account-number");
   return FINDINGS.filter((finding) => found.has(finding));
@@ -121,14 +122,15 @@ const LABELLED_IBAN = labelled(
   "[A-Z]{2}\\d{2}[A-Z0-9 \\t.\\u00a0-]{11,50}",
 );
 
-function hasIban(text: string): boolean {
+/** Whether `text` has an IBAN; `misread` (OCR's text) takes one of the right length without its mod 97. */
+function hasIban(text: string, misread: boolean): boolean {
+  const checks = (iban: string) => misread || mod97(iban) === 1;
   const upper = text.toUpperCase();
   for (const [, afterLabel = ""] of upper.matchAll(LABELLED_IBAN)) {
     const compact = afterLabel.replaceAll(/[^A-Z0-9]/g, "");
     const listed = IBAN_LENGTHS.get(compact.slice(0, 2));
     const lengths = listed === undefined ? Array.from({ length: 20 }, (_, i) => i + 15) : [listed];
-    if (lengths.some((length) => compact.length >= length && mod97(compact.slice(0, length)) === 1))
-      return true;
+    if (lengths.some((length) => compact.length >= length && checks(compact.slice(0, length)))) return true;
   }
   for (const [, candidate = ""] of upper.matchAll(IBAN)) {
     const groups = candidate.split(/[\s.-]+/);
@@ -136,7 +138,7 @@ function hasIban(text: string): boolean {
     const listed = IBAN_LENGTHS.get(candidate.slice(0, 2));
     const fits = (iban: string) =>
       listed === undefined ? iban.length >= 15 && iban.length <= 34 : iban.length === listed;
-    if (tries.some((iban) => fits(iban) && mod97(iban) === 1)) return true;
+    if (tries.some((iban) => fits(iban) && checks(iban))) return true;
   }
   return false;
 }
@@ -212,6 +214,8 @@ function td3(top: string, bottom: string, now: number): Passport | undefined {
   const expires = date(field(21, 27), () => 2000);
   const sex = field(20, 21);
   if (!birthDate || !expires || !/^[MFX<]$/.test(sex)) return undefined;
+  // No check digit covers the nationality: letters only, as ICAO writes it, so a misread `UT0` isn't one.
+  if (!/^[A-Z<]{3}$/.test(field(10, 13))) return undefined;
   const [surname = "", given = ""] = top.slice(5).split("<<");
   return {
     issuer: code(top.slice(2, 5)),

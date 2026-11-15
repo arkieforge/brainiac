@@ -46,6 +46,8 @@ const human: Context = { actor: "human", now: T0 };
 
 // The fixture student's passport, issued by ICAO's specimen state Utopia (UTO): nobody real.
 const MRZ = "P<UTOKARIM<<NADIA<<<<<<<<<<<<<<<<<<<<<<<<<<<\nXK12345679UTO0103141F3105043<<<<<<<<<<<<<<04\n";
+// What OCR reads of that passport's printed zone, above its MRZ.
+const PRINTED = "UTOPIA PASSPORT\nCode UTO\nSurname KARIM\nGiven names NADIA";
 const PAGES = [
   "Northvale University transcript\nSemester 1 GPA 3.1",
   "Semester 2 GPA 3.4\nThesis on transit apps",
@@ -64,6 +66,16 @@ function uploadPdf(sql: Sql, key: Uint8Array, content: string, ctx: Context, kin
   const bytes = Buffer.from(`%PDF-1.7\n${content}`);
   const { sha256 } = sealFile(key, bytes);
   const upload = { sha256, r2Key: `blobs/test/${sha256}`, mime: "application/pdf", bytes: bytes.length };
+  const result = recordUpload(sql, key, { ...upload, text: undefined, ...(kind && { kind }) }, ctx);
+  ok("file" in result, JSON.stringify(result));
+  return sha256;
+}
+
+/** A photo as the DO records it: sealed, unread until a `file` job reads it with OCR. */
+function uploadImage(sql: Sql, key: Uint8Array, content: string, ctx: Context, kind?: string) {
+  const bytes = Buffer.from(`\xff\xd8${content}`, "latin1");
+  const { sha256 } = sealFile(key, bytes);
+  const upload = { sha256, r2Key: `blobs/test/${sha256}`, mime: "image/jpeg", bytes: bytes.length };
   const result = recordUpload(sql, key, { ...upload, text: undefined, ...(kind && { kind }) }, ctx);
   ok("file" in result, JSON.stringify(result));
   return sha256;
@@ -205,6 +217,110 @@ export const ingestCases: Record<string, Case> = {
       "installed",
     );
     equal(getFile(sql, other)?.checks, "unreadable");
+  },
+
+  "what OCR reads keeps a photo or a scan in the vault, never clears one, and never reaches search": (
+    sql,
+    fixtures,
+  ) => {
+    const key = record(sql, fixtures);
+    const transcript = "Northvale University\nOfficial Transcript\nCumulative GPA: 3.82 on a scale of 4.00\n";
+    // A phone photo of a transcript the person named: OCR found nothing, but it can't vouch it saw everything.
+    const photo = uploadImage(sql, key, "photo of a transcript", human, "transcript");
+    const read = { text: undefined, pages: undefined, ocr: [{ text: transcript, printed: "" }] };
+    equal(installFile(sql, key, fileJob(sql, photo).id, read, [], T0), "installed");
+    same([getFile(sql, photo)?.checks, getFile(sql, photo)?.class], ["unreadable", "unclassified"]);
+    // Its text was for the checks: search holds none of it.
+    same(hitIds(search(sql, PERSON, "Northvale")), []);
+    same(sql.all("SELECT id FROM chunks WHERE noteId = ?", fileOwner(photo)), []);
+    // Even given pages, a photo isn't read.
+    const pages = uploadImage(sql, key, "photo with pages", human, "transcript");
+    equal(
+      installFile(
+        sql,
+        key,
+        fileJob(sql, pages).id,
+        { text: "", pages: [""], ocr: [{ text: transcript, printed: "" }] },
+        [],
+        T0,
+      ),
+      "installed",
+    );
+    equal(getFile(sql, pages)?.class, "unclassified");
+
+    // What OCR does read is checked: one digit misread fails mod 97, which OCR's text doesn't need.
+    const statement = uploadImage(sql, key, "photo of a statement", human, "transcript");
+    const iban = {
+      text: undefined,
+      pages: undefined,
+      ocr: [{ text: "Bank statement\nIBAN GB29 NWBK 6016 1331 9268 18", printed: "" }],
+    };
+    equal(installFile(sql, key, fileJob(sql, statement).id, iban, [], T0), "installed");
+    same([getFile(sql, statement)?.findings, getFile(sql, statement)?.class], ['["iban"]', "vault"]);
+
+    // A scanned PDF: no text layer, so unread, whatever OCR found in its scan.
+    const scan = uploadPdf(sql, key, "\f", human, "transcript");
+    const scanned = { text: "\n\n", pages: ["\n", "\n"], ocr: [{ text: transcript, printed: "" }] };
+    equal(installFile(sql, key, fileJob(sql, scan).id, scanned, [], T0), "installed");
+    equal(getFile(sql, scan)?.class, "unclassified");
+
+    // A photographed passport: vaulted, and its MRZ (which OCR read) parsed into a note, its number into the vault.
+    const passport = uploadImage(sql, key, "passport photo", human);
+    const mrz = {
+      text: undefined,
+      pages: undefined,
+      ocr: [{ text: `${PRINTED}\nSex F\n${MRZ}`, printed: `${PRINTED}\nSex F` }],
+    };
+    equal(installFile(sql, key, fileJob(sql, passport).id, mrz, [], T0), "installed");
+    const vaulted = getFile(sql, passport);
+    same([vaulted?.class, vaulted?.findings], ["vault", '["mrz"]']);
+    ok(vaulted?.noteId);
+    const [note] = sql.all<{ type: string; raw: string }>(
+      "SELECT type, raw FROM notes WHERE id = ?",
+      vaulted.noteId,
+    );
+    equal(note?.type, "IdDocument");
+    // The sex, one letter, nothing confirms: it's left for the person, though the page prints it.
+    ok(note.raw.includes("KARIM") && !note.raw.includes("sex:") && !note.raw.includes("XK1234567"), note.raw);
+
+    // A name the printed zone doesn't say too was misread in the MRZ (no check digit covers it): it's left out.
+    const misread = uploadImage(sql, key, "another passport photo", human);
+    // A second passport (number and expiry its own, so its note has its own path), its surname and nationality
+    // misread.
+    const karin =
+      "P<UTOKARIN<<NADIA<<<<<<<<<<<<<<<<<<<<<<<<<<<\nXK12345680UTD0103141F3205046<<<<<<<<<<<<<<<2\n";
+    const misreadOcr = {
+      text: undefined,
+      pages: undefined,
+      // The English pass's reading of the MRZ (fillers as letters, spaced out, in fragments) is in the text, but only
+      // the printed zone above the MRZ confirms anything, so `KARIN` and `UTD` aren't.
+      ocr: [
+        {
+          text: `${PRINTED}\nP c UTO KARIN cc\nNADIA cccc cccc\nXK12345680 UTD 0103141 F 3205046 cccc\n${karin}`,
+          printed: PRINTED,
+        },
+      ],
+    };
+    equal(installFile(sql, key, fileJob(sql, misread).id, misreadOcr, [], T0), "installed");
+    const [unnamed] = sql.all<{ raw: string }>(
+      "SELECT raw FROM notes WHERE id = ?",
+      getFile(sql, misread)?.noteId ?? "",
+    );
+    ok(unnamed && !/surname|given_names|KARIN|nationality|UTD|sex/.test(unnamed.raw), unnamed?.raw);
+    // The issuer, which no check digit covers either, must be printed too: unseen (or nothing printed, as for a
+    // picture of two passports), no note is written, and the file stays in the vault for its MRZ.
+    const unprinted = uploadImage(sql, key, "a third passport photo", human);
+    // Nor from another image of the same file: each passport is confirmed against its own image.
+    const bare = {
+      text: undefined,
+      pages: undefined,
+      ocr: [
+        { text: `PASSPORT\nKARIM\nNADIA\n${MRZ}`, printed: "PASSPORT\nKARIM\nNADIA" },
+        { text: PRINTED, printed: "" },
+      ],
+    };
+    equal(installFile(sql, key, fileJob(sql, unprinted).id, bare, [], T0), "installed");
+    same([getFile(sql, unprinted)?.class, getFile(sql, unprinted)?.noteId], ["vault", null]);
   },
 
   "a cleared plain-text file is indexed as one page, read whole": (sql, fixtures) => {

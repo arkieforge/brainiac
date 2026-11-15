@@ -152,6 +152,20 @@ export default Alchemy.Stack(
         outdir: "dist/client",
       });
 
+      // OCR for the vault's checks (apps/ocr): its own Worker, so Tesseract's wasm and its ~60 MB heap stay out
+      // of the main one's isolates and cold starts. Only the jobs consumer reaches it, over RPC; its models are its
+      // assets, and it has no URL of its own.
+      const ocr = yield* Cloudflare.Worker("ocr", {
+        name: name("ocr"),
+        main: "apps/ocr/src/index.ts",
+        assets: { directory: "apps/ocr/models" },
+        compatibility: { flags: ["nodejs_compat"] },
+        workersDev: false,
+        // One image is two Tesseract passes, about a second each locally; room for slower CPUs and large scans.
+        limits: { cpuMs: 60_000 },
+        env: { IMAGES: Cloudflare.Images.Images() },
+      });
+
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
         ...(domain && usercontent && { domain: { name: domain, aliases: [usercontent] } }),
@@ -176,6 +190,8 @@ export default Alchemy.Stack(
           AI: Cloudflare.Workers.AI(),
           // A saved link's PDF snapshot, in the jobs consumer (apps/worker/src/connectors/links.ts).
           BROWSER: Cloudflare.Workers.Browser(),
+          // The text of photos and scans, for the vault's checks only, in the jobs consumer.
+          OCR: ocr,
           VAULT_KEY: yield* vaultKey(generation),
           ...(previousKey && { VAULT_KEY_PREVIOUS: previousKey }),
           JOBS: jobs,
