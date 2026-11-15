@@ -24,6 +24,7 @@ import {
   type Sql,
 } from "../src/index.ts";
 import { approvalCases } from "./approval-cases.ts";
+import { fillCases } from "./fill-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { githubCases } from "./github-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
@@ -70,6 +71,7 @@ const ALL_TABLES = [
   "edges",
   "file_tokens",
   "files",
+  "fills",
   "github_repos",
   "inbox_leases",
   "jobs",
@@ -137,6 +139,7 @@ export const cases: Record<string, Case> = {
   ...connectionCases,
   ...privacyCases,
   ...vaultCases,
+  ...fillCases,
   ...ingestCases,
   ...papersCases,
   ...profilesCases,

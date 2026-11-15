@@ -170,7 +170,7 @@ export class TestBase extends Base {
     return dataKey(this.sql, await this.env.VAULT_KEY.get());
   }
 
-  /** A secret's value. Nothing outside tests reads one back: the fill path (#37) will be the only way out. */
+  /** A secret's value. Outside tests only the fill path (secrets.ts) unseals one, for the person. */
   async secretValue(name: string): Promise<string | null> {
     const [row] = this.sql.all<{ ciphertext: string }>("SELECT ciphertext FROM secrets WHERE name = ?", name);
     return row

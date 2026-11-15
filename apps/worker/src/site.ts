@@ -1,5 +1,5 @@
-// The site's own routes beside `/sync`: who is signed in, the record's manifest, its files, and whether the weekly
-// questions email goes out. Each one finds the
+// The site's own routes beside `/sync`: who is signed in, the record's manifest, its files, its secrets and the
+// fills agents asked for, and whether the weekly questions email goes out. Each one finds the
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import type { FileToken } from "@brainiac/base";
@@ -74,9 +74,10 @@ async function serveApi(
   const token = post && file?.[2] === "token";
   // Every POST but an upload is JSON.
   const body: unknown = post && pathname !== "/api/files" ? await request.json().catch(() => null) : null;
-  // Opening a review: the passkey that signed, as Neon holds it for this person.
+  // Opening a review, or saving or filling a secret: the passkey that signed, as Neon holds it for this person.
   const signed = pathname === "/api/review/open" && post ? signatureOf(body) : undefined;
-  const person = await session({ passkey: token, ...(signed && { approver: signed.response.id }) });
+  const signer = post ? passkeyAnswer(body) : undefined;
+  const person = await session({ passkey: token, ...(signer && { approver: signer.id }) });
   if (!person) return failed(401, "Sign in first.");
   const record = env.BASE.get(env.BASE.idFromString(person.baseId));
 
@@ -110,6 +111,8 @@ async function serveApi(
     const opened = await record.openReview(signed.nonce, signed.response, person.approver, PERSON);
     return "error" in opened ? failed(403, opened.error) : json({ review: opened.review });
   }
+  if (pathname === "/api/secrets" || pathname.startsWith("/api/fills"))
+    return serveSecrets(request, body, record, person.approver);
   if (pathname === "/api/files") {
     if (!post) {
       const files = await record.files(PERSON);
@@ -155,15 +158,96 @@ async function serveApi(
   return json({ url: `${env.USERCONTENT_ORIGIN}/f/${minted.token}`, expiresAt: minted.expiresAt });
 }
 
-/** A review's nonce and the passkey's answer over it, from a request body; shapes only, the DO checks the rest. */
-function signatureOf(body: unknown) {
-  if (typeof body !== "object" || body === null || !("nonce" in body) || !("response" in body))
-    return undefined;
-  const { nonce, response } = body;
-  if (typeof nonce !== "string" || typeof response !== "object" || response === null) return undefined;
+/** The passkey's answer in a request body (`response`), if there is one; its shape only, the DO checks the rest. */
+function passkeyAnswer(body: unknown): AuthenticationResponseJSON | undefined {
+  if (typeof body !== "object" || body === null || !("response" in body)) return undefined;
+  const { response } = body;
+  if (typeof response !== "object" || response === null) return undefined;
   if (!("id" in response) || typeof response.id !== "string") return undefined;
-  // SimpleWebAuthn checks every other part of the response against the passkey and the nonce.
-  return { nonce, response: response as AuthenticationResponseJSON };
+  // SimpleWebAuthn checks every other part of the response against the passkey and the challenge.
+  return response as AuthenticationResponseJSON;
+}
+
+/** A review's nonce and the passkey's answer over it, from a request body. */
+function signatureOf(body: unknown) {
+  const response = passkeyAnswer(body);
+  if (!response || typeof body !== "object" || body === null || !("nonce" in body)) return undefined;
+  return typeof body.nonce === "string" ? { nonce: body.nonce, response } : undefined;
+}
+
+const field = (body: unknown, key: string): unknown =>
+  typeof body === "object" && body !== null ? Object.entries(body).find(([k]) => k === key)?.[1] : undefined;
+
+/**
+ * The person's secrets and the fills their agents asked for (secrets.ts), for the site and the browser extension.
+ * `GET /api/secrets` lists names, domains and policies, never values; `POST /api/secrets` saves one
+ * (`{ name, value?, domain?, policy?, response? }`); `POST /api/secrets` with `forget: true` removes it.
+ * `GET /api/fills?url=` lists the fills waiting for that page; `POST /api/fills/<id>` (`{ url, response? }`) is the
+ * person pressing Fill there, and answers each field's value; `POST /api/fills/<id>/dismiss` turns one down. A
+ * change that needs the person's passkey answers 409 with the challenge to sign.
+ */
+async function serveSecrets(
+  request: Request,
+  body: unknown,
+  record: ReturnType<Env["BASE"]["get"]>,
+  approver: Approver | undefined,
+): Promise<Response> {
+  const { pathname, searchParams } = new URL(request.url);
+  const post = request.method === "POST";
+  const response = passkeyAnswer(body);
+  if (response && !approver) return failed(403, "That passkey isn't one of yours.");
+  const signed = response && approver && { response, approver };
+  if (pathname === "/api/secrets") {
+    if (!post) {
+      const secrets = await record.secrets(PERSON);
+      return "status" in secrets ? refusal(secrets) : json({ secrets });
+    }
+    const name = field(body, "name");
+    if (typeof name !== "string") return failed(400, "Name the secret, like portal.tum.");
+    if (field(body, "forget") === true) {
+      const forgot = await record.forgetSecret(name, PERSON);
+      return "status" in forgot ? refusal(forgot) : json(forgot);
+    }
+    const value = field(body, "value");
+    const domain = field(body, "domain");
+    const policy = field(body, "policy");
+    if (value !== undefined && typeof value !== "string") return failed(400, "value is text.");
+    if (domain !== undefined && domain !== null && typeof domain !== "string")
+      return failed(400, "domain is a host name, or null for nowhere.");
+    if (policy !== undefined && typeof policy !== "string")
+      return failed(400, "policy is ask, allow or never.");
+    const saved = await record.saveSecret(
+      {
+        name,
+        ...(value !== undefined && { value }),
+        ...(domain !== undefined && { domain }),
+        ...(policy !== undefined && { policy }),
+      },
+      PERSON,
+      signed,
+    );
+    if ("challenge" in saved) return json({ needsApproval: true, challenge: saved.challenge }, 409);
+    if ("status" in saved || "error" in saved) return refusal(saved);
+    return json(saved);
+  }
+  if (pathname === "/api/fills" && !post) {
+    const fills = await record.fills(searchParams.get("url") ?? "", PERSON);
+    return "status" in fills ? refusal(fills) : json({ fills });
+  }
+  const fill = /^\/api\/fills\/([0-9A-HJKMNP-TV-Z]{26})(\/dismiss)?$/.exec(pathname);
+  const id = fill?.[1];
+  if (!post || id === undefined) return failed(404, "Not found");
+  if (fill?.[2]) {
+    const dismissed = await record.dismissFill(id, PERSON);
+    return "status" in dismissed ? refusal(dismissed) : json(dismissed);
+  }
+  const url = field(body, "url");
+  if (typeof url !== "string") return failed(400, "Send the page's url.");
+  const released = await record.fill(id, url, PERSON, signed);
+  if ("challenge" in released)
+    return json({ needsApproval: true, challenge: released.challenge, host: released.host }, 409);
+  if ("status" in released || "error" in released) return refusal(released);
+  return json(released);
 }
 
 /**
