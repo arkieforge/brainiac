@@ -1,7 +1,7 @@
 // The remote MCP endpoint (`/mcp`), behind the OAuth server in auth/config.ts. It serves the tools in
 // packages/base/src/tools.ts, each call answered by the caller's own record as the caller's connection. It takes an
 // MCP client's OAuth access token, or a CLI token (`brainiac mcp serve` forwards here with one).
-import { tokenBase, TOOLS, type Answer, type Connection } from "@brainiac/base";
+import { PROMPTS, tokenBase, TOOLS, type Answer, type Connection } from "@brainiac/base";
 import { createResourceServerChallenge } from "@better-auth/oauth-provider";
 import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { APIError, isAPIError } from "better-auth/api";
@@ -43,7 +43,12 @@ export const DEV_CLIENT = "brainiac-dev";
 
 const UNAVAILABLE = "Brainiac couldn't finish that call. Get the note again before you retry a change.";
 
-/** An MCP server with every tool, each call answered by `call`. Stateless: one per request. */
+/** A prompt's text as the one user message prompts/get returns. */
+const say = (text: string) => ({
+  messages: [{ role: "user" as const, content: { type: "text" as const, text } }],
+});
+
+/** An MCP server with every tool and prompt, each tool call answered by `call`. Stateless: one per request. */
 function toolServer(call: (name: string, args: unknown) => Promise<Answer>): McpServer {
   const server = new McpServer({ name: "brainiac", version: "0.0.0" });
   for (const [name, tool] of Object.entries(TOOLS)) {
@@ -62,6 +67,14 @@ function toolServer(call: (name: string, args: unknown) => Promise<Answer>): Mcp
         ? { content: [{ type: "text", text: JSON.stringify(answer.value) }] }
         : { content: [{ type: "text", text: answer.error }], isError: true };
     });
+  }
+  for (const [name, prompt] of Object.entries(PROMPTS)) {
+    const { title, description } = prompt;
+    if ("args" in prompt)
+      server.registerPrompt(name, { title, description, argsSchema: prompt.args }, (args) =>
+        say(prompt.text(args)),
+      );
+    else server.registerPrompt(name, { title, description }, () => say(prompt.text()));
   }
   return server;
 }

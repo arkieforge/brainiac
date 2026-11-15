@@ -13,7 +13,8 @@
   "dependencies": {
     "@brainiac/base": "workspace:*",
     "@brainiac/core": "workspace:*",
-    "@brainiac/sync": "workspace:*"
+    "@brainiac/sync": "workspace:*",
+    "arktype": "2.2.9"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",

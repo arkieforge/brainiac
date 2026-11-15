@@ -218,6 +218,9 @@ importers:
       '@brainiac/sync':
         specifier: workspace:*
         version: link:../../packages/sync
+      arktype:
+        specifier: 2.2.9
+        version: 2.2.9
     devDependencies:
       '@types/bun':
         specifier: 1.4.4

@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit|Bash|Read|Grep|Glob",
+        "hooks": [{ "type": "command", "command": "brainiac hook" }]
+      }
+    ]
+  }
+}

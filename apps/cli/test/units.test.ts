@@ -1,11 +1,14 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, describe, expect, it } from "vite-plus/test";
 
 import { configDir, loadConfig, saveConfig } from "../src/config.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
+import { refusal } from "../src/hook.ts";
 import { logout, startLogin, type Waiting } from "../src/login.ts";
 import { service } from "../src/service.ts";
 
@@ -112,6 +115,88 @@ describe("the config folder", () => {
     expect(configDir({ XDG_CONFIG_HOME: "/xdg" }, "linux", homedir())).toBe("/xdg/brainiac");
     expect(configDir({ APPDATA: "D:\\Roaming" }, "win32", "C:\\Users\\nadia")).toBe("D:\\Roaming\\brainiac");
     expect(configDir({}, "win32", "C:\\Users\\nadia")).toBe("C:\\Users\\nadia\\AppData\\Roaming\\brainiac");
+  });
+});
+
+describe("brainiac hook", () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "brainiac-hook-")));
+  const vault = join(home, "brainiac");
+  const code = join(home, "code");
+  mkdirSync(join(vault, "identity"), { recursive: true });
+  mkdirSync(join(vault, "facts", "roles"), { recursive: true });
+  mkdirSync(code);
+  symlinkSync(join(vault, "identity"), join(code, "ids")); // a link from elsewhere still reads identity/
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  const check = (tool_name: string, tool_input: Record<string, unknown>, cwd = code) =>
+    refusal({ tool_name, tool_input, cwd }, vault, home);
+
+  it("refuses edits and shell commands anywhere in the vault", () => {
+    const calls: [string, Record<string, unknown>, string?][] = [
+      ["Edit", { file_path: join(vault, "facts/roles/acme-intern-2025.md") }],
+      ["MultiEdit", { file_path: "~/brainiac/me.md" }],
+      ["Write", { file_path: join(vault, "new/folder/a.md") }],
+      ["Write", { file_path: "me.md" }, vault],
+      ["NotebookEdit", { notebook_path: join(vault, "a.ipynb") }],
+      ["Bash", { command: `sed -i s/7.5/8/ ${vault}/facts/tests/ielts-2026-11.md` }],
+      ["Bash", { command: "cat ~/brainiac/me.md" }],
+      ["Bash", { command: 'rm "$HOME/brainiac/inbox/a.md"' }],
+      ["Bash", { command: "ls" }, join(vault, "facts")],
+    ];
+    for (const [tool, input, cwd] of calls)
+      expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);
+  });
+
+  it("refuses reads of sensitive folders, vault documents and the inbox, and searches that reach them", () => {
+    const calls: [string, Record<string, unknown>, string?][] = [
+      ["Read", { file_path: join(vault, "identity/passport.md") }],
+      ["Read", { file_path: join(vault, "facts/tests/ielts-2026-11.md") }],
+      ["Read", { file_path: join(vault, "documents/files/transcript-bsc.pdf") }],
+      ["Read", { file_path: "inbox/a.md" }, vault],
+      ["Read", { file_path: join(code, "ids/passport.md") }],
+      ["Grep", { pattern: "cgpa", path: vault }],
+      ["Grep", { pattern: "cgpa" }, vault],
+      ["Grep", { pattern: "cgpa", path: join(vault, "history") }],
+      ["Glob", { pattern: "identity/*.md" }, vault],
+      ["Glob", { pattern: `${vault}/people/**` }],
+      ["Glob", { pattern: "**/*.pdf", path: join(vault, "documents") }],
+    ];
+    for (const [tool, input, cwd] of calls)
+      expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/isn't read from disk/);
+  });
+
+  it("lets everything else through", () => {
+    const calls: [string, Record<string, unknown>, string?][] = [
+      ["Read", { file_path: join(vault, "facts/roles/acme-intern-2025.md") }],
+      ["Read", { file_path: join(code, "main.ts") }],
+      ["Edit", { file_path: join(code, "main.ts") }],
+      ["Write", { file_path: join(home, "brainiac-notes.md") }],
+      ["Bash", { command: "ls -la" }],
+      ["Grep", { pattern: "cgpa", path: join(vault, "facts/roles") }],
+      ["Glob", { pattern: "facts/roles/*.md", path: vault }],
+      ["Glob", { pattern: "src/**/*.ts" }],
+      ["WebFetch", { url: "https://example.org" }],
+    ];
+    for (const [tool, input, cwd] of calls)
+      expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toBeUndefined();
+  });
+
+  it("refuses with exit code 2 and the reason on stderr, and refuses nothing without a vault", () => {
+    const bun = createRequire(import.meta.url).resolve("bun/bin/bun.exe");
+    const run = (configured: boolean) => {
+      const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), APPDATA: home };
+      const dir = configDir(env, process.platform, home);
+      saveConfig(dir, { deviceId: "test", ...(configured && { vault }) });
+      const call = { tool_name: "Read", tool_input: { file_path: join(vault, "inbox/a.md") }, cwd: code };
+      return spawnSync(bun, [join(import.meta.dirname, "../src/main.ts"), "hook"], {
+        env,
+        input: JSON.stringify({ session_id: "s", hook_event_name: "PreToolUse", ...call }),
+        encoding: "utf8",
+      });
+    };
+    const refused = run(true);
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toMatch(/inbox holds sensitive notes/);
+    expect(run(false).status).toBe(0);
   });
 });
 

@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import { doctor, lockVault, request, restore, watchRequests } from "./commands.ts";
 import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
+import { refusal, ToolCall } from "./hook.ts";
 import { socketLink } from "./link.ts";
 import { serveStdio } from "./mcp.ts";
 import { logout, openBrowser, startLogin } from "./login.ts";
@@ -20,6 +21,7 @@ brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
 brainiac mcp serve [--server <url>]
+brainiac hook
 brainiac resume [--undo]
 brainiac repair
 brainiac restore <file> [<version>]
@@ -177,6 +179,15 @@ async function main(argv: readonly string[]): Promise<void> {
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (command === "hook") {
+    // Claude Code's PreToolUse hook: exit code 2 refuses the call, and the agent reads stderr. No vault, no rules.
+    const why = vault && refusal(ToolCall.assert(JSON.parse(await Bun.stdin.text())), vault);
+    if (why) {
+      console.error(why);
+      process.exit(2);
     }
     return;
   }
