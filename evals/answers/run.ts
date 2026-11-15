@@ -30,7 +30,8 @@ import {
   type Sql,
 } from "../../packages/base/src/index.ts";
 import { nodeSql } from "../../packages/base/src/node.ts";
-import { CASES, factsOf, passes, type Answered } from "./cases.ts";
+import { gateTable } from "../shared/gates.ts";
+import { answersGates, CASES, factsOf, passes, type Answered } from "./cases.ts";
 
 const ROOT = join(import.meta.dirname, "../..");
 const FIXTURES = join(ROOT, "fixtures/nadia");
@@ -220,21 +221,27 @@ const made = world(sql);
 const facts = recordOf(sql, made.connection);
 const mcp = serve(sql);
 const port = await mcp.listen();
-const rows: Record<string, unknown>[] = [];
+const rows: { case: string; sample: number; ok: boolean; why?: string; calls: string[] }[] = [];
 let cost = 0;
 try {
   for (const c of cases) {
     // A 3rd sample when two disagree; an exact-value case has failed already by then.
     for (let sample = 1; sample <= samples + 1; sample++) {
-      const mine = rows.filter((r) => r["case"] === c.id);
-      if (sample > samples && (c.exact || mine.every((r) => r["ok"] === mine[0]?.["ok"]))) break;
+      const mine = rows.filter((r) => r.case === c.id);
+      if (sample > samples && (c.exact || mine.every((r) => r.ok === mine[0]?.ok))) break;
       const events = await ask(claude, c.question, port, made.token);
       const result = events.find((e) => e["type"] === "result");
       cost += typeof result?.["total_cost_usd"] === "number" ? result["total_cost_usd"] : 0;
       const run: Answered = { said: String(result?.["result"] ?? ""), ...facts };
       const failed = c.check(run);
       const calls = toolCalls(events);
-      rows.push({ case: c.id, sample, ok: failed === undefined, ...(failed && { why: failed }), calls });
+      rows.push({
+        case: c.id,
+        sample,
+        ok: failed === undefined,
+        ...(failed && { why: failed }),
+        calls,
+      });
       console.log(
         `${failed === undefined ? "pass" : "FAIL"} ${c.id} (sample ${sample})${failed ? `: ${failed}` : ""}`,
       );
@@ -253,15 +260,17 @@ try {
 }
 
 const verdicts = cases.map((c) => {
-  const mine = rows.filter((r) => r["case"] === c.id);
-  const failing = mine.filter((r) => !r["ok"]).length;
+  const mine = rows.filter((r) => r.case === c.id);
+  const failing = mine.filter((r) => !r.ok).length;
   return { ...c, ran: mine.length, failing, ok: passes(c.exact, failing, mine.length) };
 });
+const gates = answersGates(cases, rows);
+const ok = verdicts.every((v) => v.ok) && gates.every((g) => g.ok);
 writeFileSync(join(values.out, "results.ndjson"), rows.map((r) => JSON.stringify(r)).join("\n"));
 writeFileSync(
   join(values.out, "summary.md"),
   [
-    `# answers: ${verdicts.every((v) => v.ok) ? "pass" : "FAIL"}`,
+    `# answers: ${ok ? "pass" : "FAIL"}`,
     "",
     `${samples} samples a case, model ${values.model ?? "Claude Code's default"}, cost $${cost.toFixed(2)}`,
     "",
@@ -271,7 +280,11 @@ writeFileSync(
       (v) =>
         `| ${v.id} | ${v.kind} | ${v.exact ? "yes" : "no"} | ${v.failing}/${v.ran} | ${v.ok ? "pass" : "FAIL"} |`,
     ),
+    "",
+    "## Release gates",
+    "",
+    ...gateTable(gates),
   ].join("\n") + "\n",
 );
 console.log(`Cost $${cost.toFixed(2)}. Summary in ${join(values.out, "summary.md")}.`);
-if (!verdicts.every((v) => v.ok)) process.exitCode = 1;
+if (!ok) process.exitCode = 1;
