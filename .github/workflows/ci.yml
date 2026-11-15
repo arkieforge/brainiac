@@ -43,6 +43,20 @@ jobs:
       - uses: ./.github/actions/setup
       - run: ${{ matrix.run }}
 
+  # The daemon on Windows, where the swap is ReplaceFileW and the login service a scheduled task: its
+  # real-filesystem cases and unit tests, on NTFS.
+  windows:
+    name: Daemon on Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: vp test run apps/cli
+        shell: bash
+
   # Fails a PR that adds or bumps a dependency to a version with a known moderate-or-worse vulnerability.
   dependencies:
     name: Dependency review

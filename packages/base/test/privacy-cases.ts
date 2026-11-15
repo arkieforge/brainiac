@@ -73,7 +73,7 @@ function install(sql: Sql): void {
  * The fixture student's record, made through the mutation path and indexed, with canaries planted in its
  * sensitive notes (test scores and people are sensitive, as their areas are).
  */
-function record(sql: Sql, fixtures: readonly Fixture[]) {
+export function record(sql: Sql, fixtures: readonly Fixture[]) {
   migrate(sql);
   const ids: Record<string, string> = {};
   const hidden = new Set<string>();

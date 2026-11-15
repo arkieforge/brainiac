@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 export interface Config {
   /** This machine. `state.db` records it, so a vault copied to another machine never replays its queue. */
@@ -18,6 +18,8 @@ export interface Config {
 
 export function configDir(env = process.env, platform = process.platform, home = homedir()): string {
   if (platform === "darwin") return join(home, "Library", "Application Support", "brainiac");
+  if (platform === "win32")
+    return win32.join(env["APPDATA"] || win32.join(home, "AppData", "Roaming"), "brainiac");
   return join(env["XDG_CONFIG_HOME"] || join(home, ".config"), "brainiac");
 }
 

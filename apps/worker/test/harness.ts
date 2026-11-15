@@ -9,6 +9,8 @@ import { consume } from "../src/jobs.ts";
 export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
   readonly #alarms: (() => void)[] = [];
+  /** Sync messages left before the one this instance dies handling; 0 is none. */
+  #dieAt = 0;
 
   /** Alarms the runtime fires do nothing, as if the process died before dispatching. */
   override async alarm(): Promise<void> {
@@ -28,6 +30,23 @@ export class TestBase extends Base {
   /** Ends this instance mid-flight; the next call gets a fresh one over the same storage. */
   crash(): void {
     this.ctx.abort("test crash");
+  }
+
+  /** The process dies handling the `n`th sync message from now: after its transaction, before its reply. */
+  dieHandling(n: number): void {
+    this.#dieAt = n;
+  }
+
+  override webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
+    if (this.#dieAt === 0 || --this.#dieAt > 0) return super.webSocketMessage(ws, data);
+    const dying = new Proxy(ws, {
+      get: (target, key) => {
+        if (key === "send") return () => this.crash();
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return super.webSocketMessage(dying, data);
   }
 
   jobs(): Job[] {

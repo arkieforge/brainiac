@@ -8,19 +8,20 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
 import { cases, type CaseResult } from "./cases.ts";
 import { fixtures } from "./fixtures.ts";
+import { QUESTIONS, type Answers } from "./parity.ts";
 
 const names = Object.keys(cases);
 
 // The Bun pinned in package.json, not whatever is on PATH, so CI and laptops run the same engine.
 const BUN = createRequire(import.meta.url).resolve("bun/bin/bun.exe");
 
-describe("bun:sqlite", () => {
-  let results: Record<string, CaseResult>;
-  beforeAll(() => {
-    results = JSON.parse(execFileSync(BUN, [join(import.meta.dirname, "bun.ts")], { encoding: "utf8" }));
-  });
+let local: { results: Record<string, CaseResult>; parity: Answers };
+beforeAll(() => {
+  local = JSON.parse(execFileSync(BUN, [join(import.meta.dirname, "bun.ts")], { encoding: "utf8" }));
+});
 
-  it.each(names)("%s", (name) => expect(results[name]).toEqual({ ok: true }));
+describe("bun:sqlite", () => {
+  it.each(names)("%s", (name) => expect(local.results[name]).toEqual({ ok: true }));
 });
 
 describe("Durable Object SQLite (workerd)", () => {
@@ -36,11 +37,23 @@ describe("Durable Object SQLite (workerd)", () => {
   });
   afterAll(() => mf.dispose());
 
-  it.each(names)("%s", async (name) => {
+  async function run(name: string): Promise<unknown> {
     const runners = await mf.getDurableObjectNamespace("RUNNER");
     const response = await runners
       .get(runners.idFromName(name))
       .fetch("http://runner/", { method: "POST", body: JSON.stringify({ name, fixtures }) });
-    expect(await response.json()).toEqual({ ok: true });
+    return response.json();
+  }
+
+  it.each(names)("%s", async (name) => expect(await run(name)).toEqual({ ok: true }));
+
+  it("parity: the fixture record answers every question exactly as the local copy does", async () => {
+    const cloud = await run("parity");
+    expect(cloud).toEqual(local.parity);
+    // Not vacuous: the person finds every question, and the agent sees fewer notes and no canary.
+    const { person, agent } = local.parity;
+    for (const q of QUESTIONS) expect(person.search[q], q).not.toEqual([]);
+    expect(agent.notes.length).toBeLessThan(person.notes.length);
+    expect(agent.search["CANARY-BODY-7Q3X"]).toEqual([]);
   });
 });

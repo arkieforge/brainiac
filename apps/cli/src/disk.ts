@@ -254,14 +254,15 @@ export function place(
       }
     }
     const swap = disk.exchange ?? exchange;
-    const outcome = swap(staged, full);
+    // A spare temp name for Windows, so a crash mid-swap leaves the displaced file where a start recovers it.
+    const outcome = swap(staged, full, tempName(full));
     // Nothing replaced: the new text waits, and any save in the file is the watcher's to report.
     if (outcome === "unsupported") return { disk: readPlainFile(full), waiting: true };
     // Deleted meanwhile: that is the person's change, which the watcher reports; nothing is written back.
     if (outcome === "missing") return { disk: undefined };
     // Replaced by a symlink in the instant before the swap: it goes back, unread.
     if (kind(staged) !== "file") {
-      swap(staged, full);
+      swap(staged, full, tempName(full));
       return TAKEN;
     }
     // From here the temp file holds what the swap displaced: on any error it stays, for the next start.

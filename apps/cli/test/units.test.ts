@@ -58,7 +58,7 @@ describe("brainiac daemon install", () => {
   const program = ["/Users/nadia/My Apps/brainiac", "daemon", "run"];
 
   it("writes a launchd agent that keeps the daemon running", () => {
-    const unit = service({ platform: "darwin", home: "/Users/nadia", uid: 501, program });
+    const unit = service({ platform: "darwin", home: "/Users/nadia", uid: 501, user: "nadia", program });
     expect(unit.path).toBe("/Users/nadia/Library/LaunchAgents/dev.brainiac.daemon.plist");
     expect(unit.content).toContain("<string>/Users/nadia/My Apps/brainiac</string>");
     expect(unit.content).toContain("<key>KeepAlive</key>");
@@ -70,6 +70,7 @@ describe("brainiac daemon install", () => {
       platform: "linux",
       home: "/home/nadia",
       uid: 1000,
+      user: "nadia",
       program: [...program, "100%"],
     });
     expect(unit.path).toBe("/home/nadia/.config/systemd/user/brainiac.service");
@@ -77,8 +78,29 @@ describe("brainiac daemon install", () => {
     expect(unit.start.at(-1)).toEqual(["systemctl", "--user", "enable", "--now", "brainiac.service"]);
   });
 
+  it("writes a Task Scheduler task for this user, quoting every argument as Windows splits them", () => {
+    const unit = service({
+      platform: "win32",
+      home: "C:\\Users\\nadia",
+      uid: -1,
+      user: "nadia",
+      program: ["C:\\Program Files\\Brainiac\\brainiac.exe", "daemon", "run", 'say "hi"', "C:\\vault\\"],
+    });
+    expect(unit.path).toBe("C:\\Users\\nadia\\AppData\\Roaming\\brainiac\\daemon-task.xml");
+    expect(unit.content).toContain(
+      "<Command>&quot;C:\\Program Files\\Brainiac\\brainiac.exe&quot;</Command>",
+    );
+    expect(unit.content).toContain(
+      "<Arguments>&quot;daemon&quot; &quot;run&quot; &quot;say \\&quot;hi\\&quot;&quot; &quot;C:\\vault\\\\&quot;</Arguments>",
+    );
+    expect(unit.content).toContain("<UserId>nadia</UserId>");
+    expect(unit.start.at(-1)).toEqual(["schtasks", "/Run", "/TN", "Brainiac daemon"]);
+  });
+
   it("says so on a platform without a daemon yet", () => {
-    expect(() => service({ platform: "win32", home: "C:\\Users\\nadia", uid: 0, program })).toThrow(/win32/);
+    expect(() => service({ platform: "aix", home: "/home/nadia", uid: 0, user: "nadia", program })).toThrow(
+      /aix/,
+    );
   });
 });
 
@@ -87,5 +109,7 @@ describe("the config folder", () => {
     expect(configDir({}, "darwin", "/Users/nadia")).toBe("/Users/nadia/Library/Application Support/brainiac");
     expect(configDir({}, "linux", "/home/nadia")).toBe("/home/nadia/.config/brainiac");
     expect(configDir({ XDG_CONFIG_HOME: "/xdg" }, "linux", homedir())).toBe("/xdg/brainiac");
+    expect(configDir({ APPDATA: "D:\\Roaming" }, "win32", "C:\\Users\\nadia")).toBe("D:\\Roaming\\brainiac");
+    expect(configDir({}, "win32", "C:\\Users\\nadia")).toBe("C:\\Users\\nadia\\AppData\\Roaming\\brainiac");
   });
 });

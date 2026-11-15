@@ -8,6 +8,7 @@ import {
   migrate,
   mutate,
   PERSON,
+  purge,
   serve,
   type NoteRow,
   type Sql,
@@ -73,6 +74,12 @@ export class World {
   seed(id: string, path: string, body = "## Log\n\nstart\n", cls: "normal" | "sensitive" = "normal"): void {
     const raw = `---\nid: ${id}\ntype: Note\ntitle: "${path}"\n---\n${body}`;
     mutate(this.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: this.#now });
+  }
+
+  /** Time passes: `ms` later, the record runs its purge, as its alarm would. */
+  later(ms: number): void {
+    this.#now += ms;
+    purge(this.sql, this.#now);
   }
 
   /** A device starting from `state` (fresh, or a copy of another's), writing to `store` if given. */

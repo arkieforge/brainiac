@@ -1,10 +1,12 @@
-// Runs every conformance case on bun:sqlite, one in-memory database each, and prints the results as JSON.
+// Runs every conformance case on bun:sqlite, one in-memory database each, and prints the results as JSON,
+// with the parity answers (parity.ts).
 // engines.test.ts runs this file with the pinned Bun.
 import { Database } from "bun:sqlite";
 
 import { bunSql } from "../src/bun.ts";
 import { cases, runCase, type CaseResult } from "./cases.ts";
 import { fixtures } from "./fixtures.ts";
+import { answers } from "./parity.ts";
 
 const results: Record<string, CaseResult> = {};
 for (const name of Object.keys(cases)) {
@@ -12,4 +14,7 @@ for (const name of Object.keys(cases)) {
   results[name] = runCase(name, bunSql(db), fixtures);
   db.close();
 }
-console.log(JSON.stringify(results));
+const db = new Database(":memory:", { strict: true });
+const parity = answers(bunSql(db), fixtures);
+db.close();
+console.log(JSON.stringify({ results, parity }));

@@ -1,11 +1,21 @@
 // The CLI commands that work on a vault with or without the daemon running: doctor and restore. The ones
-// that change what a running daemon does (resume, repair) are requests it picks up on SIGUSR2. The daemon's
+// that change what a running daemon does (resume, repair) are request files it watches for. The daemon's
 // lock, pid and request files live in the user's config folder, never in the vault: a deleted vault can't take
 // them with it, and nobody who can only write the vault can plant them.
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import { SyncClient } from "@brainiac/sync";
 import { parseNote } from "@brainiac/core";
@@ -15,7 +25,7 @@ import { inICloud, isNote, otherSyncTools } from "./guards.ts";
 import { openState } from "./state.ts";
 import { exchange } from "./swap.ts";
 
-/** What a running daemon is asked to do; it reads the request when signalled. */
+/** What a running daemon is asked to do; it takes the request when its file appears. */
 export type Request = "resume" | "undo" | "repair";
 
 /** One of this vault's control files in the config folder. */
@@ -43,6 +53,8 @@ export function lockVault(config: string, vault: string): () => void {
     db.close();
     throw new Error("Another brainiac daemon is already syncing this vault.");
   }
+  // One left by a daemon that died before taking it isn't for this one: only requests made from now on are.
+  rmSync(control(config, vault, "request"), { force: true });
   writeFileSync(control(config, vault, "pid"), String(process.pid));
   return () => {
     rmSync(control(config, vault, "pid"), { force: true });
@@ -70,15 +82,31 @@ function runningDaemon(config: string, vault: string): number | undefined {
 
 /** Asks the running daemon to act; false if none runs. */
 export function request(config: string, vault: string, what: Request): boolean {
-  const pid = runningDaemon(config, vault);
-  if (pid === undefined) return false;
-  writeFileSync(control(config, vault, "request"), what);
-  process.kill(pid, "SIGUSR2");
+  if (runningDaemon(config, vault) === undefined) return false;
+  const file = control(config, vault, "request");
+  // Renamed into place, so the daemon never reads half a request.
+  writeFileSync(`${file}.tmp`, what);
+  renameSync(`${file}.tmp`, file);
   return true;
 }
 
+/**
+ * Calls `on` with each request made to this vault's daemon (after `lockVault`), until the returned function
+ * stops watching. A file watch rather than a signal, so it works the same on Windows.
+ */
+export function watchRequests(config: string, vault: string, on: (what: Request) => void): () => void {
+  const take = () => {
+    const what = takeRequest(config, vault);
+    if (what) on(what);
+  };
+  // Any event in the folder: some platforms don't name the file, and reading a missing one costs nothing.
+  const watcher = watch(dirname(control(config, vault, "request")), take);
+  take(); // one made while the daemon was starting
+  return () => watcher.close();
+}
+
 /** The request waiting for this daemon, taken so it runs once. */
-export function takeRequest(config: string, vault: string): Request | undefined {
+function takeRequest(config: string, vault: string): Request | undefined {
   const file = control(config, vault, "request");
   try {
     const what = readFileSync(file, "utf8").trim();
