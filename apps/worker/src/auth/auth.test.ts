@@ -1116,7 +1116,9 @@ describe("MCP clients", () => {
           child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
         });
     };
+    // Both start now, so the background one boots while the other is busy.
     const stdio = bridge();
+    const background = bridge("--background");
     const remote = async (method: string, params: unknown) =>
       (await rpc(auth, access, method, params)).message;
     try {
@@ -1154,7 +1156,6 @@ describe("MCP clients", () => {
       expect(JSON.stringify(scores.result)).toContain("IELTS Academic, November 2026");
       await same();
       // In the background (the daemon's filer) the same token sees normal notes only, and only proposes.
-      const background = bridge("--background");
       await background("initialize", init);
       const hidden = await background("tools/call", { name: "query", arguments: { type: "TestScore" } });
       expect(JSON.stringify(hidden.result)).not.toContain("IELTS");
