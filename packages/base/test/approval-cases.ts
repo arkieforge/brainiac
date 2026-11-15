@@ -803,9 +803,10 @@ export const approvalCases: Record<string, Case> = {
             held(mutate(sql, patchOf(sql, ids.ielts, [set("overall", 8)]), agent(LATER))),
           ),
         });
+        // A half band, which the steps never generate: a step equal to the signed plan would be approved.
         const otherPlan = approve(
           sql,
-          held(mutate(sql, patchOf(sql, ids.ielts, [set("overall", 2)]), agent(LATER))),
+          held(mutate(sql, patchOf(sql, ids.ielts, [set("overall", 2.5)]), agent(LATER))),
         );
         const unsignedReview = startReview(sql, [ids.ielts, ids.tum], "human", LATER);
         // Signed, over a note the steps never touch.
