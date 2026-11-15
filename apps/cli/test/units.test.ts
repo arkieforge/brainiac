@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { configDir, loadConfig, saveConfig } from "../src/config.ts";
+import { fileable, fileInbox, filer, filingArgs } from "../src/filing.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
 import { refusal, slashed } from "../src/hook.ts";
 import { logout, startLogin, type Waiting } from "../src/login.ts";
@@ -40,6 +41,56 @@ describe("what the daemon takes from disk", () => {
     expect(isMassChange(5, 60)).toBe(false);
     expect(isMassChange(50, 10_000)).toBe(false);
     expect(isMassChange(51, 10_000)).toBe(true);
+  });
+});
+
+/** Lets the promise callbacks already queued run. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+describe("the background filer", () => {
+  const item = { rev: 1, raw: "", path: "inbox/a.md" } as const;
+
+  it("files normal inbox items only", () => {
+    expect(fileable({ ...item, class: "normal" })).toBe(true);
+    expect(fileable({ ...item, class: "normal", path: "Inbox/a.md" })).toBe(true);
+    expect(fileable({ ...item, class: "sensitive" })).toBe(false);
+    expect(fileable({ ...item, class: "normal", path: "facts/roles/a.md" })).toBe(false);
+    expect(fileable(undefined)).toBe(false);
+  });
+
+  it("runs one run at a time, once more for items that came during it, and not again for items it saw", async () => {
+    const ends: (() => void)[] = [];
+    const file = filer(() => new Promise<void>((resolve) => ends.push(resolve)));
+    file(["a"]);
+    file(["b", "c"]);
+    file(["a"]);
+    expect(ends.length).toBe(1);
+    ends[0]?.();
+    await settle();
+    expect(ends.length).toBe(2); // b and c arrived during the first run
+    ends[1]?.();
+    await settle();
+    file(["a", "b"]);
+    expect(ends.length).toBe(2);
+  });
+
+  it("rejects when Claude Code is gone, instead of taking the daemon down", async () => {
+    const claude = join(tmpdir(), "brainiac-no-such-claude", "claude");
+    await expect(fileInbox({ command: "brainiac", args: [] }, { claude })).rejects.toThrow(/ENOENT/);
+  });
+
+  it("starts Claude Code with no built-in tools, no settings and no MCP server but Brainiac", () => {
+    const args = filingArgs({ command: "brainiac", args: ["mcp", "serve", "--background"] });
+    const value = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(args[0]).toBe("-p");
+    expect(args).toContain("--restricted");
+    expect(args).toContain("--strict-mcp-config");
+    expect([value("--tools"), value("--allowedTools")]).toEqual(["", "mcp__brainiac__*"]);
+    expect(JSON.parse(value("--mcp-config") ?? "")).toEqual({
+      mcpServers: {
+        brainiac: { type: "stdio", command: "brainiac", args: ["mcp", "serve", "--background"] },
+      },
+    });
   });
 });
 

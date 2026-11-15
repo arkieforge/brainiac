@@ -6,9 +6,9 @@
   "ignoreBinaries": ["doppler"],
   "workspaces": {
     ".": {
-      // alchemy.run.ts is loaded by the alchemy CLI; scripts run from package.json and t3.json.
-      "entry": ["alchemy.run.ts", "scripts/*.ts"],
-      "project": ["*.ts", "scripts/**/*.ts"],
+      // alchemy.run.ts is loaded by the alchemy CLI; scripts and evals run from package.json and t3.json.
+      "entry": ["alchemy.run.ts", "scripts/*.ts", "evals/*/run.ts"],
+      "project": ["*.ts", "scripts/**/*.ts", "evals/**/*.ts"],
       // Loaded as a tsconfig plugin, so no import references it.
       "ignoreDependencies": ["@effect/language-service"],
     },

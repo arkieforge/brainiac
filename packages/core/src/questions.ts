@@ -219,7 +219,8 @@ export function findQuestions(
 }
 
 /** Exactly equal, absent and empty as one: a field empty when asked and still empty hasn't changed, a new case has. */
-const sameValue = (a: unknown, b: unknown) => (empty(a) || empty(b) ? empty(a) && empty(b) : deepEqual(a, b));
+export const sameValue = (a: unknown, b: unknown) =>
+  empty(a) || empty(b) ? empty(a) && empty(b) : deepEqual(a, b);
 
 /** Soonest deadline first, then what an agent asked, then in the record's order. */
 function rank(questions: readonly Question[]): Question[] {

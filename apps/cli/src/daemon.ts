@@ -198,6 +198,14 @@ export class Daemon {
     return this.#client;
   }
 
+  readonly #listeners = new Set<(noteIds: ReadonlySet<string>) => void>();
+
+  /** Calls `listener` with the notes that changed, on this sync client and on any a vanished folder replaces it with. */
+  subscribe(listener: (noteIds: ReadonlySet<string>) => void): void {
+    this.#listeners.add(listener);
+    this.#client.subscribe(listener);
+  }
+
   get state(): State {
     return this.#state;
   }
@@ -896,6 +904,7 @@ export class Daemon {
     this.#index = openIndex(join(this.root, ".brainiac", "index.db")).index;
     this.#client = new SyncClient(this.#client.state, this.#clientOptions());
     this.#client.subscribe((ids) => this.#reflect(ids));
+    for (const listener of this.#listeners) this.#client.subscribe(listener);
     this.#client.saveAll();
     this.#watcher?.close();
     this.#watch();

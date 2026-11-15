@@ -73,6 +73,20 @@ export const connectionOf = (sql: Sql, actor: string): Connection | undefined =>
 export const principalOf = (connection: Connection | undefined): Principal =>
   connection === undefined ? PERSON : { sensitive: connection.sensitive };
 
+/**
+ * A connection as a background run uses it, with nobody there (docs/internals/security.md, "Filer access"): at
+ * most propose, so every change it makes waits for the person, and never the sensitive scope. A client asks for
+ * this itself with `BACKGROUND_HEADER` on `/mcp`, which is safe to trust because it only ever narrows.
+ */
+export const inBackground = (connection: Connection): Connection => ({
+  ...connection,
+  level: connection.level === "read" ? "read" : "propose",
+  sensitive: false,
+});
+
+/** Sent as `1` by `brainiac mcp serve --background`, the bridge the daemon's headless filer runs. */
+export const BACKGROUND_HEADER = "brainiac-background";
+
 /** Whether `connection` may see `note`: `project`, the one read check, for a connection. */
 export const canSee = (connection: Connection | undefined, note: Pick<NoteRow, "class" | "type">): boolean =>
   project(note, principalOf(connection)) !== undefined;

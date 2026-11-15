@@ -14,6 +14,8 @@ export interface Config {
   readonly token?: string;
   /** "Keep sensitive notes on this laptop", for a device the person marked as theirs. */
   readonly keepSensitive?: boolean;
+  /** `brainiac filing on`: the daemon files new inbox items with a headless run of this Claude Code binary. */
+  readonly filing?: { readonly claude: string };
 }
 
 export function configDir(env = process.env, platform = process.platform, home = homedir()): string {

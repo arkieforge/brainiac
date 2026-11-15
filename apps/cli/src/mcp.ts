@@ -5,6 +5,7 @@
 // copy's revisions and the connection's last grants on disk (#94).
 import { createInterface } from "node:readline";
 
+import { BACKGROUND_HEADER } from "@brainiac/base";
 import { type } from "arktype";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -42,7 +43,7 @@ function mcpUrl(server: string): URL {
   return url;
 }
 
-const post = (url: URL, token: string, body: string, version?: string) =>
+const post = (url: URL, token: string, body: string, version?: string, background?: boolean) =>
   fetch(url, {
     method: "POST",
     headers: {
@@ -50,6 +51,7 @@ const post = (url: URL, token: string, body: string, version?: string) =>
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       ...(version && { "mcp-protocol-version": version }),
+      ...(background && { [BACKGROUND_HEADER]: "1" }),
     },
     body,
   });
@@ -95,10 +97,12 @@ export interface Bridge {
   readonly token: string;
   readonly input: NodeJS.ReadableStream;
   readonly write: (line: string) => void;
+  /** Nobody is there (the daemon's headless filer): the record narrows the connection for every call. */
+  readonly background?: boolean;
 }
 
 /** Forwards stdin's JSON-RPC lines to `<server>/mcp` one at a time, in order, and writes each answer as a line. */
-export async function serveStdio({ server, token, input, write }: Bridge): Promise<void> {
+export async function serveStdio({ server, token, input, write, background }: Bridge): Promise<void> {
   const url = mcpUrl(server);
   let version: string | undefined;
   for await (const line of createInterface({ input, crlfDelay: Infinity })) {
@@ -113,7 +117,7 @@ export async function serveStdio({ server, token, input, write }: Bridge): Promi
     const id = idOf(message);
     let response: Response;
     try {
-      response = await post(url, token, line, version);
+      response = await post(url, token, line, version, background);
     } catch {
       if (id !== undefined)
         write(failure(id, `Can't reach your Brainiac record at ${url.origin}. Nothing was read or changed.`));

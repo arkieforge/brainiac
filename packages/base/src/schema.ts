@@ -320,6 +320,8 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     `INSERT INTO chunks_fts_${family} (rowid, header, text)
       SELECT id, header, text FROM chunks WHERE family = '${family}'`,
   ]),
+  // The revision of the item a lease handed out, so `done` deletes only what the agent read.
+  ["ALTER TABLE inbox_leases ADD COLUMN rev INTEGER NOT NULL DEFAULT 0"],
 ];
 
 /** The SQL schema version this code writes. */
