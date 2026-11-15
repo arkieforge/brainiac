@@ -1264,6 +1264,8 @@ const cases: Record<string, () => Promise<void>> = {
         ["create", { type: "Note", fields: { title: "Offline note" } }],
         ["undo", { run: "x" }],
         ["request_info", { question: "Which school?" }],
+        // A read the copy can't answer yet (#118) is refused the same way.
+        ["ask", { mode: "context", question: "Which school?" }],
       ] as const;
       const requests = [
         {
@@ -1300,7 +1302,21 @@ const cases: Record<string, () => Promise<void>> = {
       equal(answers.get(0)?.result?.serverInfo?.name, "brainiac", `initialize answers offline, ${what}`);
       same(
         answers.get(1)?.result?.tools?.map((t: { name: string }) => t.name),
-        ["describe", "query", "get", "add", "create", "update", "undo", "request_info", "inbox", "fill_form"],
+        [
+          "describe",
+          "query",
+          "get",
+          "search",
+          "related",
+          "ask",
+          "add",
+          "create",
+          "update",
+          "undo",
+          "request_info",
+          "inbox",
+          "fill_form",
+        ],
       );
       const syncedAt = Number(new Date(JSON.parse(answers.get(2).result.content[0].text).syncedAt));
       ok(syncedAt > 0 && syncedAt <= Date.now(), "the time of the last sync");

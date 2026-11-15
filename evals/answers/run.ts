@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 
-import { serveTools } from "../../apps/worker/src/mcp/tools.ts";
+import { serveTools } from "../../packages/base/src/mcp.ts";
 import {
   authenticate,
   callTool,

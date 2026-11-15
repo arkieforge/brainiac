@@ -1253,6 +1253,8 @@ const fillForm = tool(
 
 /** What a laptop's copy answers while the record can't be reached: the reads it holds everything for. */
 const OFFLINE_READS: ReadonlySet<string> = new Set(["describe", "query", "get"]);
+/** Reads a laptop's copy can't answer yet (offline search is #118), refused offline as reads, not as writes. */
+const ONLINE_READS: ReadonlySet<string> = new Set(["search", "related", "ask"]);
 
 /** `what` says what isn't kept: "Proposals aren't". */
 const offlineLacks = (what: string) =>
@@ -1597,7 +1599,9 @@ export function callTool(sql: Sql, name: string, args: unknown, ctx: ToolContext
       ? fail(`No tool named ${name}.`)
       : ctx.offline && !OFFLINE_READS.has(name)
         ? fail(
-            `Your Brainiac record can't be reached, so ${name} changed nothing and nothing was queued. Offline, this laptop's copy answers describe, query and get; try again once the record is back online.`,
+            ONLINE_READS.has(name)
+              ? `Your Brainiac record can't be reached, and ${name} needs it: offline, this laptop's copy answers describe, query and get. Try again once the record is back online.`
+              : `Your Brainiac record can't be reached, so ${name} changed nothing and nothing was queued. Offline, this laptop's copy answers describe, query and get; try again once the record is back online.`,
           )
         : TOOLS[name as ToolName].call(sql, args, call);
     for (const { noteId } of sql.all<{ noteId: string }>(
