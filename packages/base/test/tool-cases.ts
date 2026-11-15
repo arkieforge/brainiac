@@ -608,10 +608,7 @@ export const toolCases: Record<string, Case> = {
     ]);
   },
 
-  "a create the approval list holds completes when sent again with its id and the approval": (
-    sql,
-    fixtures,
-  ) => {
+  "a create the approval list holds completes when sent again with the approval": (sql, fixtures) => {
     const n = record(sql, fixtures);
     const writer = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
     const args = {
@@ -625,13 +622,13 @@ export const toolCases: Record<string, Case> = {
     equal(held["status"], "needsApproval");
     const approved = recordApproval(sql, held["items"] as PlanItem[], signature(), T0);
     ok("approvalId" in approved);
+    // The same call again, a moment later, with the approval: it makes the note the person signed.
     const made = call(sql, as(writer.connection ?? connection(sql), T0 + 1), "create", {
       ...args,
-      id: held["id"],
       approval_id: approved.approvalId,
     });
     same([made["status"], made["id"], made["path"]], ["applied", held["id"], held["path"]]);
-    match(refused(sql, writer, "create", { ...args, id: "not-an-id" }), /id must be/);
+    match(refused(sql, writer, "create", { ...args, id: held["id"] }), /id must be removed/);
   },
 
   "link fills a list field the note doesn't have yet as a list": (sql, fixtures) => {

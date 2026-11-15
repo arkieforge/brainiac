@@ -4,7 +4,6 @@
 import {
   BUILT_IN_TYPES,
   findClash,
-  isUlid,
   normalizePath,
   parseNote,
   patch,
@@ -550,8 +549,23 @@ const slug = (text: string) =>
 
 const fold = (text: string) => text.normalize("NFKC").toLowerCase().trim();
 
+/**
+ * The note an unused approval signed into being, if it signed exactly one: a create sent again with the
+ * approval makes that note, so its plan matches what the person signed. Taken from the approval, never from the
+ * caller, so no argument can ask whether some id exists.
+ */
+function approvedCreate(sql: Sql, approvalId: string): string | undefined {
+  const [approval] = sql.all<{ items: string }>(
+    "SELECT items FROM approvals WHERE id = ? AND usedAt IS NULL",
+    approvalId,
+  );
+  const items: PlanItem[] = approval ? JSON.parse(approval.items) : [];
+  const created = items.filter((item) => item.baseRev === 0 && item.patch.live?.after === true);
+  return created.length === 1 ? created[0]?.noteId : undefined;
+}
+
 const create = tool(
-  `Create a new note: a new event is a new note (a new test attempt, a new role), while a change to something already recorded is an update. fields are the front-matter (top-level keys; see describe for each type's fields). link sets relation fields by note id, like {"supersedes": "<id>"}. Returns duplicate, creating nothing, when a note of the same type and title exists; update that one, or pass duplicate_ok if this really is another. Run with dry_run first to see the note. After needsApproval, send the same call again with the id it returned and approval_id. sensitive: grades, scores, IDs, health or money.`,
+  `Create a new note: a new event is a new note (a new test attempt, a new role), while a change to something already recorded is an update. fields are the front-matter (top-level keys; see describe for each type's fields). link sets relation fields by note id, like {"supersedes": "<id>"}. Returns duplicate, creating nothing, when a note of the same type and title exists; update that one, or pass duplicate_ok if this really is another. Run with dry_run first to see the note. After needsApproval, send the same call again with approval_id. sensitive: grades, scores, IDs, health or money.`,
   type({
     "+": "reject",
     type: "string",
@@ -562,13 +576,10 @@ const create = tool(
     "sensitive?": "boolean | null",
     "duplicate_ok?": "boolean | null",
     "dry_run?": "boolean | null",
-    "id?": "string | null",
     "approval_id?": "string | null",
   }),
   (sql, args, ctx) => {
     if (readOnly(ctx)) return ok(READ_ONLY);
-    if (args.id !== undefined && !isUlid(args.id))
-      return fail("id must be the id an earlier answer gave for this note.");
     const fields = args.fields ?? {};
     const fieldOps: PatchOp[] = [];
     for (const [key, value] of Object.entries(fields)) {
@@ -576,8 +587,7 @@ const create = tool(
       if (!isYaml(value)) return fail(`fields.${key} isn't a value front-matter can hold.`);
       fieldOps.push({ op: "set", path: [key], value });
     }
-    // The same id on a retry, so the note an approval signed is the note this call makes.
-    const id = args.id ?? ulid(ctx.now);
+    const id = (args.approval_id !== undefined && approvedCreate(sql, args.approval_id)) || ulid(ctx.now);
     const title = typeof fields["title"] === "string" ? fields["title"] : undefined;
     const spec = typesOf(sql)[args.type];
     const live = sql
