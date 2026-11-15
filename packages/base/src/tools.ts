@@ -3,6 +3,7 @@
 // Every read goes through `project`; every change goes through the mutation path, as the calling connection.
 import {
   BUILT_IN_TYPES,
+  detect,
   findClash,
   normalizePath,
   parseNote,
@@ -297,6 +298,32 @@ function questionRows(sql: Sql, ctx: Context): Row[] {
   });
 }
 
+/**
+ * What the record's detectors find (packages/core/src/review.ts), as rows, over the notes the caller can see: the
+ * evidence of a check never comes from a note it couldn't read.
+ */
+function checkRows(sql: Sql, ctx: Context): Row[] | string {
+  const notes = liveVisible(sql, ctx);
+  if (typeof notes === "string") return notes;
+  const read = notes.map((note) => ({ id: note.id, path: note.path, data: fieldsOf(note) }));
+  return detect(read, manifestOf(sql) ?? null, ctx.now).map((check, i) => {
+    const data = {
+      type: "Check",
+      note: check.noteId,
+      detector: check.detector,
+      ...(check.field !== undefined && { field: check.field }),
+      evidence: check.evidence,
+      notes: [check.noteId, ...check.related],
+      ...(check.fix && { fix: check.fix }),
+    };
+    return {
+      id: `${check.noteId}.${check.detector}.${check.field ?? ""}.${i}`,
+      data,
+      text: JSON.stringify(data),
+    };
+  });
+}
+
 const pick = (data: Readonly<Record<string, unknown>>, fields: readonly string[]) =>
   Object.fromEntries(
     fields.flatMap((field) => {
@@ -327,7 +354,7 @@ where: {"<field>": {<operator>: <value>}}, dotted paths for nested fields ("sect
 - Dates compare as dates in UTC; text compares ignoring case. text finds words in a field; the top-level text finds words anywhere in the note.
 sort: fields, "-" for newest or largest first (default ["-date"]). fields: which fields each row returns (default type and title).
 Pages hold up to limit rows (default 20, at most 100); pass next as cursor for the next page.
-type "Proposal" lists proposals (yours: true for this connection's), type "Question" the questions waiting for the person.`,
+type "Proposal" lists proposals (yours: true for this connection's), type "Question" the questions waiting for the person, type "Check" what Brainiac's checks flag (a value that disagrees with its document or another note, an impossible value, missing proof, a duplicate, a name spelled two ways, an expired item an application uses), each with its evidence and any fix. Show a check to the person; only they decide it.`,
   type({
     "+": "reject",
     ...FilterArgs,
@@ -339,12 +366,16 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
   (sql, args, ctx) => {
     const invalid = checkFilter(args);
     if (invalid) return fail(invalid);
-    const virtual = args.type === "Proposal" || args.type === "Question";
+    const virtual = args.type === "Proposal" || args.type === "Question" || args.type === "Check";
     const notes = virtual ? [] : liveVisible(sql, ctx, args.type);
     if (typeof notes === "string") return fail(notes);
-    const rows: QueryRow[] = virtual
-      ? (args.type === "Proposal" ? proposalRows : questionRows)(sql, ctx)
-      : notes.map(noteRow);
+    const rows: QueryRow[] | string =
+      args.type === "Check"
+        ? checkRows(sql, ctx)
+        : virtual
+          ? (args.type === "Proposal" ? proposalRows : questionRows)(sql, ctx)
+          : notes.map(noteRow);
+    if (typeof rows === "string") return fail(rows);
     const page = paginate(rows, args);
     if ("error" in page) return fail(page.error);
     // A proposal or question row names the notes it is about, which the caller may see (checked above).
@@ -797,7 +828,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
       return fail("rev goes with id. A change to many notes uses each note's current rev.");
     const invalid = checkFilter(args);
     if (invalid) return fail(invalid);
-    if (args.type === "Proposal" || args.type === "Question")
+    if (args.type === "Proposal" || args.type === "Question" || args.type === "Check")
       return fail(`update changes notes, not ${args.type}s.`);
     const rows = liveVisible(sql, ctx, args.type);
     if (typeof rows === "string") return fail(rows);

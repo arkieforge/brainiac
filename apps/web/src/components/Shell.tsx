@@ -47,6 +47,9 @@ export function Shell({
         <Link to="/" className="brand">
           Brainiac
         </Link>
+        <Link to="/review" className="small">
+          Review
+        </Link>
         <span className="status" data-status={status}>
           {STATUS[status]}
         </span>

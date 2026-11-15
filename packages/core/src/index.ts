@@ -41,3 +41,16 @@ export {
   type Issue,
   type Manifest,
 } from "./schema.ts";
+export {
+  detect,
+  overview,
+  reviewFields,
+  reviewQueue,
+  show,
+  verifyOps,
+  type Check,
+  type Item,
+  type Mark,
+  type Overview,
+  type ReviewNote,
+} from "./review.ts";
