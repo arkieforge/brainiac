@@ -1,6 +1,7 @@
 // Proposals (contract §3): held changes, a propose-level connection's changes, and conflicts. Only the person
 // decides them; a connection may withdraw its own. A held change applies on its own once its hold runs out, if
-// its connection still exists at write level; otherwise it waits for the person.
+// its connection still exists at write level; otherwise it waits for the person. Turning one down takes any secret
+// it brought in (a passport's number) with it.
 import {
   deepEqual,
   NoteParseError,
@@ -32,6 +33,7 @@ import {
 } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
 import type { Sql } from "./sql.ts";
+import { forgetProposed } from "./vault.ts";
 
 interface ProposalRow {
   readonly id: string;
@@ -184,10 +186,12 @@ export function decide(sql: Sql, proposalId: string, decision: "accept" | "rejec
   if (ctx.connection) return { status: "forbidden", reason: "Only you decide proposals." };
   const proposal = openProposal(sql, proposalId);
   if (!proposal) return refused("No open proposal with that id.");
-  if (decision === "reject") {
-    sql.all("UPDATE proposals SET status = 'rejected', autoApplyAt = NULL WHERE id = ?", proposal.id);
-    return { status: "rejected" };
-  }
+  if (decision === "reject")
+    return sql.transaction(() => {
+      sql.all("UPDATE proposals SET status = 'rejected', autoApplyAt = NULL WHERE id = ?", proposal.id);
+      forgetProposed(sql, proposal.id);
+      return { status: "rejected" };
+    });
   if (proposal.kind === "change") {
     const result = apply(sql, proposal, ctx);
     // A GitHub project accepted after its repo changed catches up to what GitHub said last.
@@ -200,12 +204,16 @@ export function decide(sql: Sql, proposalId: string, decision: "accept" | "rejec
 
 /** Withdraws one of the caller's own open proposals; nothing more is in an agent's hands. */
 export function withdraw(sql: Sql, proposalId: string, ctx: Context): Decided {
-  const [row] = sql.all<{ id: string }>(
-    "UPDATE proposals SET status = 'withdrawn', autoApplyAt = NULL WHERE id = ? AND actor = ? AND status = 'open' RETURNING id",
-    proposalId,
-    ctx.actor,
-  );
-  return row ? { status: "withdrawn" } : refused("No open proposal of yours with that id.");
+  return sql.transaction((): Decided => {
+    const [row] = sql.all<{ id: string }>(
+      "UPDATE proposals SET status = 'withdrawn', autoApplyAt = NULL WHERE id = ? AND actor = ? AND status = 'open' RETURNING id",
+      proposalId,
+      ctx.actor,
+    );
+    if (!row) return refused("No open proposal of yours with that id.");
+    forgetProposed(sql, row.id);
+    return { status: "withdrawn" };
+  });
 }
 
 /**

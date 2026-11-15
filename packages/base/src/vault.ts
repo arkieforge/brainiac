@@ -369,6 +369,8 @@ function writePassport(
       // A note that wasn't written or kept as a proposal (a path clash with this passport's note from another
       // scan, a manifest without IdDocument) takes the secret with it.
       if (!kept(created)) throw new NotWritten(created);
+      if (created.status === "proposed")
+        sql.all("UPDATE secrets SET proposalId = ? WHERE name = ?", created.proposalId, name);
       return created;
     });
   } catch (error) {
@@ -377,6 +379,35 @@ function writePassport(
   }
   // Only a written note is linked: a proposal the person rejects would leave the link pointing at nothing.
   return { result, noteId: result.status === "applied" ? id : null };
+}
+
+/**
+ * Deletes the secrets a proposal brought in, once it is rejected or withdrawn, unless a note (even one in the trash,
+ * which may come back) or another open proposal names one. Secrets the person saved belong to no proposal.
+ */
+export function forgetProposed(sql: Sql, proposalId: string): void {
+  const secrets = sql.all<{ name: string }>("SELECT name FROM secrets WHERE proposalId = ?", proposalId);
+  for (const { name } of secrets) {
+    const ref = `secret:${name}`;
+    const names = ({ text }: { text: string }) => namesSecret(text, ref);
+    const named =
+      sql.all<{ text: string }>("SELECT raw AS text FROM notes WHERE instr(raw, ?) > 0", ref).some(names) ||
+      sql
+        .all<{ text: string }>(
+          `SELECT patch || char(10) || coalesce(action, '') AS text FROM proposals
+           WHERE status = 'open' AND instr(patch || char(10) || coalesce(action, ''), ?) > 0`,
+          ref,
+        )
+        .some(names);
+    if (!named) sql.all("DELETE FROM secrets WHERE name = ?", name);
+  }
+}
+
+/** Whether `text` names the secret `ref` (`secret:<name>`) itself, not a longer name that starts with it. */
+function namesSecret(text: string, ref: string): boolean {
+  for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1))
+    if (!/[a-z0-9._-]/.test(text[at + ref.length] ?? "")) return true;
+  return false;
 }
 
 /** A passport's number is a secret named for its issuer and the file, so no other upload can overwrite it. */

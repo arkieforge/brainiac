@@ -128,10 +128,11 @@ export function saveSecret(
       input.value === undefined
         ? existing?.ciphertext
         : Buffer.from(seal(key, Buffer.from(input.value), `secret:${input.name}`)).toString("base64");
+    // A secret the person saves is theirs: turning down the proposal that brought it in no longer takes it.
     sql.all(
       `INSERT INTO secrets (name, ciphertext, policy, domain) VALUES (?, ?, ?, ?)
        ON CONFLICT (name) DO UPDATE SET
-         ciphertext = excluded.ciphertext, policy = excluded.policy, domain = excluded.domain`,
+         ciphertext = excluded.ciphertext, policy = excluded.policy, domain = excluded.domain, proposalId = NULL`,
       input.name,
       ciphertext ?? null,
       next.policy,
