@@ -87,6 +87,13 @@ export function Review() {
     return { error: "Your review session keeps ending. Try again in a moment." };
   }
 
+  /** Back to the step undone, with what's left of the history. */
+  function undone(last: Step, rest: readonly Step[]) {
+    setSteps(rest);
+    setUnsure(unsure.filter((id) => id !== order?.[last.at]));
+    setAt(last.at);
+  }
+
   async function act(key: Key) {
     if (busy || !order) return;
     setMessage(undefined);
@@ -99,10 +106,20 @@ export function Review() {
         const saved = await save(id, () => before, after);
         setBusy(false);
         if (saved && "error" in saved) return setMessage(saved.error);
+        // The step before left the text this undo restored: it now stands at the undo's revision.
+        if (saved)
+          return undone(
+            last,
+            steps
+              .slice(0, -1)
+              .map((step) =>
+                step.edit?.noteId === id && step.edit.after.raw === before
+                  ? { ...step, edit: { ...step.edit, after: saved } }
+                  : step,
+              ),
+          );
       }
-      setSteps(steps.slice(0, -1));
-      setUnsure(unsure.filter((id) => id !== order[last.at]));
-      return setAt(last.at);
+      return undone(last, steps.slice(0, -1));
     }
     if (!item || !client) return;
     if (key === "e") return void navigate({ to: "/n/$noteId", params: { noteId: item.noteId } });

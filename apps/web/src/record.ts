@@ -118,9 +118,15 @@ function connect() {
     if (typeof event.data !== "string") return;
     const message: ServerMessage = JSON.parse(event.data);
     client?.receive(message);
-    // Live once the record has answered the hello with what changed (or all of it): before that, this tab holds
-    // only its stored copy, without the sensitive notes it never keeps.
-    if (message.type === "snapshot" || message.type === "changes") setStatus("live");
+    // Live once the client took the record's answer to its hello (what changed, or all of it): before that, this
+    // tab holds only its stored copy, without the sensitive notes it never keeps. An answer it set aside (one an
+    // earlier hello was overtaken by) leaves its cursor where it was.
+    const cursor = client?.state.cursor;
+    if (
+      (message.type === "snapshot" && cursor === message.seq) ||
+      (message.type === "changes" && cursor === message.to)
+    )
+      setStatus("live");
   });
   ws.addEventListener("close", () => {
     if (socket !== ws) return;

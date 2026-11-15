@@ -111,6 +111,9 @@ describe("review saves", () => {
       raw,
       class: "normal",
     });
+    // An answer to an older hello, which the client sets aside: still not live.
+    push({ type: "snapshot", seq: 1, notes: [], attempt: hello.attempt - 1 });
+    expect(await record.saveReviewed(ID, (raw) => `${raw}x`, "nonce", early)).toHaveProperty("error");
     push({ type: "snapshot", seq: 2, notes: [state(2, "---\ntitle: A\n---\n")], attempt: hello.attempt });
 
     // What the card showed when the person pressed y; another device's edit lands during the passkey prompt.
