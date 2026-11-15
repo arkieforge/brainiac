@@ -394,10 +394,6 @@ export function factsOf(raws: readonly string[]): Omit<Answered, "said"> {
   };
 }
 
-/** An answer that says the record doesn't hold it: right for the GRE, over-refusal anywhere else. */
-export const REFUSES =
-  /not in (your|the) record|no GRE|(doesn't|does not|don't|do not|didn't|did not|couldn't|could not|can't|cannot|wasn't able to|was unable to|unable to) (see|find|have|hold|include|contain|list|show|mention|locate)|isn't (in|recorded)|not recorded|no record/i;
-
 export const CASES: readonly Case[] = [
   {
     id: "latest-writing-score",
@@ -476,7 +472,10 @@ export const CASES: readonly Case[] = [
     answerable: false,
     question: "What was my GRE quantitative score?",
     check: all(
-      says(REFUSES, "it isn't in the record"),
+      says(
+        /not in (your|the) record|no GRE|(doesn't|does not|don't|do not|didn't|did not|couldn't|could not|can't|cannot|wasn't able to|was unable to|unable to) (see|find|have|hold|include|contain|list|show|mention|locate)|isn't (in|recorded)|not recorded|no record/i,
+        "it isn't in the record",
+      ),
       neverSays(/\b1[3-6]\d\b|\b170\b/, "a GRE-like score"),
       noInvented,
     ),
@@ -500,24 +499,28 @@ export const passes = (exact: boolean, failing: number, samples: number) =>
   exact ? failing === 0 : failing * 2 < samples;
 
 /**
- * The release gates an answers run checks: no exact-value sample fails, and answerable questions get an answer in
- * at least 95% of samples. The second catches over-refusal, which invents no number and so can slip past an
- * exactness check written to catch invented ones.
+ * The release gates an answers run checks, for the cases it ran: no exact-value sample fails, and answerable
+ * questions get their answer in at least 95% of samples. A sample answered only when its case's check passed, so a
+ * refusal in any wording counts against answerability: over-refusal invents no number and can slip past a check
+ * written to catch invented ones.
  */
 export function answersGates(
-  rows: readonly { readonly case: string; readonly ok: boolean; readonly refused: boolean }[],
+  ran: readonly Case[],
+  rows: readonly { readonly case: string; readonly ok: boolean }[],
 ) {
-  const of = (pick: (c: Case) => boolean) =>
-    rows.filter((row) => CASES.some((c) => c.id === row.case && pick(c)));
-  const exact = of((c) => c.exact);
-  const answerable = of((c) => c.answerable);
+  const gate = (pick: (c: Case) => boolean) =>
+    ran.some(pick) ? [rows.filter((row) => ran.some((c) => c.id === row.case && pick(c)))] : [];
   return [
-    noFailing("exact-value cases", exact.filter((row) => !row.ok).length, exact.length),
-    atLeast(
-      "answerability",
-      FLOORS.answerability,
-      answerable.filter((row) => !row.refused).length,
-      answerable.length,
+    ...gate((c) => c.exact).map((exact) =>
+      noFailing("exact-value cases", exact.filter((row) => !row.ok).length, exact.length),
+    ),
+    ...gate((c) => c.answerable).map((answerable) =>
+      atLeast(
+        "answerability",
+        FLOORS.answerability,
+        answerable.filter((row) => row.ok).length,
+        answerable.length,
+      ),
     ),
   ];
 }

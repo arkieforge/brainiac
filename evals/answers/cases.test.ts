@@ -20,8 +20,10 @@ const check = (id: string, said: string) => {
 };
 
 // A sample's row as the runner writes it, and the gates' verdicts on a run of them.
-const row = (id: string, ok: boolean, refused = false) => ({ case: id, ok, refused });
-const verdicts = (rows: Parameters<typeof answersGates>[0]) => answersGates(rows).map((g) => g.ok);
+const row = (id: string, ok: boolean) => ({ case: id, ok });
+const only = (id: string) => CASES.filter((c) => c.id === id);
+const verdicts = (rows: { case: string; ok: boolean }[], ran = CASES) =>
+  answersGates(ran, rows).map((g) => [g.name, g.ok]);
 
 describe("answers eval", () => {
   it("an exact-value case fails on any failing sample; the others when half or more fail", () => {
@@ -256,23 +258,40 @@ describe("answers eval", () => {
       expect([said, check(id, said)]).toEqual([said, expect.stringMatching(why)]);
   });
 
-  it("gates a run: any failing exact sample, or answerable questions refused in more than 5% of samples", () => {
+  it("gates a run: any failing exact sample, or answerable questions unanswered in more than 5% of samples", () => {
     const clean = CASES.flatMap((c) => [row(c.id, true), row(c.id, true)]);
-    expect(verdicts(clean)).toEqual([true, true]);
-    // Over-refusal on the control alone: the exact gate stays green, answerability catches it.
-    const refusing = [
-      ...CASES.filter((c) => c.exact).flatMap((c) => [row(c.id, true), row(c.id, true)]),
-      row("bsc-university", false, true),
-      row("bsc-university", false, true),
-    ];
-    expect(verdicts(refusing)).toEqual([true, false]);
-    // Saying the GRE isn't there is the right answer, never over-refusal.
-    expect(verdicts([row("gre-not-in-record", true, true), row("bsc-university", true)])).toEqual([
-      true,
-      true,
+    expect(verdicts(clean)).toEqual([
+      ["exact-value cases", true],
+      ["answerability", true],
     ]);
-    expect(verdicts([row("cgpa-unverified", false), row("bsc-university", true)])).toEqual([false, true]);
-    // A run that measured nothing proves nothing.
-    expect(verdicts([])).toEqual([false, false]);
+    // Over-refusal on the control, in wording no refusal pattern knows: the exact gate stays green, and the
+    // control's own verdict passes with 1 of 3 failing, but answerability catches it.
+    const refused = check(
+      "bsc-university",
+      "Your record has no information about which university awarded your BSc.",
+    );
+    expect(refused).toBeDefined();
+    const refusing = [
+      ...CASES.filter((c) => c.id !== "bsc-university").flatMap((c) => [row(c.id, true), row(c.id, true)]),
+      row("bsc-university", refused === undefined),
+      row("bsc-university", true),
+      row("bsc-university", true),
+    ];
+    expect(verdicts(refusing)).toEqual([
+      ["exact-value cases", true],
+      ["answerability", false],
+    ]);
+    expect(verdicts([...clean, row("cgpa-unverified", false)])[0]).toEqual(["exact-value cases", false]);
+    // A run of some cases checks the gates those cases measure, and a gate with no sample proves nothing.
+    expect(verdicts([row("bsc-university", true)], only("bsc-university"))).toEqual([
+      ["answerability", true],
+    ]);
+    expect(verdicts([row("gre-not-in-record", true)], only("gre-not-in-record"))).toEqual([
+      ["exact-value cases", true],
+    ]);
+    expect(verdicts([])).toEqual([
+      ["exact-value cases", false],
+      ["answerability", false],
+    ]);
   });
 });

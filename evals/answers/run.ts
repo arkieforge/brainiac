@@ -31,7 +31,7 @@ import {
 } from "../../packages/base/src/index.ts";
 import { nodeSql } from "../../packages/base/src/node.ts";
 import { gateTable } from "../shared/gates.ts";
-import { answersGates, CASES, factsOf, passes, REFUSES, type Answered } from "./cases.ts";
+import { answersGates, CASES, factsOf, passes, type Answered } from "./cases.ts";
 
 const ROOT = join(import.meta.dirname, "../..");
 const FIXTURES = join(ROOT, "fixtures/nadia");
@@ -221,8 +221,7 @@ const made = world(sql);
 const facts = recordOf(sql, made.connection);
 const mcp = serve(sql);
 const port = await mcp.listen();
-const rows: { case: string; sample: number; ok: boolean; refused: boolean; why?: string; calls: string[] }[] =
-  [];
+const rows: { case: string; sample: number; ok: boolean; why?: string; calls: string[] }[] = [];
 let cost = 0;
 try {
   for (const c of cases) {
@@ -236,13 +235,10 @@ try {
       const run: Answered = { said: String(result?.["result"] ?? ""), ...facts };
       const failed = c.check(run);
       const calls = toolCalls(events);
-      // A passing answer gave the value, so only a failing one can be a refusal.
-      const refused = failed !== undefined && REFUSES.test(run.said);
       rows.push({
         case: c.id,
         sample,
         ok: failed === undefined,
-        refused,
         ...(failed && { why: failed }),
         calls,
       });
@@ -268,7 +264,7 @@ const verdicts = cases.map((c) => {
   const failing = mine.filter((r) => !r.ok).length;
   return { ...c, ran: mine.length, failing, ok: passes(c.exact, failing, mine.length) };
 });
-const gates = answersGates(rows);
+const gates = answersGates(cases, rows);
 const ok = verdicts.every((v) => v.ok) && gates.every((g) => g.ok);
 writeFileSync(join(values.out, "results.ndjson"), rows.map((r) => JSON.stringify(r)).join("\n"));
 writeFileSync(
