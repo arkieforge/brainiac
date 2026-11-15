@@ -151,10 +151,13 @@ export interface GrantPlan {
   readonly holdDays: number;
 }
 
-/** The WebAuthn challenge for a grant. Tagged, so it can never equal a note plan's hash. */
-export const grantHash = (plan: GrantPlan): string =>
+/**
+ * The WebAuthn challenge for a grant: exactly the plan's fields, whatever else the object carries. Tagged, so it
+ * can never equal a note plan's hash.
+ */
+export const grantHash = ({ connectionId, rev, level, sensitive, holdDays }: GrantPlan): string =>
   createHash("sha256")
-    .update(canonical({ grant: plan }))
+    .update(canonical({ grant: { connectionId, rev, level, sensitive, holdDays } }))
     .digest("base64url");
 
 export type Granted = { readonly connection: Connection } | { readonly error: string };
