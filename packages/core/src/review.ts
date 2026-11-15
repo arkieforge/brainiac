@@ -627,6 +627,24 @@ function spellings(
     }
 }
 
+const BOUNDS = {
+  gte: (value: number, bound: number) => value >= bound,
+  lte: (value: number, bound: number) => value <= bound,
+  gt: (value: number, bound: number) => value > bound,
+  lt: (value: number, bound: number) => value < bound,
+};
+
+/** A requirement check's `field` meets its bounds (`gte: 6.5`): a score too low never stands in for one that counts. */
+function meetsBounds(note: ReviewNote, check: Readonly<Record<string, unknown>>): boolean {
+  const field = check["field"];
+  if (typeof field !== "string") return true;
+  const value = note.data[field];
+  return Object.entries(BOUNDS).every(([key, holds]) => {
+    const bound = check[key];
+    return typeof bound !== "number" || (typeof value === "number" && holds(value, bound));
+  });
+}
+
 const isOpen = (note: ReviewNote) => note.data["type"] === "Application" && note.data["status"] !== "decided";
 
 /** The current notes an open application's requirement check matches, for every open application. */
@@ -654,6 +672,7 @@ function* requirements(
       const matches = current.filter(
         (note) =>
           note.data["type"] === check["type"] &&
+          meetsBounds(note, check) &&
           Object.entries(check).every(([key, want]) => {
             if (key === "for")
               return want !== "this" || resolve(note, note.data["for"])?.id === application.id;

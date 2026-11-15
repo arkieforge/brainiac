@@ -12,15 +12,19 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
-import { saveReviewed, useRecord } from "../record.ts";
+import { reviewBase, saveReviewed, useRecord } from "../record.ts";
 import { endSession, openSession, overviewOf, sessionFor, SESSION_ITEMS } from "../review.ts";
 import { MARKS } from "./Overview.tsx";
 
-/** One step the person took, with the text the note had before it, so `u` can put it back. */
+type Base = { readonly rev: number; readonly raw: string };
+
+/**
+ * One step the person took. An edit keeps the text before it, and the revision and text it left, so `u` puts the
+ * text back only onto exactly that: an edit made since, anywhere, is a conflict instead of being undone too.
+ */
 interface Step {
   readonly at: number;
-  readonly noteId?: string;
-  readonly before?: string;
+  readonly edit?: { readonly noteId: string; readonly before: string; readonly after: Base };
 }
 
 const KEYS = [
@@ -60,8 +64,11 @@ export function Review() {
   const noteId = order?.[at];
   const item = noteId === undefined ? undefined : items.get(noteId);
 
-  /** Saves an edit to `id` inside a review session, asking for a signature when none covers it. */
-  async function save(id: string, edit: (raw: string) => string) {
+  /**
+   * Saves an edit to `id` made on `from` inside a review session, asking for a signature when none covers it.
+   * Always on `from`: if the note moved on while the passkey prompt was open, the record refuses it.
+   */
+  async function save(id: string, edit: (raw: string) => string, from: Base) {
     for (let attempt = 0; attempt < 2; attempt++) {
       let nonce = sessionFor(id);
       if (nonce === undefined) {
@@ -69,7 +76,7 @@ export function Review() {
         if (typeof opened !== "string") return opened;
         nonce = opened;
       }
-      const saved = await saveReviewed(id, edit, nonce);
+      const saved = await saveReviewed(id, edit, nonce, from);
       if (saved && "ended" in saved) {
         // Ended early (another device, a restart): one new signature, then the same edit once more.
         endSession();
@@ -86,10 +93,10 @@ export function Review() {
     if (key === "u") {
       const last = steps.at(-1);
       if (!last) return;
-      if (last.noteId !== undefined && last.before !== undefined) {
-        const before = last.before;
+      if (last.edit) {
+        const { noteId: id, before, after } = last.edit;
         setBusy(true);
-        const saved = await save(last.noteId, () => before);
+        const saved = await save(id, () => before, after);
         setBusy(false);
         if (saved && "error" in saved) return setMessage(saved.error);
       }
@@ -104,23 +111,24 @@ export function Review() {
       setSteps([...steps, { at }]);
       return setAt(at + 1);
     }
-    const fix = fixOf(item);
-    if (key === "f" && !fix?.fix) return setMessage("There's no fix to apply here. Edit it with e.");
-    const rev = client.state.remote.get(item.noteId)?.rev ?? 0;
-    const ops = (raw: string): PatchOp[] =>
-      key === "f" && fix?.fix
-        ? [{ op: "set", path: [fix.fix.field], value: fix.fix.value }]
-        : verifyOps(parseNote(raw).data, manifest, rev, Date.now());
-    // The text the edit was made on, which undo puts back.
-    let before = "";
+    const fix = fixOf(item)?.fix;
+    if (key === "f" && !fix) return setMessage("There's no fix to apply here. Edit it with e.");
+    // The text on the card, as the person saw it before any passkey prompt.
+    const shown = reviewBase(item.noteId);
+    if (!shown)
+      return setMessage("An edit to this note is still on its way. Check it again once it's saved.");
+    const ops: PatchOp[] =
+      key === "f" && fix
+        ? [{ op: "set", path: [fix.field], value: fix.value }]
+        : verifyOps(parseNote(shown.raw).data, manifest, shown.rev, Date.now());
     setBusy(true);
-    const saved = await save(item.noteId, (raw) => {
-      before = raw;
-      return patch(raw, ops(raw));
-    });
+    const saved = await save(item.noteId, (raw) => patch(raw, ops), shown);
     setBusy(false);
     if (saved && "error" in saved) return setMessage(saved.error);
-    setSteps([...steps, saved ? { at, noteId: item.noteId, before } : { at }]);
+    setSteps([
+      ...steps,
+      saved ? { at, edit: { noteId: item.noteId, before: shown.raw, after: saved } } : { at },
+    ]);
     // A fix leaves the item here to check again; Correct moves on.
     if (key === "y") setAt(at + 1);
   }
@@ -169,7 +177,7 @@ export function Review() {
       <section className="review done">
         <h1>All done</h1>
         <p>
-          {steps.filter((s) => s.noteId).length} changed, {unsure.length} not sure, {order.length} reviewed.
+          {steps.filter((s) => s.edit).length} changed, {unsure.length} not sure, {order.length} reviewed.
         </p>
         <p>
           <button type="button" onClick={() => void act("u")} disabled={steps.length === 0 || busy}>
@@ -181,7 +189,7 @@ export function Review() {
       </section>
     );
 
-  const raw = client.working(item.noteId) ?? "";
+  const raw = reviewBase(item.noteId)?.raw ?? client.working(item.noteId) ?? "";
   let data: Readonly<Record<string, unknown>> = {};
   try {
     data = parseNote(raw).data;

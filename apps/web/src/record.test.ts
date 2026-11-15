@@ -29,7 +29,7 @@ class FakeSocket extends EventTarget {
     super();
     sockets.push(url);
   }
-  send() {}
+  send(_data: string) {}
   close() {}
 }
 
@@ -62,5 +62,67 @@ describe("record", () => {
     await starting;
     expect(slots).toEqual([{ name: "brainiac:ada", released: true }]);
     expect(sockets).toEqual([]);
+  });
+});
+
+describe("review saves", () => {
+  it("are live only once the record answered, and go on the revision shown, not one that arrived since", async () => {
+    vi.resetModules();
+    localStorage.setItem("brainiac:user", "ada");
+    const ID = "01M6AGSCW0VCVQ4638KZVD05RK";
+    const opened: (EventTarget & { sent: string[]; readyState: number })[] = [];
+    class Socket extends FakeSocket {
+      sent: string[] = [];
+      constructor(url: string) {
+        super(url);
+        opened.push(this);
+      }
+      override send(data: string) {
+        this.sent.push(data);
+      }
+    }
+    const posted: unknown[] = [];
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
+      if (path === "/api/session") return Response.json({ user: "ada" });
+      if (path === "/api/schema") return Response.json({ manifest: null });
+      if (path === "/api/files") return Response.json({ files: [] });
+      posted.push(JSON.parse(String(init?.body)));
+      return Response.json({ rev: 4 });
+    });
+    const record = await import("./record.ts");
+    await record.start();
+    const [socket] = opened;
+    if (!socket) throw new Error("no socket");
+    socket.readyState = 1;
+    socket.dispatchEvent(new Event("open"));
+    // The socket is open, but the record hasn't answered the hello yet: not live, so nothing is reviewed.
+    const early = { rev: 1, raw: "" };
+    expect(await record.saveReviewed(ID, (raw) => `${raw}x`, "nonce", early)).toHaveProperty("error");
+    const hello = JSON.parse(socket.sent.at(-1) ?? "{}");
+    const push = (data: unknown) =>
+      socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(data) }));
+    const state = (rev: number, raw: string) => ({
+      noteId: ID,
+      seq: rev,
+      deleted: false,
+      rev,
+      path: "facts/roles/a.md",
+      raw,
+      class: "normal",
+    });
+    push({ type: "snapshot", seq: 2, notes: [state(2, "---\ntitle: A\n---\n")], attempt: hello.attempt });
+
+    // What the card showed when the person pressed y; another device's edit lands during the passkey prompt.
+    const shown = record.reviewBase(ID);
+    expect(shown).toMatchObject({ rev: 2, raw: "---\ntitle: A\n---\n" });
+    push({ type: "changes", from: 2, to: 3, items: [state(3, "---\ntitle: B\n---\n")] });
+    if (!shown) return;
+    expect(await record.saveReviewed(ID, (raw) => raw.replace("A", "A!"), "nonce", shown)).toEqual({
+      rev: 4,
+      raw: "---\ntitle: A!\n---\n",
+    });
+    // Sent on revision 2, so the record refuses it as a conflict rather than verifying title B unseen.
+    expect(posted).toEqual([{ raw: "---\ntitle: A!\n---\n", baseRev: 2, review: "nonce" }]);
   });
 });

@@ -168,6 +168,16 @@ describe("detectors", () => {
       evidence: "Expires 2027-03-15, before TUM MSc Informatics, Winter 2027's deadline 2027-05-31",
       related: [TUM.id],
     });
+    // A valid score below the requirement's 6.5 doesn't stand in for the expiring one.
+    const low = note("facts/tests/ielts-low.md", {
+      ...OLD_IELTS.data,
+      overall: 5,
+      date: "2026-06-01",
+      expires: "2028-06-01",
+    });
+    expect(found([...notes, low]).filter((c) => c.includes(":expired:"))).toEqual([
+      `${OLD_IELTS.id}:expired:expires`,
+    ]);
     // A decided application relies on nothing.
     const decided = replace(notes, edited(TUM, { status: "decided" }));
     expect(found(decided).filter((c) => c.includes(":expired:"))).toEqual([]);

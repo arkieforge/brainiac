@@ -112,13 +112,15 @@ function connect() {
   setStatus("connecting");
   ws.addEventListener("open", () => {
     retry = 0;
-    setStatus("live");
     client?.connect();
   });
   ws.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
     const message: ServerMessage = JSON.parse(event.data);
     client?.receive(message);
+    // Live once the record has answered the hello with what changed (or all of it): before that, this tab holds
+    // only its stored copy, without the sensitive notes it never keeps.
+    if (message.type === "snapshot" || message.type === "changes") setStatus("live");
   });
   ws.addEventListener("close", () => {
     if (socket !== ws) return;
@@ -153,13 +155,25 @@ export type Reviewed = Saved | { readonly error: string; readonly ended: true };
 
 /**
  * A review mode edit, straight to the record inside the review session the person signed (`review`), whatever the
- * note's class: the session is an online thing, and its edits never wait in this device's queue.
+ * note's class: the session is an online thing, and its edits never wait in this device's queue. Made on `from`,
+ * the text the person saw, so a note changed meanwhile is a conflict, never an edit to values nobody looked at.
  */
 export const saveReviewed = (
   noteId: string,
   edit: (raw: string) => string,
   review: string,
-): Promise<Reviewed> => post(noteId, edit, undefined, review);
+  from: { readonly rev: number; readonly raw: string },
+): Promise<Reviewed> => post(noteId, edit, from, review);
+
+/**
+ * The text and revision a review card shows: the latest the record accepted. `undefined` while this tab has an
+ * edit to the note still on its way, since a review must judge what the record holds.
+ */
+export function reviewBase(noteId: string): { readonly rev: number; readonly raw: string } | undefined {
+  const base = latest(noteId);
+  const pending = client?.state.pending.some((p) => p.noteId === noteId) ?? false;
+  return base && !pending && !client?.state.blocked.get(noteId)?.length ? base : undefined;
+}
 
 function post(
   noteId: string,
