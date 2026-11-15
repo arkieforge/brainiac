@@ -13,7 +13,7 @@ import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
 import { serveDev } from "./dev.ts";
 import { consume } from "./jobs.ts";
-import { serveMcp } from "./mcp/handler.ts";
+import { serveMcp, type Records } from "./mcp/handler.ts";
 
 export { Base } from "./base.ts";
 export type { Env } from "./env.ts";
@@ -41,6 +41,24 @@ const mailer =
     await env.EMAIL.send({ from: { name: "Brainiac", email: env.EMAIL_FROM }, to, subject, text });
   };
 
+/**
+ * A signed-in person's record. The base comes from the session or token, never the request.
+ * shortcut: it is the DO named by their user id; #87's base registry in Neon replaces the lookup.
+ */
+const recordOf = (env: Env, userId: string) => env.BASE.get(env.BASE.idFromName(userId));
+
+/** The records /mcp reaches: a user's, or the one a CLI token names. */
+const records = (env: Env): Records => ({
+  of: (userId) => recordOf(env, userId),
+  byId: (baseId) => {
+    try {
+      return env.BASE.get(env.BASE.idFromString(baseId));
+    } catch {
+      return undefined; // not an id this namespace made
+    }
+  },
+});
+
 const oauthApp = (clientId: string | undefined, clientSecret: string | undefined) =>
   clientId && clientSecret ? { clientId, clientSecret } : undefined;
 
@@ -52,6 +70,7 @@ const authConfig = (request: Request, env: Env, database: AuthConfig["database"]
   turnstileSecret: env.TURNSTILE_SECRET_KEY,
   google: oauthApp(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET),
   github: oauthApp(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET),
+  onDisconnect: (userId, clientId) => recordOf(env, userId).disconnectApp(clientId),
 });
 
 /**
@@ -145,7 +164,12 @@ export default {
     // The protected-resource metadata (RFC 9728) for /mcp, which the mcp() plugin serves.
     if (pathname.startsWith("/api/auth/") || pathname.startsWith("/.well-known/oauth-protected-resource"))
       return withAuth(request, env, ctx, (auth) => auth.handler(request));
-    if (pathname === "/mcp") return withAuth(request, env, ctx, (auth) => serveMcp(auth, request));
+    if (pathname === "/mcp")
+      return withAuth(request, env, ctx, (auth) =>
+        serveMcp(auth, request, records(env), {
+          devTokens: Boolean(env.DEV_SIGN_IN_TOKEN) && env.STAGE !== "prod",
+        }),
+      );
     if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
     if (pathname === "/account") return withAuth(request, env, ctx, (auth) => account(request, auth));
     if (pathname === "/sign-in") {

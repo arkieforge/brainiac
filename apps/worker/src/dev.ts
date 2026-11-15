@@ -12,6 +12,7 @@ import { betterAuth } from "better-auth";
 import { testUtils } from "better-auth/plugins";
 
 import { type AuthConfig, authOptions, mcpResource } from "./auth/config.ts";
+import { DEV_CLIENT } from "./mcp/handler.ts";
 
 /** The fictional fixture student that tests, evals and screenshots use. Never a real person. */
 export const FIXTURE_STUDENT = { email: "ada.okafor@example.edu", name: "Ada Okafor" };
@@ -94,12 +95,12 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
   if (mint) {
     const resource = mcpResource(url.origin);
     // The claims /mcp checks (mcp/handler.ts), signed with this stage's own keys. No OAuth client or consent stands
-    // behind `brainiac-dev`, so once tools check consent (#17) they need to let it through on non-prod stages.
+    // behind `brainiac-dev`, so /mcp lets it through without one, only where this route exists.
     const { token: accessToken } = await auth.api.signJWT({
       body: {
         payload: {
           sub: user.id,
-          azp: "brainiac-dev",
+          azp: DEV_CLIENT,
           iss: `${url.origin}/api/auth`,
           aud: resource,
           exp: Math.floor(Date.now() / 1000) + TOKEN_SECONDS,

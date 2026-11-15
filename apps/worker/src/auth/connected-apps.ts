@@ -68,7 +68,8 @@ async function findAll<T>(
   }
 }
 
-export const connectedApps = () =>
+/** `onDisconnect` ends the app's connection in the person's record, so it can't come back with its old grants. */
+export const connectedApps = (onDisconnect?: (userId: string, clientId: string) => Promise<void>) =>
   ({
     id: "connected-apps",
     endpoints: {
@@ -101,6 +102,9 @@ export const connectedApps = () =>
         // Straight from Neon, so a session revoked in the last 5 minutes can't act on the cookie cache.
         const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
         if (!session) throw new APIError("UNAUTHORIZED");
+        // The record first: if Neon then fails, the consent stays but the app comes back at the floor, never the
+        // other way round.
+        await onDisconnect?.(session.user.id, clientId);
         await disconnect(ctx, session.user.id, clientId);
         return ctx.json({ status: true });
       }),

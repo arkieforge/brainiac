@@ -21,7 +21,9 @@ import type { Action, Proposed } from "./hold.ts";
 import {
   mutate,
   release,
+  releaseBatch,
   releaseUndo,
+  type BatchApplied,
   type Context,
   type Forbidden,
   type MutationResult,
@@ -45,6 +47,7 @@ interface ProposalRow {
 
 export type Decided =
   | MutationResult
+  | BatchApplied
   | UndoResult
   | NeedsApproval
   | Proposed
@@ -115,6 +118,7 @@ function apply(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
     const items: PlanItem[] = JSON.parse(proposal.patch);
     let result: Decided;
     if (action.op === "undo") result = releaseUndo(sql, action, items, run);
+    else if (action.op === "batch") result = releaseBatch(sql, action.mutations, items, run);
     else {
       let mutation = action;
       const note = mutation.op === "create" ? undefined : getNote(sql, mutation.noteId);

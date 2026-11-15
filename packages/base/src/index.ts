@@ -24,6 +24,7 @@ export {
   grantHash,
   HOLD_DAYS,
   mintToken,
+  oauthConnection,
   restrict,
   tokenBase,
   type Connection,
@@ -49,8 +50,11 @@ export {
 } from "./jobs.ts";
 export {
   mutate,
+  mutateAll,
   propose,
   undoRun,
+  type BatchApplied,
+  type BatchResult,
   type Context,
   type Forbidden,
   type Mutation,
@@ -89,3 +93,4 @@ export {
   type FileView,
   type Uploaded,
 } from "./vault.ts";
+export { callTool, SCAN_LIMIT, TOOLS, type Answer, type ToolName } from "./tools.ts";

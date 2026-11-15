@@ -325,6 +325,71 @@ export function release(
   return judged(sql, ctx, "change", mutation, plan, (started) => applyOne(sql, started, mutation, ctx));
 }
 
+/** A bulk update that applied: every note it changed, in one run. */
+export interface BatchApplied {
+  readonly status: "applied";
+  readonly runId: string;
+  readonly notes: readonly { readonly noteId: string; readonly rev: number }[];
+}
+
+export type BatchResult = BatchApplied | Exclude<MutationResult, { readonly status: "applied" }>;
+
+/** Thrown to roll back a whole batch when one of its mutations can't apply. */
+class Refused extends Error {
+  readonly result: Exclude<MutationResult, { readonly status: "applied" }>;
+  constructor(result: Refused["result"]) {
+    super("refused");
+    this.result = result;
+  }
+}
+
+/**
+ * Applies `mutations` as one change: one transaction and one run, judged as a whole, so a bulk update meets the
+ * approval list and the hold once for everything it does. If any of them can't apply, none does.
+ */
+export function mutateAll(sql: Sql, mutations: readonly Mutation[], ctx: Context): BatchResult {
+  return batch(sql, mutations, { ...ctx, runId: ctx.runId ?? ulid(ctx.now) }, undefined);
+}
+
+/**
+ * Applies a released bulk proposal, only if it still does exactly what was held. A note that moved on since makes
+ * the whole batch wait for the person: replaying part of it would do what nobody saw.
+ */
+export function releaseBatch(
+  sql: Sql,
+  mutations: readonly Mutation[],
+  plan: readonly PlanItem[],
+  ctx: Context,
+): BatchResult {
+  const result = batch(sql, mutations, { ...ctx, runId: ctx.runId ?? ulid(ctx.now) }, plan);
+  if (result.status !== "conflict") return result;
+  return {
+    status: "invalid",
+    issues: [{ field: "proposal", message: "A note in this change changed since it was held. Reject it." }],
+  };
+}
+
+function batch(
+  sql: Sql,
+  mutations: readonly Mutation[],
+  ctx: Context & { readonly runId: string },
+  released: readonly PlanItem[] | undefined,
+): BatchResult {
+  try {
+    return judged(sql, ctx, "change", { op: "batch", mutations }, released, (started): BatchApplied => {
+      const notes = mutations.map((mutation) => {
+        const result = applyOne(sql, started, mutation, ctx);
+        if (result.status !== "applied") throw new Refused(result);
+        return { noteId: result.noteId, rev: result.rev };
+      });
+      return { status: "applied", runId: ctx.runId, notes };
+    });
+  } catch (error) {
+    if (error instanceof Refused) return error.result;
+    throw error;
+  }
+}
+
 function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context): MutationResult {
   const runId = ctx.runId ?? ulid(ctx.now);
   if (mutation.op === "create") {

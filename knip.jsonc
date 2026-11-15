@@ -23,7 +23,8 @@
     // test/harness.ts is bundled into workerd by base.test.ts.
     "apps/worker": {
       "entry": ["src/index.ts", "test/harness.ts"],
-      "ignoreDependencies": ["@cloudflare/workers-types"],
+      // Bun runs the CLI for the stdio parity test, by path from its package's binary.
+      "ignoreDependencies": ["@cloudflare/workers-types", "bun"],
     },
   },
 }

@@ -1,7 +1,9 @@
-// The remote MCP endpoint (`/mcp`), behind the OAuth server in auth/config.ts. Tools arrive with #17; until
-// then it answers the handshake and serves nothing, which is enough for a client to show it signed in.
+// The remote MCP endpoint (`/mcp`), behind the OAuth server in auth/config.ts. It serves the tools in
+// packages/base/src/tools.ts, each call answered by the caller's own record as the caller's connection. It takes an
+// MCP client's OAuth access token, or a CLI token (`brainiac mcp serve` forwards here with one).
+import { tokenBase, TOOLS, type Answer, type Connection } from "@brainiac/base";
 import { createResourceServerChallenge } from "@better-auth/oauth-provider";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { APIError, isAPIError } from "better-auth/api";
 import {
   createDpopReplayStore,
@@ -14,9 +16,54 @@ import { decodeProtectedHeader } from "jose";
 
 import { type createAuth, mcpResource } from "../auth/config.ts";
 
-// Stateless: every request builds its server from this factory, so no session store is needed. Both protocol
-// eras are served, because clients move to 2026-07-28 at their own pace.
-const handler = createMcpHandler(() => new McpServer({ name: "brainiac", version: "0.0.0" }));
+/** Which connection a call comes through: an MCP client's, by its OAuth client id, or a CLI connection's. */
+export type Via = { readonly oauthClientId: string } | { readonly connectionId: string };
+
+/** The part of a Base DO's stub /mcp uses. */
+export interface RecordStub {
+  tool(via: Via, name: string, args: unknown): Promise<Answer>;
+  authenticate(token: string): Promise<Connection | null>;
+}
+
+/** How /mcp finds a record. The base comes from the token: a user id, or the id inside a CLI token. */
+export interface Records {
+  of(userId: string): RecordStub;
+  /** The record a CLI token names, if that is a record id at all. */
+  byId(baseId: string): RecordStub | undefined;
+}
+
+export interface McpOptions {
+  /** Takes dev.ts's `brainiac-dev` tokens, which have no consent behind them. Never on prod. */
+  readonly devTokens: boolean;
+}
+
+/** The OAuth client id dev.ts signs its tokens for. */
+export const DEV_CLIENT = "brainiac-dev";
+
+const UNAVAILABLE = "Brainiac couldn't finish that call. Get the note again before you retry a change.";
+
+/** An MCP server with every tool, each call answered by `call`. Stateless: one per request. */
+function toolServer(call: (name: string, args: unknown) => Promise<Answer>): McpServer {
+  const server = new McpServer({ name: "brainiac", version: "0.0.0" });
+  for (const [name, tool] of Object.entries(TOOLS)) {
+    // The SDK advertises this schema in tools/list and checks each call against it; the record checks again.
+    const inputSchema: StandardSchemaWithJSON = tool.input;
+    server.registerTool(name, { description: tool.description, inputSchema }, async (args) => {
+      let answer: Answer;
+      try {
+        answer = await call(name, args);
+      } catch (error) {
+        // The record or the network failed: its words are for the logs, not the agent.
+        console.error("mcp tool call failed", name, error);
+        return { content: [{ type: "text", text: UNAVAILABLE }], isError: true };
+      }
+      return answer.ok
+        ? { content: [{ type: "text", text: JSON.stringify(answer.value) }] }
+        : { content: [{ type: "text", text: answer.error }], isError: true };
+    });
+  }
+  return server;
+}
 
 // Signing keys, cached per isolate for 5 minutes (every origin of a stage shares one key table). A token naming
 // a key we don't have refetches, at most every 30 seconds.
@@ -90,11 +137,56 @@ async function verify(auth: ReturnType<typeof createAuth>, request: Request, res
   return claims;
 }
 
+/**
+ * The record and connection a request speaks for. A CLI token names its record and the record checks it; an
+ * access token names its user, and must still have the consent it was issued under, since a disconnected app's
+ * token stays valid for up to an hour.
+ */
+async function caller(
+  auth: ReturnType<typeof createAuth>,
+  request: Request,
+  resource: string,
+  records: Records,
+  options: McpOptions,
+): Promise<{ readonly record: RecordStub; readonly via: Via }> {
+  const authorization = parseAccessTokenAuthorization(request.headers.get("authorization"));
+  const token = authorization?.token;
+  if (token?.startsWith("brn_") && authorization?.scheme === "Bearer") {
+    const baseId = tokenBase(token);
+    const record = baseId === undefined ? undefined : records.byId(baseId);
+    const connection = record && (await record.authenticate(token));
+    if (!record || !connection) throw unauthorized("invalid access token", "invalid_token");
+    return { record, via: { connectionId: connection.id } };
+  }
+  const claims = await verify(auth, request, resource);
+  const userId = String(claims.sub);
+  const clientId = String(claims.azp);
+  if (!(options.devTokens && clientId === DEV_CLIENT)) {
+    const consent = await (
+      await auth.$context
+    ).adapter.findOne({
+      model: "oauthConsent",
+      where: [
+        { field: "userId", value: userId },
+        { field: "clientId", value: clientId },
+      ],
+    });
+    if (!consent) throw unauthorized("this app was disconnected", "invalid_token");
+  }
+  return { record: records.of(userId), via: { oauthClientId: clientId } };
+}
+
 /** A request without a valid token for this origin's `/mcp` gets the 401 that starts a client's sign-in. */
-export async function serveMcp(auth: ReturnType<typeof createAuth>, request: Request): Promise<Response> {
+export async function serveMcp(
+  auth: ReturnType<typeof createAuth>,
+  request: Request,
+  records: Records,
+  options: McpOptions,
+): Promise<Response> {
   const resource = mcpResource(new URL(request.url).origin);
+  let from;
   try {
-    await verify(auth, request, resource);
+    from = await caller(auth, request, resource, records, options);
   } catch (error) {
     const challenge = isAPIError(error)
       ? createResourceServerChallenge(error, resource, { request })
@@ -115,5 +207,7 @@ export async function serveMcp(auth: ReturnType<typeof createAuth>, request: Req
       { status: 503, headers: { "retry-after": "5" } },
     );
   }
-  return handler.fetch(request);
+  const { record, via } = from;
+  // Both protocol eras are served, because clients move to 2026-07-28 at their own pace.
+  return createMcpHandler(() => toolServer((name, args) => record.tool(via, name, args))).fetch(request);
 }

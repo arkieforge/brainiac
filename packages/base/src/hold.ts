@@ -21,6 +21,8 @@ import type { Sql } from "./sql.ts";
 /** What a held proposal runs when it's released: one mutation, or an undo of a run. */
 export type Action =
   | Mutation
+  /** A bulk update's mutations, applied together or not at all. */
+  | { readonly op: "batch"; readonly mutations: readonly Mutation[] }
   /** `upTo`: the last `seq` when it was held, so a release undoes only what was held, not what the run did since. */
   | { readonly op: "undo"; readonly runId: string; readonly upTo: number };
 
