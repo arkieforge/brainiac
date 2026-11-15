@@ -6,7 +6,7 @@ import { homedir, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { doctor, lockVault, request, restore, takeRequest } from "./commands.ts";
+import { doctor, lockVault, request, restore, watchRequests } from "./commands.ts";
 import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
 import { socketLink } from "./link.ts";
@@ -21,7 +21,9 @@ brainiac restore <file> [<version>]
 brainiac doctor`;
 
 /** The arguments that run this binary again: the compiled binary alone, or Bun and this script. */
-const self = () => (Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main]);
+const self = () =>
+  // A compiled binary's embedded script: /$bunfs/ on macOS and Linux, B:\~BUN\ on Windows.
+  /^(\/\$bunfs\/|[A-Z]:[\\/]~BUN[\\/])/i.test(Bun.main) ? [process.execPath] : [process.execPath, Bun.main];
 
 /** The login service for this user, running this binary. */
 const unit = () =>
@@ -29,6 +31,7 @@ const unit = () =>
     platform: process.platform,
     home: homedir(),
     uid: userInfo().uid,
+    user: userInfo().username,
     program: [...self(), "daemon", "run"],
   });
 
@@ -82,8 +85,7 @@ async function main(argv: readonly string[]): Promise<void> {
       ...(config.keepSensitive && { keepSensitive: true }),
       ...(values.repair && { repair: true }),
     });
-    process.on("SIGUSR2", () => {
-      const what = takeRequest(dir, vault);
+    watchRequests(dir, vault, (what) => {
       // A request that fails is reported, and the daemon keeps running.
       const report = (error: unknown) => console.error(`brainiac ${what} failed:`, error);
       if (what === "resume") daemon.resume().catch(report);
@@ -103,13 +105,13 @@ async function main(argv: readonly string[]): Promise<void> {
   if (command === "daemon" && sub === "install") {
     if (!vault || !config.server)
       fail("brainiac daemon install needs --vault <dir> and --server <url> once.");
-    const { path, content, start } = unit();
+    const { path, content, encoding, unload, start } = unit();
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, content);
-    for (const [i, step] of start.entries()) {
+    writeFileSync(path, content, encoding ?? "utf8");
+    if (unload) spawnSync(unload[0]!, unload.slice(1), { stdio: "ignore" });
+    for (const step of start) {
       const run = spawnSync(step[0]!, step.slice(1), { stdio: "inherit" });
-      // The first launchd step unloads an older copy and fails when there is none.
-      if (run.status !== 0 && !(process.platform === "darwin" && i === 0)) fail(`${step.join(" ")} failed.`);
+      if (run.status !== 0) fail(`${step.join(" ")} failed.`);
     }
     console.log(`Installed ${path}: the daemon now starts when you log in.`);
     return;

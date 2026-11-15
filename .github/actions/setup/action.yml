@@ -7,8 +7,10 @@ runs:
       with:
         node-version: 26
         package-manager-cache: false
-    # node_modules itself is cached, so a hit skips pnpm entirely (bootstrapping pnpm alone takes ~7s).
+    # node_modules itself is cached, so a hit skips pnpm entirely (bootstrapping pnpm alone takes ~7s). Not on
+    # Windows: tar can't restore pnpm's links there, and the restored tree fails with EPERM.
     - id: modules
+      if: runner.os != 'Windows'
       uses: actions/cache/restore@v6
       with:
         path: |
@@ -24,7 +26,7 @@ runs:
       shell: bash
     # Saved straight after install, before any job writes caches of its own into node_modules. Parallel jobs
     # that all missed race to save; the losers only log it.
-    - if: steps.modules.outputs.cache-hit != 'true'
+    - if: steps.modules.outputs.cache-hit != 'true' && runner.os != 'Windows'
       uses: actions/cache/save@v6
       with:
         path: |

@@ -13,7 +13,7 @@ import {
   watch,
   type FSWatcher,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import { SCHEMA_VERSION } from "@brainiac/base";
 import {
@@ -304,7 +304,8 @@ export class Daemon {
 
   #watch(): void {
     this.#watcher = watch(this.root, { recursive: true }, (_event, name) => {
-      if (name) this.#dirty.add(name);
+      // Windows names the file with backslashes; the vault's paths use "/" everywhere.
+      if (name) this.#dirty.add(sep === "/" ? name : name.replaceAll(sep, "/"));
       this.#schedule();
     });
     // The folder itself was removed: the batch sees it and pauses.

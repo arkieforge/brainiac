@@ -26,12 +26,13 @@ import { join } from "node:path";
 import { PERSON, search, serve } from "@brainiac/base";
 import { decodeClientMessage, patch, type NoteState } from "@brainiac/core";
 
-import { doctor, lockVault, request, restore, takeRequest } from "../src/commands.ts";
+import { doctor, lockVault, request, restore, watchRequests } from "../src/commands.ts";
 import { Daemon, type DaemonOptions } from "../src/daemon.ts";
 import type { Step } from "../src/disk.ts";
 import { openIndex } from "../src/index-db.ts";
 import { socketLink } from "../src/link.ts";
 import { DISPLACED_MS } from "../src/state.ts";
+import { exchange } from "../src/swap.ts";
 import { TestRecord } from "./record.ts";
 
 export type CaseResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
@@ -1148,17 +1149,50 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  async "the swap leaves each name with the other's file, and an editor's open file follows the displaced one"() {
+    const dir = folder("brainiac-swap-");
+    const [a, b, spare] = ["a", "b", "spare"].map((name) => join(dir, name)) as [string, string, string];
+    writeFileSync(a, "new");
+    writeFileSync(b, "old");
+    const editor = openSync(b, "r+");
+    equal(exchange(a, b, spare), "done");
+    same([readFileSync(a, "utf8"), readFileSync(b, "utf8")], ["old", "new"]);
+    equal(existsSync(spare), false, "nothing left at the spare name");
+    // The editor's late write lands in the displaced file, never over the new one.
+    writeSync(editor, "OLD", 0);
+    closeSync(editor);
+    same([readFileSync(a, "utf8"), readFileSync(b, "utf8")], ["OLD", "new"]);
+    rmSync(b);
+    equal(exchange(a, b, spare), "missing");
+    equal(readFileSync(a, "utf8"), "OLD", "a missing file moves nothing");
+  },
+
   async "one daemon per vault, reachable even after its vault folder is deleted"() {
     const config = folder("brainiac-config-");
     const root = folder("brainiac-vault-");
     const unlock = lockVault(config, root);
     throws(() => lockVault(config, root), /Another brainiac daemon/);
     rmSync(root, { recursive: true, force: true });
-    process.once("SIGUSR2", () => {}); // this process stands in for the daemon
+    // This process stands in for the daemon.
+    const taken: string[] = [];
+    const reached = Promise.withResolvers<void>();
+    const stop = watchRequests(config, root, (what) => {
+      taken.push(what);
+      reached.resolve();
+    });
     ok(request(config, root, "repair"), "the request reaches it");
-    equal(takeRequest(config, root), "repair");
+    await reached.promise;
+    same(taken, ["repair"]);
+    stop();
+    // A request the daemon died before taking is never acted on by the next one.
+    ok(request(config, root, "undo"));
     unlock();
     equal(request(config, root, "resume"), false, "no daemon once it stops");
+    const next = lockVault(config, root);
+    const stale: string[] = [];
+    watchRequests(config, root, (what) => stale.push(what))();
+    same(stale, []);
+    next();
   },
 
   async "the daemon reaches the record over a real socket with its token, and reconnects"() {
@@ -1569,6 +1603,22 @@ for (const [name, save] of Object.entries(SAVES)) {
 }
 
 export { cases };
+
+/**
+ * Cases Windows can't set up, because it refuses the step that makes them: chmod can't make a file unreadable
+ * there, and a folder holding a running daemon's open files can't be renamed or deleted. The daemon's handling
+ * of what those steps lead to is proved on macOS and Linux.
+ */
+export const NOT_ON_WINDOWS = new Set([
+  "a displaced file the daemon can't read stays for the next start",
+  "a kept file that can't be read yet is kept until it can",
+  "withholding keeps an unreadable kept file until its late save can be sent",
+  "a .brainiac folder swapped for a symlink while running never leads kept files out",
+  "repair refuses a .brainiac folder swapped for a symlink",
+  "a vault folder deleted while a batch waits pauses instead of crashing",
+  "a vault folder deleted and made again pauses instead of syncing deletes",
+  "deleting the vault folder pauses instead of syncing deletes, and repair brings it back",
+]);
 
 export async function runCase(name: string): Promise<CaseResult> {
   try {

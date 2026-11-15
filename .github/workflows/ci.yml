@@ -43,6 +43,36 @@ jobs:
       - uses: ./.github/actions/setup
       - run: ${{ matrix.run }}
 
+  # The daemon on Windows, where the swap is ReplaceFileW and the login service a scheduled task: its
+  # real-filesystem cases and unit tests, on NTFS.
+  windows:
+    name: Daemon on Windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: vp test run apps/cli
+        shell: bash
+      # The compiled binary installs its login task: Task Scheduler takes the file and runs the binary alone with
+      # `daemon run` (never its embedded script path), and uninstall removes it.
+      - name: Install the daemon as a scheduled task
+        shell: pwsh
+        working-directory: apps/cli
+        run: |
+          pnpm exec bun build --compile src/main.ts --outfile dist/brainiac.exe
+          ./dist/brainiac.exe daemon install --vault "$env:RUNNER_TEMP\vault" --server http://127.0.0.1:9
+          if ($LASTEXITCODE) { exit 1 }
+          $task = schtasks /Query /TN "Brainiac daemon" /XML | Out-String
+          $task
+          if ($task -notmatch '<Arguments>(&quot;|")daemon(&quot;|") (&quot;|")run(&quot;|")</Arguments>') { exit 1 }
+          ./dist/brainiac.exe daemon uninstall
+          schtasks /Query /TN "Brainiac daemon" 2>$null
+          if (-not $LASTEXITCODE) { exit 1 }
+          exit 0
+
   # Fails a PR that adds or bumps a dependency to a version with a known moderate-or-worse vulnerability.
   dependencies:
     name: Dependency review

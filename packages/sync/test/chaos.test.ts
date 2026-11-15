@@ -1,9 +1,9 @@
 // The protocol's named failure cases, each played out against the record's real `serve`.
-import { mutate } from "@brainiac/base";
+import { DAY_MS, mutate } from "@brainiac/base";
 import { parseNote, patch } from "@brainiac/core";
 import { describe, expect, it } from "vite-plus/test";
 
-import { setField, World, type Device } from "./sim.ts";
+import { addLine, setField, World, type Device } from "./sim.ts";
 
 const A = "01M6AAAAAAAAAAAAAAAAAAAAA1";
 
@@ -467,5 +467,43 @@ describe("sync chaos", () => {
     expect(field(world, "status")).toBeUndefined();
     expect(world.note(C)?.deletedAt).toBeNull();
     expectConverged(world, restored, phone);
+  });
+
+  it("a laptop offline for 100 days catches up from a snapshot and lands its edits without reverting newer ones", () => {
+    const D = "01M6DDDDDDDDDDDDDDDDDDDDD1";
+    const world = new World();
+    world.seed(A, "notes/a.md");
+    world.seed(D, "notes/d.md");
+    const laptop = world.device("laptop");
+    const phone = world.device("phone");
+    world.settle();
+    world.disconnect(laptop);
+    setField(laptop, A, "title", "offline title");
+    addLine(laptop, A, "offline line");
+    setField(laptop, D, "status", "offline edit");
+    // While the laptop is away the phone edits one note and deletes the other.
+    setField(phone, A, "status", "final");
+    phone.client.delete(D);
+    while (world.up(phone) || world.down(phone));
+    // Past the 30-day tombstones and the 90-day change feed: the record keeps neither for the laptop.
+    world.later(100 * DAY_MS);
+    expect(world.sql.all("SELECT * FROM changes")).toEqual([]);
+    expect(world.note(D)).toBeUndefined();
+
+    const snapshots: number[] = [];
+    const receive = laptop.client.receive.bind(laptop.client);
+    laptop.client.receive = (message) => {
+      if (message.type === "snapshot") snapshots.push(message.seq);
+      receive(message);
+    };
+    world.settle();
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect([field(world, "title"), field(world, "status")]).toEqual(["offline title", "final"]);
+    expect(world.note(A)?.raw).toContain("offline line");
+    // The edit to the note purged meanwhile is refused, never dropped: it stays on the laptop, with its text.
+    const kept = laptop.client.state.blocked.get(D)?.at(-1);
+    expect(kept && "raw" in kept.change && kept.change.raw).toContain("offline edit");
+    expect(world.reverts()).toEqual([]);
+    expectConverged(world, laptop, phone);
   });
 });

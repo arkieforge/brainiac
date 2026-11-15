@@ -18,7 +18,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, join, posix, sep } from "node:path";
 
 import { isUlid, normalizePath } from "@brainiac/core";
 
@@ -134,7 +134,8 @@ export function tempTarget(path: string): string | undefined {
   const name = basename(path);
   if (!name.startsWith(TEMP)) return undefined;
   const target = name.slice(TEMP.length + 9); // 8 hex digits and a dash
-  return target ? join(dirname(path), target) : undefined;
+  // Vault paths use "/" on every OS, so a match against the known path holds on Windows too.
+  return target ? posix.join(posix.dirname(path), target) : undefined;
 }
 
 function tempName(full: string): string {
@@ -254,14 +255,15 @@ export function place(
       }
     }
     const swap = disk.exchange ?? exchange;
-    const outcome = swap(staged, full);
+    // A spare temp name for Windows, so a crash mid-swap leaves the displaced file where a start recovers it.
+    const outcome = swap(staged, full, tempName(full));
     // Nothing replaced: the new text waits, and any save in the file is the watcher's to report.
     if (outcome === "unsupported") return { disk: readPlainFile(full), waiting: true };
     // Deleted meanwhile: that is the person's change, which the watcher reports; nothing is written back.
     if (outcome === "missing") return { disk: undefined };
     // Replaced by a symlink in the instant before the swap: it goes back, unread.
     if (kind(staged) !== "file") {
-      swap(staged, full);
+      swap(staged, full, tempName(full));
       return TAKEN;
     }
     // From here the temp file holds what the swap displaced: on any error it stays, for the next start.

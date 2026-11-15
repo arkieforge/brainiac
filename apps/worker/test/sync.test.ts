@@ -30,9 +30,9 @@ afterAll(() => mf.dispose());
 
 /**
  * A sync client on its own socket, with a way to wait for a message it has handled. `?as=<actor>` speaks for
- * that actor, like `connection:<id>` (harness.ts).
+ * that actor, like `connection:<id>` (harness.ts). `state` is what an app restarting loads from its store.
  */
-async function device(name: string, query = "") {
+async function device(name: string, query = "", state = emptyState(name)) {
   const response = await mf.dispatchFetch(`http://brainiac.test/sync${query}`, {
     headers: { upgrade: "websocket" },
   });
@@ -40,7 +40,7 @@ async function device(name: string, query = "") {
   if (!ws) throw new Error(`no socket: ${response.status}`);
   ws.accept();
   const waiting: [(m: ServerMessage) => boolean, (m: ServerMessage) => void][] = [];
-  const client = new SyncClient(emptyState(name), {
+  const client = new SyncClient(state, {
     send: (message) => ws.send(JSON.stringify(message)),
     newClientId: () => `${name}-repaired`,
     schemaVersion: 3,
@@ -70,6 +70,29 @@ async function record() {
   const namespace = await mf.getDurableObjectNamespace("BASE");
   // The stub's RPC methods are the DO's own; Miniflare's types describe only fetch.
   return namespace.get(namespace.idFromName("sync")) as unknown as DurableObjectStub<TestBase>;
+}
+
+const socketClosed = ({ ws }: Awaited<ReturnType<typeof device>>) =>
+  new Promise((resolve) => ws.addEventListener("close", resolve));
+const set = (text: string, field: string, value: string) =>
+  text.replace(/^---\n/, `---\n${field}: ${value}\n`);
+
+async function online(name: string) {
+  const laptop = await device(name);
+  const synced = laptop.next((m) => m.type === "snapshot");
+  laptop.client.connect();
+  await synced;
+  return laptop;
+}
+
+/** The app starts again from the state it stored, on a new socket, and resends what has no answer. */
+async function restart(name: string, state: ReturnType<typeof emptyState>) {
+  const again = await device(name, "", structuredClone(state));
+  const last = state.pending.at(-1)?.clientSeq;
+  const settled = again.next((m) => m.type === "result" && m.clientSeq === last);
+  again.client.connect();
+  await settled;
+  return again;
 }
 
 describe("sync over the Base DO's sockets", () => {
@@ -211,5 +234,26 @@ describe("sync over the Base DO's sockets", () => {
       headers: { upgrade: "websocket" },
     });
     expect(again.status).toBe(401);
+  });
+
+  describe("a record killed mid-write", () => {
+    it("loses nothing and applies nothing twice when it dies in the middle of a burst", async () => {
+      const laptop = await online("killed-laptop");
+      const before = (await (await record()).rev(ID)) ?? 0;
+      // Two edits are answered, the process dies handling the third, and the last two never arrive.
+      await (await record()).dieHandling(3);
+      const gone = socketClosed(laptop);
+      const fields = ["a1", "a2", "a3", "a4", "a5"];
+      for (const field of fields) laptop.client.edit(ID, set(laptop.client.working(ID) ?? "", field, "x"));
+      await gone;
+      // Whether the third's write outlived the process is the runtime's call (an output gate holds a reply
+      // until its write is durable); the device never heard, so it resends it either way.
+      expect(laptop.client.state.pending.map((p) => p.clientSeq)).toEqual([3, 4, 5]);
+
+      const again = await restart("killed-laptop", laptop.client.state);
+      expect(again.client.state.pending).toEqual([]);
+      expect(await (await record()).rev(ID)).toBe(before + fields.length);
+      for (const field of fields) expect(again.client.working(ID)).toContain(`${field}: x`);
+    });
   });
 });
