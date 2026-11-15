@@ -4,10 +4,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseManifest, parseNote, type ClientMessage, type Manifest } from "@brainiac/core";
-import { emptyState, SyncClient } from "@brainiac/sync";
+import { emptyState, SyncClient, type Store, type Write } from "@brainiac/sync";
 import { describe, expect, it } from "vite-plus/test";
 
-import { bodyOf, commitField, editField, fieldsOf, withBody } from "./fields.ts";
+import {
+  bodyOf,
+  commitField as commit,
+  editField,
+  fieldsOf,
+  withBody,
+  type Field,
+  type SaveOnline,
+} from "./fields.ts";
 
 const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
 const fixture = (path: string) => readFileSync(join(FIXTURES, path), "utf8");
@@ -15,20 +23,31 @@ const manifest = parseManifest(fixture("okf-base.yaml"));
 const IELTS = fixture("facts/tests/ielts-2026-11.md");
 const ID = "01M6ADBH80DEGPEVAAVR2625V1";
 
-/** A tab's sync client holding `raw` as the record's version of the note, and what it sends. */
-function tab(raw: string) {
+/**
+ * A tab's sync client holding `raw` as the record's version of the note, what it sends, what it writes to its
+ * store (IndexedDB in a browser) after it started, and the online saves it makes.
+ */
+function tab(raw: string, cls: "normal" | "sensitive" = "normal") {
   const sent: ClientMessage[] = [];
+  const writes: Write[] = [];
+  const online: { noteId: string; raw: string }[] = [];
+  const store: Store = { load: async () => undefined, write: async (write) => void writes.push(write) };
   const state = emptyState("tab");
-  state.remote.set(ID, { rev: 3, path: "facts/tests/ielts-2026-11.md", raw, class: "sensitive" });
+  state.remote.set(ID, { rev: 3, path: "facts/tests/ielts-2026-11.md", raw, class: cls });
   state.cursor = 10;
   const client = new SyncClient(state, {
     send: (message) => sent.push(message),
     newClientId: () => "tab-2",
     schemaVersion: 0,
     appVersion: "test",
+    store,
   });
   client.receive({ type: "welcome", clientId: "tab", highWater: 0, ackedUpTo: 0 });
-  return { client, sent };
+  writes.length = 0; // only what the edit itself writes
+  const save: SaveOnline = async (noteId, edit) => void online.push({ noteId, raw: edit(raw) });
+  const commitField = (noteId: string, schema: Manifest | null, f: Field, input: string | boolean) =>
+    commit(client, noteId, schema, f, input, save);
+  return { client, sent, writes, online, commitField };
 }
 
 const field = (raw: string, name: string, schema: Manifest | null = manifest) => {
@@ -53,7 +72,7 @@ describe("field form", () => {
     expect(plain.find((f) => f.name === "sections")?.editable).toBe(false);
   });
 
-  it("sends a put that changes only the edited field's node, every other byte as it was", () => {
+  it("sends a put that changes only the edited field's node, every other byte as it was", async () => {
     const cases = [
       // A plain scalar with a comment after the next key's value.
       ["expires", "2028-12-01", "expires: 2028-11-02", "expires: 2028-12-01"],
@@ -62,8 +81,8 @@ describe("field form", () => {
       ["title", "IELTS Academic, Nov 2026", '"IELTS Academic, November 2026"', '"IELTS Academic, Nov 2026"'],
     ] as const;
     for (const [name, input, before, after] of cases) {
-      const { client, sent } = tab(IELTS);
-      expect(commitField(client, ID, manifest, field(IELTS, name), input)).toBeUndefined();
+      const { client, sent, commitField } = tab(IELTS);
+      expect(await commitField(ID, manifest, field(IELTS, name), input)).toBeUndefined();
       const expected = IELTS.replace(before, after);
       expect(expected).not.toBe(IELTS);
       expect(sent).toEqual([
@@ -78,23 +97,47 @@ describe("field form", () => {
     }
   });
 
-  it("checks input against the schema as typed, and sends nothing it refuses", () => {
-    const { client, sent } = tab(IELTS);
-    expect(commitField(client, ID, manifest, field(IELTS, "overall"), "eight")).toMatch(/number/);
-    expect(commitField(client, ID, manifest, field(IELTS, "date"), "2026-13-45")).toMatch(/date/);
-    expect(commitField(client, ID, manifest, field(IELTS, "date"), "")).toMatch(/required/);
+  it("checks input against the schema as typed, and sends nothing it refuses", async () => {
+    const { sent, commitField } = tab(IELTS);
+    expect(await commitField(ID, manifest, field(IELTS, "overall"), "eight")).toMatch(/number/);
+    expect(await commitField(ID, manifest, field(IELTS, "date"), "2026-13-45")).toMatch(/date/);
+    expect(await commitField(ID, manifest, field(IELTS, "date"), "")).toMatch(/required/);
     // Without a manifest, the value's own kind still holds.
     expect(editField(IELTS, null, field(IELTS, "expires", null), "next year")).toHaveProperty("issue");
     expect(sent).toEqual([]);
     // Typing the value it already has changes nothing, so nothing goes out either.
-    expect(commitField(client, ID, manifest, field(IELTS, "overall"), "8")).toBeUndefined();
+    expect(await commitField(ID, manifest, field(IELTS, "overall"), "8")).toBeUndefined();
     expect(sent).toEqual([]);
   });
 
-  it("clears an optional field by removing only its line", () => {
-    const { client, sent } = tab(IELTS);
-    expect(commitField(client, ID, manifest, field(IELTS, "expires"), "")).toBeUndefined();
+  it("clears an optional field by removing only its line", async () => {
+    const { sent, commitField } = tab(IELTS);
+    expect(await commitField(ID, manifest, field(IELTS, "expires"), "")).toBeUndefined();
     expect(sent[0]).toMatchObject({ change: { raw: IELTS.replace("expires: 2028-11-02\n", "") } });
+  });
+
+  it("never queues or stores a sensitive note's edit on the device: it saves online", async () => {
+    const { client, sent, writes, online, commitField } = tab(IELTS, "sensitive");
+    expect(await commitField(ID, manifest, field(IELTS, "trf_number"), "26GB009999KARN001A")).toBeUndefined();
+    expect(online).toEqual([
+      { noteId: ID, raw: IELTS.replace('"26GB001234KARN001A"', "26GB009999KARN001A") },
+    ]);
+    expect(sent).toEqual([]);
+    expect(client.state.pending).toEqual([]);
+    expect(client.state.blocked.size).toBe(0);
+    // Nothing about the note reached the store: not its id, not either version of its text.
+    const stored = JSON.stringify(writes);
+    for (const secret of [ID, "26GB001234KARN001A", "26GB009999KARN001A"])
+      expect(stored).not.toContain(secret);
+  });
+
+  it("queues a normal note's edit in the client, as the store keeps it until the record answers", async () => {
+    const { writes, online, commitField } = tab(IELTS, "normal");
+    expect(await commitField(ID, manifest, field(IELTS, "trf_number"), "26GB009999KARN001A")).toBeUndefined();
+    expect(online).toEqual([]);
+    expect(writes.at(-1)?.saved.pending).toEqual([
+      expect.objectContaining({ noteId: ID, change: expect.objectContaining({ kind: "put" }) }),
+    ]);
   });
 
   it("edits the body without touching a byte of the front-matter", () => {

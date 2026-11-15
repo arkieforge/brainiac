@@ -7,6 +7,8 @@ import { SyncClient } from "@brainiac/sync";
 import { openTabStore } from "@brainiac/sync/browser";
 import { useSyncExternalStore } from "react";
 
+import type { SaveOnline } from "./fields.ts";
+
 export type Status = "loading" | "connecting" | "live" | "offline" | "signed-out";
 
 export interface NoteView {
@@ -31,6 +33,11 @@ export interface FileItem {
 const LAST_USER = "brainiac:user";
 /** IndexedDB names start with this, so signing out can clear them all (apps/worker/src/auth/pages.ts). */
 const STORE_PREFIX = "brainiac:";
+/**
+ * Where the account page says the person signed out (apps/worker/src/auth/pages.ts): every open tab lets go of
+ * its copy, so the page can delete it.
+ */
+const SIGN_OUT_CHANNEL = "brainiac:session";
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -42,6 +49,8 @@ let release: (() => Promise<void>) | undefined;
 let socket: WebSocket | undefined;
 let retry = 0;
 let started = false;
+/** Signed out in some tab: this one holds no copy and never reconnects. */
+let stopped = false;
 
 function changed() {
   version++;
@@ -100,9 +109,57 @@ function connect() {
     client?.disconnect();
     setStatus("offline");
     // Backs off to 30 s; coming back online or to the tab tries at once.
-    setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
+    if (!stopped) setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
   });
 }
+
+/** What a sensitive note's online save says when the tab is offline. */
+export const OFFLINE_SENSITIVE = "Sensitive notes save only while you're online on this device.";
+
+/** The latest text and revision the record accepted from this tab's online saves, per sensitive note. */
+const accepted = new Map<string, { readonly rev: number; readonly raw: string }>();
+/** Each sensitive note's online saves, in order: the next builds on what the last one wrote. */
+const saving = new Map<string, Promise<unknown>>();
+const queued = new Map<string, number>();
+
+/** The latest text of a sensitive note: what an online save wrote, until the sync push brings it. */
+const latest = (noteId: string) => {
+  const remote = client?.state.remote.get(noteId);
+  const mine = accepted.get(noteId);
+  return mine && (!remote || mine.rev > remote.rev) ? mine : remote;
+};
+
+/** True while a sensitive note has an online save on its way, or one the sync push hasn't brought back yet. */
+export const savingOnline = (noteId: string): boolean =>
+  (queued.get(noteId) ?? 0) > 0 || latest(noteId) !== client?.state.remote.get(noteId);
+
+/** Saves a sensitive note's edit straight to the record, as the person; never through the client's queue. */
+export const saveOnline: SaveOnline = (noteId, edit) => {
+  const run = async (): Promise<string | undefined> => {
+    if (status !== "live") return OFFLINE_SENSITIVE;
+    const base = latest(noteId);
+    if (!base) return "This note is gone.";
+    const raw = edit(base.raw);
+    if (raw === base.raw) return undefined;
+    const res = await api(`/api/notes/${noteId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ raw, baseRev: base.rev }),
+    }).catch(() => undefined);
+    if (!res) return "You're offline, so this edit wasn't saved.";
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return body.error ?? "This edit wasn't saved.";
+    accepted.set(noteId, { rev: body.rev, raw });
+    return undefined;
+  };
+  queued.set(noteId, (queued.get(noteId) ?? 0) + 1);
+  const next = (saving.get(noteId) ?? Promise.resolve()).then(run).finally(() => {
+    queued.set(noteId, (queued.get(noteId) ?? 1) - 1);
+    changed();
+  });
+  saving.set(noteId, next);
+  return next;
+};
 
 /** Loads the manifest and the file list; both come from the record over HTTP, not the sync socket. */
 export async function refresh() {
@@ -117,9 +174,33 @@ export const api = (path: string, init: RequestInit = {}) =>
   fetch(path, { ...init, credentials: "same-origin" });
 
 /** Starts this tab's client once: the stored copy at once, then the session, then the socket. */
+/** Lets go of this tab's copy: the socket, the client and its IndexedDB connection and slot. */
+async function stop() {
+  stopped = true;
+  const closing = socket;
+  socket = undefined;
+  closing?.close();
+  client = undefined;
+  accepted.clear();
+  files = [];
+  manifest = null;
+  await release?.();
+  release = undefined;
+  status = "signed-out";
+  changed();
+}
+
 export async function start() {
   if (started) return;
   started = true;
+  try {
+    const channel = new BroadcastChannel(SIGN_OUT_CHANNEL);
+    channel.addEventListener("message", (event) => {
+      if (event.data === "signed-out") void stop();
+    });
+  } catch {
+    // No BroadcastChannel: sign-out still deletes the copy once this tab closes.
+  }
   const last = remembered();
   if (last) await openStore(last);
   let user: string | undefined;
@@ -145,6 +226,8 @@ export async function start() {
   }
   connect();
   addEventListener("online", connect);
+  // A socket can sit open for a while after the network goes; offline is offline now (sensitive notes go read-only).
+  addEventListener("offline", () => socket?.close());
   addEventListener("visibilitychange", () => document.visibilityState === "visible" && connect());
   await refresh();
 }

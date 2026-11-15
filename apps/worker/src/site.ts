@@ -69,6 +69,8 @@ async function serveApi(
 
   if (pathname === "/api/session" && !post) return json({ user: person.userId });
   if (pathname === "/api/schema" && !post) return json({ manifest: await record.manifest() });
+  const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
+  if (note !== undefined && post) return saveNote(request, record, note);
   if (pathname === "/api/files") {
     if (!post) {
       const files = await record.files(PERSON);
@@ -113,6 +115,40 @@ async function serveApi(
   if ("status" in minted) return refusal(minted);
   if ("error" in minted) return refusal(minted);
   return json({ url: `${env.USERCONTENT_ORIGIN}/f/${minted.token}`, expiresAt: minted.expiresAt });
+}
+
+/**
+ * `POST /api/notes/<id>` `{ raw, baseRev }`: the site's edit to a sensitive note, as the person. A tab never
+ * queues one in its sync client, whose queue lives in IndexedDB on a device the person may not have marked as
+ * theirs (contract §5), so it goes straight to the record's mutation path instead, online only. A `baseRev` the
+ * note has moved past is a conflict, never an overwrite; the change reaches every tab through the sync push.
+ */
+async function saveNote(
+  request: Request,
+  record: ReturnType<Env["BASE"]["get"]>,
+  noteId: string,
+): Promise<Response> {
+  const body: unknown = await request.json().catch(() => null);
+  const raw = typeof body === "object" && body !== null && "raw" in body ? body.raw : undefined;
+  const baseRev = typeof body === "object" && body !== null && "baseRev" in body ? body.baseRev : undefined;
+  if (typeof raw !== "string" || typeof baseRev !== "number" || !Number.isInteger(baseRev))
+    return failed(400, "Send the note's text and the revision it was edited from.");
+  const result = await record.mutate({ op: "put", noteId, baseRev, raw }, PERSON);
+  switch (result.status) {
+    case "applied":
+      return json({ rev: result.rev });
+    case "conflict":
+      return failed(409, "This note changed since you started editing it. Your edit wasn't saved.");
+    case "invalid":
+      return failed(400, result.issues.map((issue) => issue.message).join(" "));
+    case "forbidden":
+      return failed(403, result.reason);
+  }
+  // The RPC stub's mapped type drops `needsApproval` (its plan holds `unknown` values), so it's read as an object.
+  const answer: object = result;
+  if ("planHash" in answer)
+    return json({ needsApproval: true, error: "This change needs your passkey approval." }, 409);
+  return failed(409, "This change is waiting for you as a proposal.");
 }
 
 const tooLarge = () => failed(413, `Files can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`);

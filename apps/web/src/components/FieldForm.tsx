@@ -3,6 +3,7 @@ import type { SyncClient } from "@brainiac/sync";
 import { useEffect, useRef, useState } from "react";
 
 import { commitField, editField, inputOf, type Field } from "../fields.ts";
+import { saveOnline } from "../record.ts";
 
 /** How long typing pauses before a text field's edit is sent. */
 const TYPING_MS = 400;
@@ -12,7 +13,10 @@ function FieldInput({
   client,
   noteId,
   manifest,
+  disabled,
 }: {
+  /** A sensitive note while offline: shown, not editable. */
+  readonly disabled: boolean;
   readonly field: Field;
   readonly client: SyncClient;
   readonly noteId: string;
@@ -32,7 +36,7 @@ function FieldInput({
   const commit = (input: string | boolean) => {
     clearTimeout(timer.current);
     editing.current = false;
-    setIssue(commitField(client, noteId, manifest, field, input));
+    void commitField(client, noteId, manifest, field, input, saveOnline).then(setIssue);
   };
   const typed = (input: string) => {
     editing.current = true;
@@ -57,7 +61,12 @@ function FieldInput({
     );
   else if (spec.values)
     control = (
-      <select id={id} value={text} onChange={(event) => commit(event.currentTarget.value)}>
+      <select
+        id={id}
+        value={text}
+        disabled={disabled}
+        onChange={(event) => commit(event.currentTarget.value)}
+      >
         {!spec.required && <option value="">(none)</option>}
         {!spec.values.includes(text) && text !== "" && <option value={text}>{text}</option>}
         {spec.values.map((value) => (
@@ -70,6 +79,7 @@ function FieldInput({
       <input
         id={id}
         type="checkbox"
+        disabled={disabled}
         checked={field.value === true}
         onChange={(event) => commit(event.currentTarget.checked)}
       />
@@ -79,6 +89,7 @@ function FieldInput({
       <input
         id={id}
         type={spec.kind === "date" ? "date" : "text"}
+        readOnly={disabled}
         inputMode={spec.kind === "number" ? "decimal" : undefined}
         value={text}
         aria-invalid={issue ? true : undefined}
@@ -113,7 +124,9 @@ export function FieldForm({
   client,
   noteId,
   manifest,
+  disabled,
 }: {
+  readonly disabled: boolean;
   readonly fields: readonly Field[];
   readonly client: SyncClient;
   readonly noteId: string;
@@ -123,7 +136,14 @@ export function FieldForm({
     <section className="fields" aria-label="Fields">
       <h2>{manifest ? "Fields" : "Fields (no schema for this type yet)"}</h2>
       {fields.map((field) => (
-        <FieldInput key={field.name} field={field} client={client} noteId={noteId} manifest={manifest} />
+        <FieldInput
+          key={field.name}
+          field={field}
+          client={client}
+          noteId={noteId}
+          manifest={manifest}
+          disabled={disabled}
+        />
       ))}
     </section>
   );

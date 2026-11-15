@@ -1,4 +1,4 @@
-// Files through the real site and usercontent routes (site.ts, usercontent.ts) and the real Base DO in workerd, with
+// Sensitive note edits and files through the real site and usercontent routes (site.ts, usercontent.ts) and the real Base DO in workerd, with
 // a real R2 bucket. harness.ts fakes only the session. An upload can be HTML or SVG someone else wrote, so its bytes
 // must never come from the site's origin, and the usercontent origin must never let them run.
 import { Miniflare } from "miniflare";
@@ -166,5 +166,39 @@ describe("files", () => {
     expect(await (await mf.dispatchFetch(`${SITE}/api/files`, { headers: tab("csrf") })).json()).toEqual({
       files: [],
     });
+  });
+});
+
+describe("sensitive note edits", () => {
+  const ID = "01M6ADBH80DEGPEVAAVR2625V1";
+  const raw = (title: string) =>
+    `---\nid: ${ID}\ntype: TestScore\ntitle: ${title}\ntrf_number: "26GB001234KARN001A"\n---\nTook the test.\n`;
+  const save = (user: string, body: unknown, origin = SITE) =>
+    mf.dispatchFetch(`${SITE}/api/notes/${ID}`, {
+      method: "POST",
+      headers: { cookie: `user=${user}`, origin, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("go straight to the record as the person, and a stale base is a conflict, not an overwrite", async () => {
+    const base = await record("sensitive");
+    await base.seed([{ path: "facts/tests/ielts.md", raw: raw("IELTS"), class: "sensitive" }]);
+    const saved = await save("sensitive", { raw: raw("IELTS Academic"), baseRev: 1 });
+    expect(await saved.json()).toEqual({ rev: 2 });
+    expect(await base.rev(ID)).toBe(2);
+    expect(await base.actorOf(ID)).toBe("human");
+
+    const stale = await save("sensitive", { raw: raw("Typed over an old copy"), baseRev: 1 });
+    expect(stale.status).toBe(409);
+    expect(await base.rev(ID)).toBe(2);
+  });
+
+  it("refuse another origin's pages, another record's session and a malformed body", async () => {
+    const base = await record("guarded");
+    await base.seed([{ path: "facts/tests/ielts.md", raw: raw("IELTS"), class: "sensitive" }]);
+    expect((await save("guarded", { raw: raw("x"), baseRev: 1 }, USERCONTENT)).status).toBe(403);
+    expect((await save("intruder", { raw: raw("x"), baseRev: 1 })).status).not.toBe(200);
+    expect((await save("guarded", { raw: raw("x") })).status).toBe(400);
+    expect(await base.rev(ID)).toBe(1);
   });
 });

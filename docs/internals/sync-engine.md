@@ -18,6 +18,12 @@ ones, so the next `welcome` makes the client repair. In a browser each open tab 
 own IndexedDB slot, held with a Web Lock; a closed tab's slot, pending edits and all, goes to the next tab
 that opens.
 
+The pending and blocked layers hold each edit's whole text and are written to the store whatever the note's
+class, so the site never puts a sensitive note's edit in them: it posts it to the record (`/api/notes/<id>`, the
+person's `put` with its base revision, a conflict if the note moved on), online only, and the change comes back
+through the push. Offline, a sensitive note on the site can only be read. Taking an entry out of the queue
+instead isn't possible: the record waits for every `clientSeq` in order.
+
 ## Protocol
 
 ```

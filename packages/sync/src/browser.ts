@@ -14,8 +14,11 @@ const committed = (tx: IDBTransaction) =>
     tx.addEventListener("abort", () => reject(tx.error ?? new Error("IndexedDB write aborted.")));
   });
 
-/** A store in the IndexedDB database `name`: the saved part under one key, each remote note under its id. */
-export function indexedDbStore(name: string): Store {
+/**
+ * A store in the IndexedDB database `name`: the saved part under one key, each remote note under its id. `close`
+ * ends its connection, which an open one would hold against deleting the database (sign-out does that).
+ */
+export function indexedDbStore(name: string): Store & { readonly close: () => Promise<void> } {
   const opening = indexedDB.open(name, 1);
   opening.addEventListener("upgradeneeded", () => {
     opening.result.createObjectStore("client");
@@ -49,11 +52,14 @@ export function indexedDbStore(name: string): Store {
       }
       await committed(tx);
     },
+    async close() {
+      (await db).close();
+    },
   };
 }
 
 /**
- * Opens this tab's store. Every tab is its own client with its own queue, so a tab holds its slot with a Web
+ * Opens this tab's store; `release` closes it and frees the slot. Every tab is its own client with its own queue, so a tab holds its slot with a Web
  * Lock while it is open; a closed tab's slot, pending edits and all, goes to the next tab that opens.
  * shortcut: a closed tab's queue waits for the next tab to open; adopt free slots into a running tab's queue
  * (as repair does, by changeId) if people lose edits by closing one of two tabs and keeping the other.
@@ -64,8 +70,15 @@ export async function openTabStore(
 ): Promise<{ readonly store: Store; readonly release: () => Promise<void> }> {
   for (let slot = 0; ; slot++) {
     const name = `${prefix}:${slot}`;
-    const release = await hold(locks, name);
-    if (release) return { store: indexedDbStore(name), release };
+    const unlock = await hold(locks, name);
+    if (!unlock) continue;
+    const store = indexedDbStore(name);
+    // Closing the tab's connection first, so a sign-out deleting the database isn't blocked by it.
+    const release = async () => {
+      await store.close();
+      await unlock();
+    };
+    return { store, release };
   }
 }
 

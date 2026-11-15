@@ -41,6 +41,30 @@ describe("browser: IndexedDB", () => {
     expect(world.note("01M6AAAAAAAAAAAAAAAAAAAAA1")?.raw).toContain("unsent\n");
     await Promise.all([second.release(), third.release()]);
   });
+
+  it("a released slot leaves its database free to delete, as sign-out does", async () => {
+    const tab = await openTabStore("signout", locks);
+    await tab.store.write({
+      saved: {
+        clientId: "t",
+        lastAssigned: 0,
+        ackedUpTo: 0,
+        cursor: 1,
+        answered: [],
+        pending: [],
+        blocked: [],
+      },
+      clear: false,
+      remote: [],
+    });
+    await tab.release();
+    const deleted = indexedDB.deleteDatabase("signout:0");
+    const outcome = await new Promise<string>((resolve) => {
+      deleted.addEventListener("success", () => resolve("deleted"));
+      deleted.addEventListener("blocked", () => resolve("blocked by an open connection"));
+    });
+    expect(outcome).toBe("deleted");
+  });
 });
 
 // The Bun pinned in package.json, not whatever is on PATH, so CI and laptops run the same engine.

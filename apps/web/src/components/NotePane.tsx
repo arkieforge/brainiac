@@ -2,7 +2,7 @@ import { parseNote } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 
 import { fieldsOf } from "../fields.ts";
-import { useRecord } from "../record.ts";
+import { OFFLINE_SENSITIVE, useRecord } from "../record.ts";
 import { BodyEditor } from "./BodyEditor.tsx";
 import { FieldForm } from "./FieldForm.tsx";
 
@@ -42,6 +42,8 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
     return <p className="empty error">This note's front-matter can't be read: {String(error)}</p>;
   }
   const title = typeof data["title"] === "string" ? data["title"] : remote.path;
+  // A sensitive note's edits save online only (fields.ts, `savesOnline`), so offline it can only be read.
+  const readOnly = remote.class === "sensitive" && status !== "live";
   return (
     <article className="note">
       <header className="pane-head">
@@ -50,10 +52,17 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
         <span className="badge">{typeof data["type"] === "string" ? data["type"] : "No type"}</span>
         {remote.class === "sensitive" && <span className="badge sensitive">sensitive</span>}
         <SyncState client={client} noteId={noteId} />
+        {readOnly && <p className="sync-state warn">{OFFLINE_SENSITIVE}</p>}
       </header>
       <div className="note-grid">
-        <BodyEditor key={noteId} client={client} noteId={noteId} />
-        <FieldForm fields={fieldsOf(data, manifest)} client={client} noteId={noteId} manifest={manifest} />
+        <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />
+        <FieldForm
+          fields={fieldsOf(data, manifest)}
+          client={client}
+          noteId={noteId}
+          manifest={manifest}
+          disabled={readOnly}
+        />
       </div>
     </article>
   );

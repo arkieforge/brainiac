@@ -122,21 +122,44 @@ export function editField(
 }
 
 /**
- * Sends one field edit as the person's change to the note, through the sync client (the record's mutation path).
- * Returns what is wrong with the input instead, and then sends nothing.
+ * Saves a sensitive note's edit online only, straight to the record (`POST /api/notes/<id>`). `edit` turns the
+ * latest text the tab knows into the new text, so edits made while an earlier one is on its way build on it.
+ * Resolves to why it wasn't saved, if it wasn't.
  */
-export function commitField(
+export type SaveOnline = (noteId: string, edit: (raw: string) => string) => Promise<string | undefined>;
+
+/**
+ * A sensitive note's edits never enter the sync client: its queue (pending and blocked edits, with their text)
+ * is written to this device's IndexedDB, and sensitive notes are cached only on a device the person marked as
+ * theirs (contract §5). The client's queue can't drop an entry either, since the record waits for every number.
+ */
+export const savesOnline = (client: SyncClient, noteId: string): boolean =>
+  client.state.remote.get(noteId)?.class === "sensitive";
+
+/**
+ * Sends one field edit as the person's change to the note: through the sync client (the record's mutation
+ * path), or online only for a sensitive note. Resolves to what is wrong with the input, or why it wasn't saved;
+ * nothing is sent for input the schema refuses.
+ */
+export async function commitField(
   client: SyncClient,
   noteId: string,
   manifest: Manifest | null,
   field: Field,
   input: string | boolean,
-): string | undefined {
+  online: SaveOnline,
+): Promise<string | undefined> {
   const base = client.working(noteId);
   if (base === undefined) return "This note is gone.";
   const edited = editField(base, manifest, field, input);
   if ("issue" in edited) return edited.issue;
-  if (edited.raw !== base) client.edit(noteId, edited.raw, base);
+  if (edited.raw === base) return undefined;
+  if (savesOnline(client, noteId))
+    return online(noteId, (latest) => {
+      const again = editField(latest, manifest, field, input);
+      return "raw" in again ? again.raw : latest;
+    });
+  client.edit(noteId, edited.raw, base);
   return undefined;
 }
 

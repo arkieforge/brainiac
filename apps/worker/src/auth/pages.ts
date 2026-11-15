@@ -210,10 +210,17 @@ for (const button of document.querySelectorAll("[data-disconnect]")) {
 }
 document.getElementById("sign-out").onclick = run(async () => {
   await api("/sign-out", { method: "POST", body: "{}" });
-  // The site's copy of the record (apps/web/src/record.ts) leaves with the session.
-  for (const db of (await indexedDB.databases?.()) ?? [])
-    if (db.name?.startsWith("brainiac:")) indexedDB.deleteDatabase(db.name);
+  // The site's copy of the record (apps/web/src/record.ts) leaves with the session. Every open tab of the site
+  // closes its socket and its connection to the copy first; one that doesn't answer in a few seconds (an old
+  // build) keeps it until it closes, when the deletion still queued here goes through.
+  try { new BroadcastChannel("brainiac:session").postMessage("signed-out"); } catch {}
   try { localStorage.removeItem("brainiac:user"); } catch {}
+  const names = ((await indexedDB.databases?.()) ?? []).map((db) => db.name).filter((name) => name?.startsWith("brainiac:"));
+  await Promise.all(names.map((name) => new Promise((done) => {
+    const deleting = indexedDB.deleteDatabase(name);
+    deleting.onsuccess = deleting.onerror = done;
+    deleting.onblocked = () => setTimeout(done, 3000);
+  })));
   location.href = "/sign-in";
 });`,
   );
