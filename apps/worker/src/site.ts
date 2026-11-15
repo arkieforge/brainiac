@@ -71,7 +71,7 @@ async function serveApi(
 ): Promise<Response> {
   const post = request.method === "POST";
   if (post ? !sameOrigin(request) : request.method !== "GET") return failed(403, "Forbidden");
-  const file = /^\/api\/files\/([^/]+)\/(token|kind)$/.exec(pathname);
+  const file = /^\/api\/files\/([^/]+)\/(token|kind|share)$/.exec(pathname);
   const token = post && file?.[2] === "token";
   // Every POST but an upload is JSON.
   const body: unknown = post && pathname !== "/api/files" ? await request.json().catch(() => null) : null;
@@ -93,8 +93,9 @@ async function serveApi(
   }
   // Drift checks of the person's own profiles: paid, so only the signed-in person starts one.
   if (pathname === "/api/profiles/check" && post) return json(await record.checkProfiles());
-  const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
-  if (note !== undefined && post) return saveNote(body, record, note);
+  const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})(\/move)?$/.exec(pathname);
+  if (note?.[1] !== undefined && post)
+    return note[2] ? moveNote(body, record, note[1]) : saveNote(body, record, note[1]);
   if (pathname === "/api/review" && post) {
     const ids = typeof body === "object" && body !== null && "noteIds" in body ? body.noteIds : undefined;
     if (
@@ -152,6 +153,22 @@ async function serveApi(
   }
   const sha256 = file?.[1];
   if (!post || !file || sha256 === undefined || !SHA.test(sha256)) return failed(404, "Not found");
+  if (file[2] === "share") {
+    const on = field(body, "on");
+    if (typeof on !== "boolean") return failed(400, "Say whether your agents may see this photo.");
+    if (signer && !person.approver) return failed(403, "That passkey isn't one of yours.");
+    const shared = await record.shareFile(
+      sha256,
+      on,
+      PERSON,
+      signer && person.approver && { response: signer, approver: person.approver },
+    );
+    // Letting agents see a photo loosens privacy: it needs a passkey signature over `challenge` (contract §4).
+    if ("status" in shared && shared.status === "needsApproval")
+      return json({ needsApproval: true, challenge: shared.challenge }, 409);
+    if ("status" in shared) return refusal(shared);
+    return "error" in shared ? refusal(shared) : json({ file: shared.file });
+  }
   if (file[2] === "kind") {
     const kind = typeof body === "object" && body !== null && "kind" in body ? body.kind : undefined;
     if (typeof kind !== "string") return failed(400, "Say what the file is, like transcript.");
@@ -319,6 +336,44 @@ async function saveNote(
       },
       409,
     );
+  return failed(409, "This change is waiting for you as a proposal.");
+}
+
+/**
+ * The person moves a note (`POST /api/notes/<id>/move`, `{ path, baseRev, approvalId? }`): a sidecar takes its file
+ * along, and every link to it follows. A move that needs their passkey answers 409 with the plan to sign, sent again
+ * with the approval's id.
+ */
+async function moveNote(
+  body: unknown,
+  record: ReturnType<Env["BASE"]["get"]>,
+  noteId: string,
+): Promise<Response> {
+  const path = field(body, "path");
+  const baseRev = field(body, "baseRev");
+  const approvalId = field(body, "approvalId");
+  if (typeof path !== "string" || typeof baseRev !== "number" || !Number.isInteger(baseRev))
+    return failed(400, "Send the note's new path and the revision you moved it from.");
+  if (approvalId !== undefined && typeof approvalId !== "string")
+    return failed(400, "approvalId is an approval's id.");
+  const result = await record.mutate(
+    { op: "move", noteId, baseRev, path },
+    { ...PERSON, ...(approvalId !== undefined && { approvalId }) },
+  );
+  switch (result.status) {
+    case "applied":
+      return json({ rev: result.rev });
+    case "conflict":
+      return failed(409, "This note changed since you opened it. Open it again and move it then.");
+    case "invalid":
+      return failed(400, result.issues.map((issue) => issue.message).join(" "));
+    case "forbidden":
+      return failed(403, result.reason);
+  }
+  // The RPC stub's mapped type drops `needsApproval` (its plan holds `unknown` values), so it's read as an object.
+  const answer: object = result;
+  if ("planHash" in answer && "items" in answer)
+    return json({ needsApproval: true, planHash: answer.planHash, items: answer.items }, 409);
   return failed(409, "This change is waiting for you as a proposal.");
 }
 

@@ -17,14 +17,15 @@ interface BeforeAfter<T> {
 
 /**
  * What one transaction does to one note: each top-level front-matter field's value before and after (a missing
- * side means the field was absent), the body, whether the note was live, and its privacy class when that
- * changed. Revisions store it as their inverse patch; approvals sign it.
+ * side means the field was absent), the body, whether the note was live, its privacy class when that changed, and
+ * its path when it moved. Revisions store it as their inverse patch; approvals sign it.
  */
 export interface Diff {
   readonly fields: Readonly<Record<string, BeforeAfter<unknown>>>;
   readonly body?: BeforeAfter<string>;
   readonly live?: BeforeAfter<boolean>;
   readonly class?: { readonly before: "normal" | "sensitive"; readonly after: "normal" | "sensitive" };
+  readonly path?: { readonly before: string; readonly after: string };
 }
 
 /** One note's part of a plan: the note, the revision the change starts from, and what it does. */

@@ -359,6 +359,14 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       proposalId TEXT NOT NULL
     ) WITHOUT ROWID`,
   ],
+  // When each file was uploaded, and whether the person lets their agents see a photo itself (vault.ts,
+  // `shareFile`): when they turned that on, and how many times they turned it on or off, which a passkey
+  // signature names so it can't be used twice. Uploads from before have no upload time.
+  [
+    "ALTER TABLE files ADD COLUMN uploadedAt INTEGER",
+    "ALTER TABLE files ADD COLUMN sharedAt INTEGER",
+    "ALTER TABLE files ADD COLUMN shares INTEGER NOT NULL DEFAULT 0",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

@@ -108,7 +108,7 @@ export function holds(sql: Sql, manifest: Manifest | undefined, { before, after 
   if (!before) return false;
   // What the note held, even as a tombstone: bringing a held-type note back with other values is an edit to it.
   const prior: Readonly<Record<string, unknown>> = JSON.parse(before.fm);
-  // Moved (moves arrive with #38): out of a held area, or a held-type note anywhere.
+  // Moved: out of a held area, or a held-type note anywhere.
   if (before.path !== after.path && (held.area(before.path) || held.type(prior))) return true;
   if (!held.type(prior)) return false;
   if (!is) return was !== undefined;

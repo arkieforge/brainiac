@@ -16,6 +16,7 @@
     "e2e": "node scripts/e2e.ts",
     "eval:answers": "node evals/answers/run.ts",
     "eval:filing": "node evals/filing/run.ts",
+    "eval:photos": "node evals/photos/run.ts",
     "logs": "node scripts/logs.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"

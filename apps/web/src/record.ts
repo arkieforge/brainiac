@@ -32,6 +32,8 @@ export interface FileItem {
   readonly path: string | null;
   /** The person's own name for it. */
   readonly name: string | null;
+  /** The person lets their agents see this photo itself. */
+  readonly shared: boolean;
 }
 
 const LAST_USER = "brainiac:user";

@@ -9,8 +9,9 @@ import { ApproveButton, Plan } from "./Approval.tsx";
 import { BodyEditor } from "./BodyEditor.tsx";
 import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
-import { FileFacts, FileView, KindForm } from "./FilePane.tsx";
+import { FileFacts, FileView, KindForm, ShareForm } from "./FilePane.tsx";
 import { fileLabel } from "./Files.tsx";
+import { MoveForm } from "./MoveForm.tsx";
 import { titleTransition } from "./Overview.tsx";
 import { Pip } from "./Pip.tsx";
 
@@ -116,7 +117,16 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
           <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />
         </div>
         <div className="note-side">
+          <MoveForm
+            key={`${noteId} ${remote.path}`}
+            noteId={noteId}
+            path={remote.path}
+            rev={remote.rev}
+            paths={[...client.state.remote.values()].map((note) => note.path)}
+            online={status === "live"}
+          />
           {file && <KindForm key={file.sha256} file={file} />}
+          {file?.mime.startsWith("image/") && <ShareForm file={file} />}
           <FieldForm
             fields={fieldsOf(data, manifest)}
             client={client}

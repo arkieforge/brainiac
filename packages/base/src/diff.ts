@@ -8,24 +8,32 @@ export interface State {
   readonly live: boolean;
   /** Absent for a note that doesn't exist yet, so a create records no class change. */
   readonly class?: NoteClass;
+  /** Absent for a note that doesn't exist yet, so a create records no move. */
+  readonly path?: string;
 }
 
 const NOTHING: State = { data: {}, body: "", live: false };
 
-export const stateOf = (note: Pick<NoteRow, "raw" | "fm" | "deletedAt" | "class"> | undefined): State =>
+export const stateOf = (
+  note: Pick<NoteRow, "raw" | "fm" | "deletedAt" | "class" | "path"> | undefined,
+): State =>
   note
     ? {
         data: JSON.parse(note.fm),
         body: splitNote(note.raw).body,
         live: note.deletedAt === null,
         class: note.class,
+        path: note.path,
       }
     : NOTHING;
 
 export const side = <K extends "before" | "after", T>(key: K, has: boolean, value: T) =>
   (has ? { [key]: value } : {}) as Partial<Record<K, T>>;
 
-/** What changed from one state of a note to another: each top-level field, the body, whether it is live, its class. */
+/**
+ * What changed from one state of a note to another: each top-level field, the body, whether it is live, its class,
+ * and its path.
+ */
 export function diff(before: State, after: State): Diff {
   const fields: Record<string, { before?: unknown; after?: unknown }> = {};
   for (const key of new Set([...Object.keys(before.data), ...Object.keys(after.data)])) {
@@ -41,5 +49,8 @@ export function diff(before: State, after: State): Diff {
     ...(before.class &&
       after.class &&
       before.class !== after.class && { class: { before: before.class, after: after.class } }),
+    ...(before.path !== undefined &&
+      after.path !== undefined &&
+      before.path !== after.path && { path: { before: before.path, after: after.path } }),
   };
 }

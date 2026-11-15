@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   deepEqual,
   findClash,
+  isRelationPath,
   isUlid,
   NoteParseError,
   normalizePath,
@@ -11,11 +12,16 @@ import {
   patch,
   PatchError,
   PathError,
+  pathKey,
+  relationTo,
+  resolveFile,
+  resolveRelation,
   splitNote,
   ulid,
   validate,
   type Diff,
   type Issue,
+  type Path,
   type PatchOp,
   type PlanItem,
   type YamlValue,
@@ -83,7 +89,12 @@ export type Mutation =
    * Sets a note's privacy class. Making it sensitive takes it out of the normal index in this transaction;
    * making it normal loosens privacy, which needs its own passkey signature (contract §4).
    */
-  | { readonly op: "classify"; readonly noteId: string; readonly baseRev: number; readonly class: NoteClass };
+  | { readonly op: "classify"; readonly noteId: string; readonly baseRev: number; readonly class: NoteClass }
+  /**
+   * Moves a note to `path`. Its own relative relations and body links, and every live note's that names it, are
+   * rewritten in the same run so each still points where it did; a sidecar's file moves with it (`fileMove`).
+   */
+  | { readonly op: "move"; readonly noteId: string; readonly baseRev: number; readonly path: string };
 
 export type MutationResult =
   | {
@@ -273,7 +284,7 @@ function check(sql: Sql, raw: string, id?: string): Issue[] | Readonly<Record<st
   return issues.length > 0 ? issues : data;
 }
 
-type Op = "create" | "update" | "delete" | "restore" | "classify";
+type Op = "create" | "update" | "delete" | "restore" | "classify" | "move";
 
 /** Writes the next revision of a note: the row, its revision with the inverse patch, its change, its job. */
 function write(
@@ -286,6 +297,10 @@ function write(
   op: Op,
 ): Extract<MutationResult, { status: "applied" }> {
   if (!started.has(next.id)) started.set(next.id, prev);
+  // A sidecar's file goes where its note goes; callers refuse a move whose file would land on another.
+  const file = prev && prev.path !== next.path ? fileMove(sql, prev, next.path) : undefined;
+  if (file === "taken") throw new Error(`${next.path}: its file's place is taken.`);
+  if (file) sql.all("UPDATE files SET path = ? WHERE path = ?", file.to, file.from);
   const seq = nextSeq(sql);
   const rev = (prev?.rev ?? 0) + 1;
   putNote(sql, { ...next, rev, seq, hash: sha256(next.raw) });
@@ -452,6 +467,7 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
         write(sql, started, ctx, runId, question, { ...question, class: "sensitive" }, "classify");
     return result;
   }
+  if (mutation.op === "move") return move(sql, started, ctx, runId, note, mutation.path);
 
   let raw: string;
   try {
@@ -476,6 +492,167 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
     { ...note, raw, deletedAt: null },
     deleted ? "restore" : "update",
   );
+}
+
+/**
+ * Moves `note` to `to`, in one run: the note with its own relations rewritten for its new folder, then every live
+ * note that names it, so no relation or body link ends up pointing elsewhere. A clash, or a sidecar whose file
+ * would land on another file, moves nothing.
+ */
+function move(
+  sql: Sql,
+  started: Started,
+  ctx: Context,
+  runId: string,
+  note: NoteRow,
+  to: string,
+): MutationResult {
+  let path: string;
+  try {
+    path = normalizePath(to);
+  } catch (error) {
+    if (error instanceof PathError) return invalid("path", error.message);
+    throw error;
+  }
+  if (!path.toLowerCase().endsWith(".md")) return invalid("path", `A note's path ends in .md (was ${to}).`);
+  if (path === note.path) return { status: "applied", noteId: note.id, rev: note.rev, seq: note.seq, runId };
+  // Only a change of case or Unicode form leaves a note's own path as the clash.
+  const others = livePaths(sql).filter((p) => pathKey(p) !== pathKey(note.path));
+  if (findClash(others, path) !== undefined) return invalid("path", `${path} is taken.`);
+  if (fileMove(sql, note, path) === "taken")
+    return invalid(
+      "path",
+      `This note's file would move beside it, onto a file already there. Pick another folder.`,
+    );
+  const live = new Set(others.map(pathKey));
+  const raw = movedText(note.raw, note.path, path, live);
+  const data = check(sql, raw, note.id);
+  if (Array.isArray(data)) return { status: "invalid", issues: data };
+  const moved = write(sql, started, ctx, runId, note, { ...note, path, raw }, "move");
+  for (const referrer of namers(sql, note)) {
+    const text = renamedIn(referrer.raw, referrer.path, note.path, path);
+    // A relation is checked only as text, so a rewrite can't leave its note failing its type; checked anyway.
+    if (text === referrer.raw || Array.isArray(check(sql, text, referrer.id))) continue;
+    write(sql, started, ctx, runId, referrer, { ...referrer, raw: text }, "update");
+  }
+  return moved;
+}
+
+/**
+ * Where a sidecar's file goes when the note moves to `to`: the path its unchanged `file:` resolves to from there,
+ * so `file: files/x.jpg` keeps its file beside it in any folder. `taken` when another stored file is there;
+ * `undefined` for a note that names no stored file.
+ */
+function fileMove(
+  sql: Sql,
+  note: Pick<NoteRow, "path" | "fm">,
+  to: string,
+): { readonly from: string; readonly to: string } | "taken" | undefined {
+  const file: unknown = JSON.parse(note.fm)["file"];
+  if (typeof file !== "string") return undefined;
+  let from: string;
+  let dest: string;
+  try {
+    from = pathKey(resolveFile(note.path, file));
+    dest = resolveFile(to, file);
+  } catch (error) {
+    if (error instanceof PathError) return undefined;
+    throw error;
+  }
+  const paths = sql.all<{ path: string }>("SELECT path FROM files WHERE path IS NOT NULL").map((f) => f.path);
+  const stored = paths.find((p) => pathKey(p) === from);
+  if (stored === undefined) return undefined;
+  if (paths.some((p) => p !== stored && pathKey(p) === pathKey(dest))) return "taken";
+  return { from: stored, to: dest };
+}
+
+/** Front-matter keys a move never rewrites: the id, and `file:`, whose file moves with its note. */
+const UNMOVED = new Set(["id", "file"]);
+
+/** Every relation-like text value in front-matter (a relative `.md` path), with where it sits. */
+function relationsIn(value: unknown, at: readonly (string | number)[]): { at: Path; value: string }[] {
+  if (typeof value === "string") return isRelationPath(value) ? [{ at, value }] : [];
+  if (Array.isArray(value)) return value.flatMap((item, i) => relationsIn(item, [...at, i]));
+  if (typeof value === "object" && value !== null)
+    return Object.entries(value).flatMap(([key, item]) =>
+      at.length === 0 && UNMOVED.has(key) ? [] : relationsIn(item, [...at, key]),
+    );
+  return [];
+}
+
+/** A body link to a note, `[text](../people/dr-okafor.md)`, with an optional `#heading` (as search reads them). */
+const LINK = /(\]\(<?)([^()<>\s]+?\.md)((?:#[^()<>\s]*)?>?\))/g;
+
+const resolved = (from: string, relation: string): string | undefined => {
+  try {
+    return resolveRelation(from, relation);
+  } catch (error) {
+    if (error instanceof PathError) return undefined;
+    throw error;
+  }
+};
+
+/** A link's path with `%20` and the like decoded, as Obsidian writes a space; one that doesn't decode, as it is. */
+const decoded = (link: string) => {
+  try {
+    return decodeURIComponent(link);
+  } catch {
+    return link;
+  }
+};
+
+/**
+ * `raw` with each relative relation and body link that `retarget` maps to a new target rewritten from `from` (where
+ * the note is) to point there. Values only, through `patch`, so the rest of the text is untouched.
+ */
+function rewritten(raw: string, from: string, retarget: (target: string) => string | undefined): string {
+  const { data } = parseNote(raw);
+  const ops: PatchOp[] = relationsIn(data, []).flatMap(({ at, value }) => {
+    const target = resolved(from, value);
+    const next = target === undefined ? undefined : retarget(target);
+    return next === undefined ? [] : [{ op: "set", path: at, value: next }];
+  });
+  const text = ops.length > 0 ? patch(raw, ops) : raw;
+  const start = splitNote(text).bodyStart;
+  const body = text.slice(start).replace(LINK, (link, open: string, path: string, close: string) => {
+    const target = resolved(from, decoded(path));
+    const next = target === undefined ? undefined : retarget(target);
+    if (next === undefined) return link;
+    return `${open}${decoded(path) === path ? next : encodeURI(next)}${close}`;
+  });
+  return text.slice(0, start) + body;
+}
+
+/**
+ * A note's text once it moves from `from` to `to`: its relations and links to live notes (`live`, by `pathKey`)
+ * and to itself still reach them. Text that names no note (a `.md` filename in a title) is left as it is.
+ */
+function movedText(raw: string, from: string, to: string, live: ReadonlySet<string>): string {
+  const self = pathKey(from);
+  return rewritten(raw, from, (target) => {
+    const key = pathKey(target);
+    if (key === self) return relationTo(to, to);
+    return live.has(key) ? relationTo(to, target) : undefined;
+  });
+}
+
+/** A note's text once the note at `from` moves to `to`: what named it names it at `to`. */
+const renamedIn = (raw: string, at: string, from: string, to: string): string =>
+  rewritten(raw, at, (target) => (pathKey(target) === pathKey(from) ? relationTo(at, to) : undefined));
+
+/**
+ * The live notes besides `note` whose relations or body links could name it: a relative one ends with its file
+ * name, as written or as a link encodes it. A relation by id needs no rewriting.
+ */
+function namers(sql: Sql, note: NoteRow): NoteRow[] {
+  const name = (note.path.split("/").at(-1) ?? note.path).toLowerCase();
+  const forms = [name, encodeURI(name).toLowerCase()];
+  return sql
+    .all<NoteRow>("SELECT * FROM notes WHERE deletedAt IS NULL AND id != ? ORDER BY path", note.id)
+    .filter((row) => {
+      const text = row.raw.normalize("NFC").toLowerCase();
+      return forms.some((form) => text.includes(form));
+    });
 }
 
 /** Records a conflict proposal: `change` goes from the note as it is (`before`) to the side it kept out (`after`). */
@@ -522,6 +699,7 @@ function inverseFrom(now: State, d: Diff): Diff {
     fields,
     ...(d.body && { body: { before: now.body, after: d.body.before ?? "" } }),
     ...(d.live && { live: { before: now.live, after: d.live.before ?? false } }),
+    ...(d.path && { path: { before: now.path ?? d.path.after, after: d.path.before } }),
   };
 }
 
@@ -590,7 +768,12 @@ function undoing(
     // only move the conflict's target back; they never touch the note, so no later edit is rolled back.
     const pending = new Map<
       string,
-      { fields: Record<string, Change<unknown>>; body?: Change<string>; live?: Change<boolean> }
+      {
+        fields: Record<string, Change<unknown>>;
+        body?: Change<string>;
+        live?: Change<boolean>;
+        path?: { before: string; after: string };
+      }
     >();
     const hold = (noteId: string, d: Diff) => {
       const p = pending.get(noteId) ?? { fields: {} };
@@ -605,6 +788,7 @@ function undoing(
       }
       if (d.body) p.body = { before: (p.body ?? d.body).before ?? "", after: d.body.after ?? "" };
       if (d.live) p.live = { before: (p.live ?? d.live).before ?? false, after: d.live.after ?? false };
+      if (d.path) p.path = { before: (p.path ?? d.path).before, after: d.path.after };
       pending.set(noteId, p);
     };
 
@@ -679,6 +863,19 @@ function undoing(
         }
       }
       let raw = patch(note.raw, ops);
+      // A move goes back if the note is still where the run put it and its old place (and its file's) is free.
+      const back =
+        d.path &&
+        !held?.path &&
+        note.path === d.path.after &&
+        findClash(
+          livePaths(sql).filter((p) => pathKey(p) !== pathKey(note.path)),
+          d.path.before,
+        ) === undefined &&
+        fileMove(sql, note, d.path.before) !== "taken"
+          ? d.path.before
+          : undefined;
+      const path = back ?? note.path;
       const bodyClash = d.body && (held?.body !== undefined || now.body !== d.body.after);
       if (d.body && !bodyClash) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.before ?? "");
       // Part of an undo can leave a note failing its type (a required field removed while the field that made
@@ -687,12 +884,22 @@ function undoing(
         hold(note.id, inverseFrom(now, d));
         continue;
       }
-      if (raw !== note.raw) {
-        write(sql, started, undo, undoRunId, note, { ...note, raw }, "update");
+      if (raw !== note.raw || path !== note.path) {
+        write(
+          sql,
+          started,
+          undo,
+          undoRunId,
+          note,
+          { ...note, raw, path },
+          path !== note.path ? "move" : "update",
+        );
         undone.add(note.id);
       }
       const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
-      if (Object.keys(clash.fields).length > 0 || body) hold(note.id, { ...clash, ...(body && { body }) });
+      const moved = d.path && back === undefined ? { before: note.path, after: d.path.before } : undefined;
+      if (Object.keys(clash.fields).length > 0 || body || moved)
+        hold(note.id, { ...clash, ...(body && { body }), ...(moved && { path: moved }) });
     }
 
     // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
@@ -706,8 +913,9 @@ function undoing(
         fields,
         ...(p.body && !same(p.body) && { body: p.body }),
         ...(p.live && !same(p.live) && { live: p.live }),
+        ...(p.path && !same(p.path) && { path: p.path }),
       };
-      if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
+      if (Object.keys(fields).length === 0 && !d.body && !d.live && !d.path) continue;
       conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
     }
     return { status: "applied", runId: undoRunId, undone: [...undone], conflicts };
