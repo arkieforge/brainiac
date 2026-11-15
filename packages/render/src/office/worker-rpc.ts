@@ -208,7 +208,8 @@ export function serveWorker<M extends Methods>(handlers: {
 
       if (!request) break;
 
-      const handler = handlers[request.method];
+      // Own methods only: a name like `constructor` must not reach the prototype.
+      const handler = Object.hasOwn(handlers, request.method) ? handlers[request.method] : undefined;
       const controller = new AbortController();
 
       state.current = { id: request.id, controller };
