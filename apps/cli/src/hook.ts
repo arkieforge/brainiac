@@ -86,6 +86,9 @@ function within(path: string, folder: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+/** `path` as a shell command writes it: on Windows the shell (Git Bash) takes `\` as an escape, so with `/`. */
+export const slashed = (path: string) => path.replaceAll(sep, "/");
+
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 
 /**
@@ -114,11 +117,13 @@ export function refusal(call: ToolCall, configured: string, home = homedir()): s
     // not `/vault-notes.md`). Best effort: a variable or glob can still reach the vault.
     const command = (text(input["command"]) ?? "")
       .replaceAll(/\\\r?\n/g, "") // line continuations
-      .replaceAll(/\$\{HOME\}|\$HOME(?!\w)/g, home);
-    const named = command
-      .split(vault)
-      .slice(1)
-      .some((after) => !/^[\w.-]/.test(after));
+      .replaceAll(/\$\{HOME\}|\$HOME(?!\w)/g, slashed(home));
+    const named = [...new Set([vault, configured, slashed(vault), slashed(configured)])].some((name) =>
+      command
+        .split(name)
+        .slice(1)
+        .some((after) => !/^[\w.-]/.test(after)),
+    );
     const words = shellWords(command);
     // `bash -c '<command>'` and `eval '<command>'` run their argument as a command of its own.
     const nested = words.flatMap((word, i) =>

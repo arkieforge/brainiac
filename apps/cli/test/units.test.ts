@@ -8,7 +8,7 @@ import { afterAll, afterEach, describe, expect, it } from "vite-plus/test";
 
 import { configDir, loadConfig, saveConfig } from "../src/config.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
-import { refusal } from "../src/hook.ts";
+import { refusal, slashed } from "../src/hook.ts";
 import { logout, startLogin, type Waiting } from "../src/login.ts";
 import { service } from "../src/service.ts";
 
@@ -125,7 +125,7 @@ describe("brainiac hook", () => {
   mkdirSync(join(vault, "identity"), { recursive: true });
   mkdirSync(join(vault, "facts", "roles"), { recursive: true });
   mkdirSync(code);
-  symlinkSync(join(vault, "identity"), join(code, "ids")); // a link from elsewhere still reads identity/
+  symlinkSync(join(vault, "identity"), join(code, "ids"), "junction"); // a link from elsewhere still reads identity/
   afterAll(() => rmSync(home, { recursive: true, force: true }));
   const check = (tool_name: string, tool_input: Record<string, unknown>, cwd = code) =>
     refusal({ tool_name, tool_input, cwd }, vault, home);
@@ -137,7 +137,7 @@ describe("brainiac hook", () => {
       ["Write", { file_path: join(vault, "new/folder/a.md") }],
       ["Write", { file_path: "me.md" }, vault],
       ["NotebookEdit", { notebook_path: join(vault, "a.ipynb") }],
-      ["Bash", { command: `sed -i s/7.5/8/ ${vault}/facts/tests/ielts-2026-11.md` }],
+      ["Bash", { command: `sed -i s/7.5/8/ ${slashed(vault)}/facts/tests/ielts-2026-11.md` }],
       ["Bash", { command: "cat ~/brainiac/me.md" }],
       ["Bash", { command: 'rm "$HOME/brainiac/inbox/a.md"' }],
       ["Bash", { command: "ls" }, join(vault, "facts")],
@@ -157,7 +157,7 @@ describe("brainiac hook", () => {
     const spaced = join(home, "My Record");
     mkdirSync(join(spaced, "identity"), { recursive: true });
     for (const command of [
-      `cat "${spaced}/identity/passport.md"`,
+      `cat "${slashed(spaced)}/identity/passport.md"`,
       "printf new > 'My Record/facts/roles/new.md'",
       "cat My\\ Record/me.md",
       'ls "$HOME"/My\\ Record',
@@ -175,8 +175,6 @@ describe("brainiac hook", () => {
       ["Read", { file_path: join(vault, "documents/files/transcript-bsc.pdf") }],
       ["Read", { file_path: "inbox/a.md" }, vault],
       ["Read", { file_path: join(code, "ids/passport.md") }],
-      // ids/ is identity/, so its .. is the vault, whatever the path looks like.
-      ["Read", { file_path: join(code, "ids") + "/../facts/tests/ielts-2026-11.md" }],
       ["Grep", { pattern: "cgpa", path: vault }],
       ["Grep", { pattern: "cgpa" }, vault],
       ["Grep", { pattern: "cgpa", path: join(vault, "history") }],
@@ -184,6 +182,9 @@ describe("brainiac hook", () => {
       ["Glob", { pattern: `${vault}/people/**` }],
       ["Glob", { pattern: "**/*.pdf", path: join(vault, "documents") }],
     ];
+    // ids/ is identity/, so its .. is the vault, whatever the path looks like. Windows applies .. before links.
+    if (process.platform !== "win32")
+      calls.push(["Read", { file_path: join(code, "ids") + "/../facts/tests/ielts-2026-11.md" }]);
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/isn't read from disk/);
   });
