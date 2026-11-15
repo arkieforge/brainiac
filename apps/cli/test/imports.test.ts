@@ -71,7 +71,7 @@ describe("brainiac scan", () => {
       "Experience\nTeaching Assistant, Compilers, Northvale University, Sep 2025 to present\n",
     );
     expect(scanReport(zip).slice(0, 4)).toEqual([
-      `${scratch}/linkedin-export.zip: a LinkedIn export`,
+      `${join(scratch, "linkedin-export.zip")}: a LinkedIn export`,
       "  Education  BSc Computer Science, Northvale University  facts/education/bsc-computer-science-northvale-university.md",
       "  Role       Teaching Assistant, Northvale University    facts/roles/teaching-assistant-northvale-university-2025.md",
       "  Role       Software Engineering Intern, Acme Robotics  facts/roles/software-engineering-intern-acme-robotics-2025.md",

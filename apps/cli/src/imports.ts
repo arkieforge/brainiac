@@ -1,8 +1,8 @@
 // `brainiac scan` and `brainiac import` (docs/product/onboarding.md): read a LinkedIn export, an OKF vault or a CV on
 // this laptop, show what each becomes without sending anything, then send it to the record, which files every note
 // as a proposal for the person (packages/base/src/imports.ts). What each file becomes is packages/core's.
-import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, extname, join, relative, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 
 import { fromCv, fromLinkedIn, fromVault, isLinkedIn, parseNote, type Plan } from "@brainiac/core";
 import { type } from "arktype";
@@ -74,7 +74,10 @@ export async function readSource(path: string, synced?: string): Promise<Source>
   const stat = lstatSync(path);
   if (stat.isDirectory()) {
     const real = realpathSync(path);
-    if (synced !== undefined && !relative(realpathSync(synced), real).startsWith(".."))
+    // Another drive on Windows is an absolute path from here, not a `..` one.
+    const fromSynced =
+      synced !== undefined && existsSync(synced) ? relative(realpathSync(synced), real) : "..";
+    if (!fromSynced.startsWith("..") && !isAbsolute(fromSynced))
       throw new Error(
         `${path} is the folder this computer syncs with your record: it's in your record already.`,
       );
