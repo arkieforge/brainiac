@@ -38,6 +38,8 @@ const OpenAlexWork = type({ cited_by_count: "number.integer >= 0" });
 const plain = (text: string | undefined) => {
   const words = text
     ?.replaceAll(/<[^>]*>/g, "")
+    // What one pass leaves of nested or unclosed markup (`<scr<script>ipt>`) is never a tag either.
+    .replaceAll(/[<>]/g, "")
     .replaceAll(/\s+/g, " ")
     .trim();
   return words || undefined;

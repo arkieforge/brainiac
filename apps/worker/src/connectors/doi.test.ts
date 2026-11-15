@@ -39,7 +39,7 @@ it("keeps only what the registry has, and fails rather than answer while a servi
   const doi = "10.5555/preprint";
   const preprint = {
     message: {
-      title: ["A preprint"],
+      title: ["A <scr<script>ipt>preprint</i"],
       institution: [{ name: "arXiv" }],
       published: { "date-parts": [[2026, null]] },
       author: [{ name: "Northvale NLP Group" }, { given: "Nadia", family: "Karim" }],
@@ -47,7 +47,8 @@ it("keeps only what the registry has, and fails rather than answer while a servi
   };
   // OpenAlex hasn't indexed it yet: no citation count, rather than zero.
   expect(await lookupDoi(doi, registries({ [`${CROSSREF}${doi}`]: preprint }).web)).toEqual({
-    title: "A preprint",
+    // Markup that a single pass leaves half of still leaves no tag.
+    title: "A iptpreprint/i",
     venue: "arXiv",
     published: "2026",
     authors: ["Northvale NLP Group", "Nadia Karim"],
