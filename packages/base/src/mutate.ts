@@ -20,8 +20,10 @@ import {
   type YamlValue,
 } from "@brainiac/core";
 
-import { settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
+import { planOf, settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
+import { canSee, type Connection } from "./connections.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
+import { DAY_MS, holds, manifestOf, recordHeld, type Action, type Proposed } from "./hold.ts";
 import { enqueue } from "./jobs.ts";
 import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
 import { putChunks } from "./search.ts";
@@ -38,6 +40,18 @@ export interface Context extends Grant {
   /** Groups the changes an agent or `organize` made together; a mutation without one is its own run. */
   readonly runId?: string;
   readonly now: number;
+  /**
+   * The connection a change comes through Brainiac's tools on, loaded by the record from its own table: its
+   * level, sensitive scope and hold window apply. Absent for the person on the site, and for sync, whose file
+   * edits are unattributed (contract §3): those skip the hold, never the approval list.
+   */
+  readonly connection?: Connection;
+}
+
+/** The connection's level doesn't allow the change at all. */
+export interface Forbidden {
+  readonly status: "forbidden";
+  readonly reason: string;
 }
 
 export type Mutation =
@@ -66,7 +80,10 @@ export type MutationResult =
   | { readonly status: "conflict"; readonly noteId: string; readonly rev: number }
   | { readonly status: "invalid"; readonly issues: readonly Issue[] }
   /** Nothing was written: the effect needs a passkey signature over `planHash` (contract §4). */
-  | NeedsApproval;
+  | NeedsApproval
+  /** Nothing was written yet: the change waits as a proposal, held or for the person to decide. */
+  | Proposed
+  | Forbidden;
 
 interface Change<T> {
   readonly before?: T;
@@ -76,11 +93,11 @@ interface Change<T> {
 /** The notes one transaction wrote, each as it started, for judging the transaction's effect at its end. */
 type Started = Map<string, NoteRow | undefined>;
 
-/** Thrown to roll back a transaction whose effect needs an approval it doesn't have. */
+/** Thrown to roll back a transaction whose effect needs an approval it doesn't have, or waits as a proposal. */
 class Held extends Error {
-  readonly verdict: NeedsApproval;
-  constructor(verdict: NeedsApproval) {
-    super("needs approval");
+  readonly verdict: NeedsApproval | { readonly autoApplyAt: number | null; readonly effects: Effect[] };
+  constructor(verdict: Held["verdict"]) {
+    super("held");
     this.verdict = verdict;
   }
 }
@@ -88,29 +105,57 @@ class Held extends Error {
 /**
  * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
  * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
+ * A connection's change then waits as a proposal if its level or the hold window says so: rolled back too, and
+ * recorded with the `action` that applies it once released. `released` is a proposal being applied.
  */
-function judged<T>(
+function judged<T extends { readonly status: string }>(
   sql: Sql,
   ctx: Context,
   scope: "change" | "undo",
+  action: Action,
+  released: boolean,
   fn: (started: Started) => T,
-): T | NeedsApproval {
-  try {
-    return sql.transaction(() => {
-      const started: Started = new Map();
-      const result = fn(started);
-      const effects: Effect[] = [...started].flatMap(([id, before]) => {
-        const after = getNote(sql, id);
-        return after ? [{ before, after }] : [];
+): T | NeedsApproval | Proposed | Forbidden {
+  const { connection } = ctx;
+  if (connection?.level === "read") return { status: "forbidden", reason: "This connection can only read." };
+  // The proposal is recorded in the same transaction the change rolled back in, so a crash keeps neither or both.
+  return sql.transaction(() => {
+    try {
+      return sql.transaction(() => {
+        const started: Started = new Map();
+        const result = fn(started);
+        const effects: Effect[] = [...started].flatMap(([id, before]) => {
+          const after = getNote(sql, id);
+          return after ? [{ before, after }] : [];
+        });
+        const verdict = settle(sql, effects, ctx, scope);
+        if (verdict === "signed" || !connection || released || effects.length === 0) {
+          if (typeof verdict === "object") throw new Held(verdict);
+          return result;
+        }
+        // A propose-level connection's every change waits for the person, who meets any approval it needs then.
+        if (connection.level === "propose") throw new Held({ autoApplyAt: null, effects });
+        if (verdict) throw new Held(verdict);
+        if (connection.holdDays > 0) {
+          const manifest = manifestOf(sql);
+          if (effects.some((effect) => holds(sql, manifest, effect)))
+            throw new Held({ autoApplyAt: ctx.now + connection.holdDays * DAY_MS, effects });
+        }
+        return result;
       });
-      const verdict = settle(sql, effects, ctx, scope);
-      if (verdict) throw new Held(verdict);
-      return result;
-    });
-  } catch (error) {
-    if (error instanceof Held) return error.verdict;
-    throw error;
-  }
+    } catch (error) {
+      if (!(error instanceof Held)) throw error;
+      if ("status" in error.verdict) return error.verdict;
+      return recordHeld(
+        sql,
+        action,
+        planOf(error.verdict.effects),
+        ctx,
+        error.verdict.autoApplyAt,
+        ulid(ctx.now),
+      );
+    }
+  });
 }
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -201,7 +246,12 @@ function write(
  * caller's transaction (the sync handler records the client's result in it too) it is a savepoint.
  */
 export function mutate(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
-  return judged(sql, ctx, "change", (started) => applyOne(sql, started, mutation, ctx));
+  return judged(sql, ctx, "change", mutation, false, (started) => applyOne(sql, started, mutation, ctx));
+}
+
+/** Applies a released proposal's mutation: the hold has run its course, the approval list still binds. */
+export function release(sql: Sql, mutation: Mutation, ctx: Context): MutationResult {
+  return judged(sql, ctx, "change", mutation, true, (started) => applyOne(sql, started, mutation, ctx));
 }
 
 function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context): MutationResult {
@@ -218,12 +268,16 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
     if (Array.isArray(data)) return { status: "invalid", issues: data };
     const id = String(data["id"]);
     if (getNote(sql, id)) return invalid("id", `A note with id ${id} already exists.`);
-    const live = sql.all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL");
-    const clash = findClash(
-      live.map((row) => row.path),
-      path,
+    const live = sql.all<{ path: string; class: NoteClass }>(
+      "SELECT path, class FROM notes WHERE deletedAt IS NULL",
     );
-    if (clash !== undefined) return invalid("path", `${path} clashes with ${clash}.`);
+    const clash = live.find((row) => findClash([row.path], path) !== undefined);
+    if (clash !== undefined) {
+      // A connection that can't see the note there isn't told its path.
+      return canSee(ctx.connection, clash)
+        ? invalid("path", `${path} clashes with ${clash.path}.`)
+        : invalid("path", `${path} is taken.`);
+    }
     return write(
       sql,
       started,
@@ -237,7 +291,8 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
 
   const note = getNote(sql, mutation.noteId);
   const deleted = note?.deletedAt !== null;
-  if (!note || (deleted && mutation.op !== "put")) {
+  // A note the connection can't see reads as no note at all: not its revision, its values or a failed check.
+  if (!note || (deleted && mutation.op !== "put") || !canSee(ctx.connection, note)) {
     return invalid("noteId", `No note with id ${mutation.noteId}.`);
   }
   if (note.rev !== mutation.baseRev) return { status: "conflict", noteId: note.id, rev: note.rev };
@@ -328,11 +383,27 @@ const livePaths = (sql: Sql) =>
  * run created and someone edited since, a deleted note whose path is taken, a note deleted since, or an
  * undo that would leave the note failing its type.
  */
-export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult | NeedsApproval {
+export function undoRun(
+  sql: Sql,
+  runId: string,
+  ctx: Context,
+): UndoResult | NeedsApproval | Proposed | Forbidden {
+  return undoing(sql, runId, ctx, false);
+}
+
+/** Applies a released proposal's undo. */
+export const releaseUndo = (sql: Sql, runId: string, ctx: Context) => undoing(sql, runId, ctx, true);
+
+function undoing(
+  sql: Sql,
+  runId: string,
+  ctx: Context,
+  released: boolean,
+): UndoResult | NeedsApproval | Proposed | Forbidden {
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
-  return judged(sql, ctx, "undo", (started): UndoResult => {
+  return judged(sql, undo, "undo", { op: "undo", runId }, released, (started): UndoResult | Forbidden => {
     // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
     // part; keep whole runs if people undo month-old runs.
     const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
@@ -341,6 +412,12 @@ export function undoRun(sql: Sql, runId: string, ctx: Context): UndoResult | Nee
        WHERE revisions.runId = ? ORDER BY changes.seq DESC`,
       runId,
     );
+    // Its conflicts would show the note's current values: a connection can't undo into a note it can't see.
+    const hidden = revisions.some((revision) => {
+      const note = getNote(sql, revision.noteId);
+      return note !== undefined && !canSee(ctx.connection, note);
+    });
+    if (hidden) return { status: "forbidden", reason: "This run changed notes this connection can't see." };
     const undone = new Set<string>();
     // One pending conflict per note. Once a field, the body or the note's existence is in it, older steps
     // only move the conflict's target back; they never touch the note, so no later edit is rolled back.

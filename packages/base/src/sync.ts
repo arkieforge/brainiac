@@ -215,8 +215,15 @@ function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { sta
       error: "This needs your approval with a passkey.",
     };
   }
+  // Sync carries no connection, so nothing it sends is held or forbidden; those read as what they are anyway.
   const error =
-    result.status === "invalid" ? result.issues.map((issue) => issue.message).join(" ") : "The note changed.";
+    result.status === "invalid"
+      ? result.issues.map((issue) => issue.message).join(" ")
+      : result.status === "forbidden"
+        ? result.reason
+        : result.status === "proposed"
+          ? "This change waits as a proposal."
+          : "The note changed.";
   return { ...done, ok: false, error };
 }
 

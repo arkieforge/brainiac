@@ -13,6 +13,24 @@ export {
   type Signature,
 } from "./approvals.ts";
 export {
+  authenticate,
+  canSee,
+  connect,
+  disconnect,
+  getConnection,
+  grant,
+  grantHash,
+  HOLD_DAYS,
+  mintToken,
+  restrict,
+  tokenBase,
+  type Connection,
+  type GrantPlan,
+  type Granted,
+  type Level,
+} from "./connections.ts";
+export { DAY_MS, type Proposed } from "./hold.ts";
+export {
   CHANGES_MS,
   dueJobs,
   enqueue,
@@ -32,6 +50,7 @@ export {
   propose,
   undoRun,
   type Context,
+  type Forbidden,
   type Mutation,
   type MutationResult,
   type UndoConflict,
@@ -46,6 +65,7 @@ export {
   type NoteInput,
   type NoteRow,
 } from "./notes.ts";
+export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
 export { chunkNote, putChunks, search, type ChunkInput, type Family, type Hit } from "./search.ts";
 export { changesSince, currentSeq, hello, receive, serve, type Served } from "./sync.ts";

@@ -19,6 +19,8 @@ const ManifestSpec = type({
     "[string]": {
       version: "number.integer >= 1",
       "folder?": "string",
+      /** A fact type: a connection's change to an existing value waits out the hold window (contract §3). */
+      "held?": "boolean",
       fields: { "[string]": FieldSpec },
     },
   },

@@ -252,6 +252,17 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   ],
   // Who opened a review session: only they may use it.
   ["ALTER TABLE review_runs ADD COLUMN actor TEXT NOT NULL DEFAULT ''"],
+  // Connections and held proposals. A grant's signature covers the connection's `rev`, which every change to
+  // its grants bumps, so a signature can't raise a connection again after it was lowered. A proposal keeps the
+  // change it holds (`action`), to run when it's released.
+  [
+    "ALTER TABLE connections ADD COLUMN rev INTEGER NOT NULL DEFAULT 0",
+    "CREATE UNIQUE INDEX connections_oauth ON connections (oauthClientId) WHERE oauthClientId IS NOT NULL",
+    "CREATE INDEX tokens_connection ON tokens (connectionId)",
+    "ALTER TABLE proposals ADD COLUMN action TEXT",
+    "ALTER TABLE proposals ADD COLUMN runId TEXT",
+    "ALTER TABLE proposals ADD COLUMN at INTEGER NOT NULL DEFAULT 0",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

@@ -3,6 +3,7 @@ schema_version: 1
 types:
   Education:
     version: 1
+    held: true
     folder: facts/education
     fields:
       institution: {kind: text, required: true, example: Northvale University}
@@ -14,6 +15,7 @@ types:
       sources: {kind: list}
   TestScore:
     version: 1
+    held: true
     folder: facts/tests
     fields:
       test: {values: [ielts-academic, toefl-ibt, gre], required: true}
@@ -27,6 +29,7 @@ types:
       verified: {kind: mapping}
   Role:
     version: 1
+    held: true
     folder: facts/roles
     fields:
       org: {kind: text, required: true, example: Acme Robotics}
