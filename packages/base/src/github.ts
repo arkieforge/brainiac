@@ -91,13 +91,15 @@ function refresh(sql: Sql, note: NoteRow, values: Readonly<Record<string, YamlVa
   return mutate(sql, { op: "patch", noteId: note.id, baseRev: note.rev, ops }, ctx).status === "applied";
 }
 
+// Split, not trimmed with `-+$`, which runs in quadratic time on a name of many dashes.
 const slug = (text: string) =>
   text
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .join("-")
     .slice(0, 60)
-    .replace(/-+$/, "");
+    .replace(/-$/, "");
 
 /** Paths taken by live notes and by notes open proposals would create, so two new projects never collide. */
 function takenPaths(sql: Sql): string[] {
