@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // The CLI runs only in Bun (bun:ffi, bun:sqlite); Bun's types bring Node's.
+  "compilerOptions": { "types": ["bun"] },
+  "include": ["src", "test"]
+}

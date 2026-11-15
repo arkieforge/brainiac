@@ -19,11 +19,17 @@ export interface Pending {
   readonly change: Change;
 }
 
-/** A saved local change the record kept out (conflict, invalid), with the reason. */
+/**
+ * A saved local change the record kept out (conflict, invalid), with the reason. A refused one clears when an
+ * edit made on its text lands (the person fixed it); a conflict clears once the record moves past `rev`
+ * (someone picked a side, or changed the note again).
+ */
 export interface Blocked {
   readonly change: Change;
   readonly reason: string;
   readonly proposalId?: string;
+  /** The note's revision when the record kept this edit out as a conflict. */
+  readonly rev?: number;
 }
 
 /** Everything a client must keep across restarts, kept in a `Store`. */
@@ -93,6 +99,12 @@ export class SyncClient {
   /** A write failed and no full rewrite has landed since: the store may lack remote notes. */
   #broken = false;
   readonly #listeners = new Set<(noteIds: ReadonlySet<string>) => void>();
+  /**
+   * Changes the record accepted whose new revision hasn't reached the remote layer yet: a result arrives just
+   * before its push, and without these the view would fall back to the older text (or none, for a create) in
+   * between. Each goes once the remote layer has its revision. Not stored: a restart catches up first.
+   */
+  #landed: (Pending & { readonly rev: number })[] = [];
 
   constructor(state: State, options: Options) {
     this.state = state;
@@ -117,7 +129,7 @@ export class SyncClient {
    */
   working(noteId: string): string | undefined {
     let text = this.state.remote.get(noteId)?.raw;
-    for (const { noteId: id, change } of this.state.pending) {
+    for (const { noteId: id, change } of [...this.#landed, ...this.state.pending]) {
       if (id !== noteId) continue;
       if (change.kind === "delete") text = undefined;
       else if (change.kind === "create" || text === undefined) text = change.raw;
@@ -136,6 +148,12 @@ export class SyncClient {
   subscribe(listener: (noteIds: ReadonlySet<string>) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  /** Writes the whole state to the store again, as for a new store that must start with all of it. */
+  saveAll(): void {
+    this.#clear = this.#dirty = true;
+    this.#commit();
   }
 
   /** Settles once every change so far is in the store; rejects if the latest write failed. */
@@ -167,15 +185,18 @@ export class SyncClient {
     this.#commit();
   }
 
-  edit(noteId: string, raw: string): void {
-    const base = this.working(noteId);
+  /**
+   * Queues `raw` as an edit of the note. `base` is the text it was made on: by default what the person sees,
+   * but a save found on disk was made on the file's earlier text, and the record merges from the base.
+   */
+  edit(noteId: string, raw: string, base = this.working(noteId)): void {
     if (base === undefined) throw new Error(`No note ${noteId} to edit.`);
     this.#queue(noteId, { kind: "put", raw, base });
     this.#commit();
   }
 
-  delete(noteId: string): void {
-    const base = this.working(noteId);
+  /** Queues a delete of the note; `base` is the text it was deleted from, as for `edit`. */
+  delete(noteId: string, base = this.working(noteId)): void {
     if (base === undefined) throw new Error(`No note ${noteId} to delete.`);
     this.#queue(noteId, { kind: "delete", base });
     this.#commit();
@@ -275,15 +296,37 @@ export class SyncClient {
     for (const item of items) {
       this.#touch(item.noteId);
       this.#remoteChanged.add(item.noteId);
+      this.#landed = this.#landed.filter(
+        (l) => l.noteId !== item.noteId || (!item.deleted && l.rev > item.rev),
+      );
       if (item.deleted) this.state.remote.delete(item.noteId);
-      else
+      else {
+        const rev = item.rev;
+        this.#unblock(item.noteId, (b) => b.rev !== undefined && b.rev < rev);
         this.state.remote.set(item.noteId, {
           rev: item.rev,
           path: item.path,
           raw: item.raw,
           class: item.class,
         });
+      }
     }
+  }
+
+  /** Drops the landed changes `drop` picks; their notes' view changes, so listeners hear of them. */
+  #dropLanded(drop: (landed: Pending & { readonly rev: number }) => boolean): void {
+    for (const landed of this.#landed) if (drop(landed)) this.#touch(landed.noteId);
+    this.#landed = this.#landed.filter((landed) => !drop(landed));
+  }
+
+  /** Drops the note's blocked edits that `drop` picks. */
+  #unblock(noteId: string, drop: (blocked: Blocked) => boolean): void {
+    const list = this.state.blocked.get(noteId);
+    const kept = list?.filter((b) => !drop(b));
+    if (!list || !kept || kept.length === list.length) return;
+    if (kept.length > 0) this.state.blocked.set(noteId, kept);
+    else this.state.blocked.delete(noteId);
+    this.#touch(noteId);
   }
 
   receive(message: ServerMessage): void {
@@ -310,6 +353,7 @@ export class SyncClient {
         if (message.attempt !== this.#attempt) return;
         for (const noteId of state.remote.keys()) this.#touch(noteId);
         state.remote.clear();
+        this.#dropLanded(() => true); // the snapshot is the record as a whole
         this.#remoteChanged.clear();
         this.#clear = true;
         this.#dirty = true;
@@ -320,6 +364,9 @@ export class SyncClient {
         // A push that starts after our cursor means we missed one: catch up through hello.
         if (state.cursor === null || message.from > state.cursor) return this.connect();
         if (message.to <= state.cursor) return;
+        // The record pushes an applied change right after its result. A landed change whose note isn't in the
+        // next push was never applied (a no-op, say against a deleted note), so it stops showing.
+        this.#dropLanded((l) => !message.items.some((item) => item.noteId === l.noteId));
         this.#take(message.items);
         state.cursor = message.to;
         return;
@@ -333,6 +380,27 @@ export class SyncClient {
         state.pending = state.pending.filter((p) => p.clientSeq !== message.clientSeq);
         this.#dirty = true;
         if (pending) this.#touch(pending.noteId);
+        const { rev } = message;
+        if (pending && message.ok && !message.conflict && rev !== undefined) {
+          if ((state.remote.get(pending.noteId)?.rev ?? 0) < rev) this.#landed.push({ ...pending, rev });
+        }
+        // An edit made on refused text landed whole: the person fixed it, and every refused edit it grew from.
+        if (pending && message.ok && !message.conflict && pending.change.kind === "put") {
+          const refused = (b: Blocked) => !b.proposalId && b.change.kind !== "delete";
+          const fixed = new Set([pending.change.base]);
+          // Newest first: each refused edit's base is the text of the one refused before it.
+          for (const b of (state.blocked.get(pending.noteId) ?? []).toReversed()) {
+            if (refused(b) && b.change.kind === "put" && fixed.has(b.change.raw)) fixed.add(b.change.base);
+          }
+          this.#unblock(
+            pending.noteId,
+            (b) => refused(b) && b.change.kind !== "delete" && fixed.has(b.change.raw),
+          );
+        }
+        // A create landed: a refused create of the same note (sent again once fixed) no longer stands.
+        if (pending && message.ok && !message.conflict && pending.change.kind === "create") {
+          this.#unblock(pending.noteId, (b) => !b.proposalId && b.change.kind === "create");
+        }
         if (pending && (!message.ok || message.conflict)) {
           const blocked = state.blocked.get(pending.noteId) ?? [];
           state.blocked.set(pending.noteId, [
@@ -341,6 +409,7 @@ export class SyncClient {
               change: pending.change,
               reason: message.error ?? (message.conflict ? "conflict" : "refused"),
               ...(message.conflict && { proposalId: message.conflict.proposalId }),
+              ...(message.conflict && message.rev !== undefined && { rev: message.rev }),
             },
           ]);
         }

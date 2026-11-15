@@ -130,13 +130,82 @@ describe("sync chaos", () => {
     // The person fixes the file; this edit starts from the broken text.
     laptop.client.edit(A, good.replace("type: Note", "type: Note\nstatus: after"));
     world.settle();
-    expect(laptop.client.state.blocked.get(A)?.at(-1)?.reason).toMatch(/YAML/);
+    // The fix landed, so the refused edit before it is no longer blocked.
+    expect(laptop.client.state.blocked.has(A)).toBe(false);
     expect(field(world, "status")).toBe("after");
     const [client] = world.sql.all<{ highWater: number }>(
       "SELECT highWater FROM clients WHERE clientId = ?",
       laptop.client.state.clientId,
     );
     expect(client?.highWater).toBe(2);
+  });
+
+  it("a refused edit stays blocked until an edit made on its text lands, through a chain of them", () => {
+    const { world, laptop } = start();
+    const broken = "---\nid: [\n---\nhalf\n";
+    const worse = `${broken}more\n`;
+    laptop.client.edit(A, broken);
+    laptop.client.edit(A, worse, broken);
+    world.settle();
+    expect(laptop.client.state.blocked.get(A)?.length).toBe(2);
+    // An edit made on the record's text fixes nothing the person wrote in the refused ones.
+    setField(laptop, A, "title", "elsewhere");
+    world.settle();
+    expect(laptop.client.state.blocked.get(A)?.length).toBe(2);
+    // The fix starts from the refused text, which has no readable base, so it repeats the record's fields.
+    const now = world.note(A)?.raw ?? "";
+    laptop.client.edit(A, now.replace("type: Note", "type: Note\nstatus: fixed"), worse);
+    world.settle();
+    expect(laptop.client.state.blocked.has(A)).toBe(false);
+  });
+
+  it("a change the record accepted stays in view until its push arrives", () => {
+    const { world, laptop } = start();
+    setField(laptop, A, "status", "landed");
+    const C = "01M6AAAAAAAAAAAAAAAAAAAAA9";
+    laptop.client.create(C, "notes/c.md", `---\nid: ${C}\ntype: Note\ntitle: c\n---\n`, "normal");
+    while (world.up(laptop));
+    // Each result comes just before its push; between them the view must not fall back.
+    for (let step = 0; laptop.link.down.length > 0; step++) {
+      world.down(laptop);
+      expect(laptop.client.working(A), `after message ${step}`).toContain("status: landed");
+      if (laptop.client.state.pending.every((p) => p.noteId !== C))
+        expect(laptop.client.working(C)).toBeDefined();
+    }
+  });
+
+  it("a change the record didn't apply stops showing at the next push", () => {
+    const { world, laptop, phone } = start();
+    const old = laptop.client.working(A)!;
+    laptop.client.delete(A);
+    world.settle();
+    // Its old text again, on purpose: against the deleted note the record changes nothing and pushes nothing.
+    laptop.client.edit(A, old, old);
+    while (world.up(laptop) || world.down(laptop));
+    const later = "01M6AAAAAAAAAAAAAAAAAAAAA8";
+    phone.client.create(
+      later,
+      "notes/later.md",
+      `---\nid: ${later}\ntype: Note\ntitle: later\n---\n`,
+      "normal",
+    );
+    const heard: string[] = [];
+    laptop.client.subscribe((ids) => heard.push(...ids));
+    world.settle(); // any later push
+    expect(laptop.client.working(A)).toBeUndefined();
+    expect(heard).toContain(A); // a daemon reflects it, and takes the file away
+  });
+
+  it("a conflict stays blocked until the record moves past it", () => {
+    const { world, laptop, phone } = start();
+    world.disconnect(laptop);
+    setField(laptop, A, "status", "laptop");
+    setField(phone, A, "status", "phone");
+    world.settle();
+    expect(laptop.client.state.blocked.get(A)?.at(-1)?.reason).toBe("conflict");
+    setField(phone, A, "title", "picked");
+    world.settle();
+    expect(laptop.client.state.blocked.has(A)).toBe(false);
   });
 
   // The original applied its change but went offline before acknowledging it, so its result is still stored.
