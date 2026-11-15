@@ -9,16 +9,20 @@ import {
   classifyFile,
   connect,
   dataKey,
+  decide,
   getFile,
   getNote,
   grant,
   kindHash,
   migrate,
+  mutate,
   readText,
   recordUpload,
   restrict,
+  saveSecret,
   sealFile,
   unseal,
+  withdraw,
   type Classified,
   type Connection,
   type Context,
@@ -264,6 +268,81 @@ export const vaultCases: Record<string, Case> = {
     equal(getFile(sql, sha256)?.class, "vault");
     equal(getFile(sql, sha256)?.noteId, null);
     equal(sql.all("SELECT name FROM secrets").length, 1);
+  },
+
+  "a passport proposal the person rejects or its agent withdraws takes its secret with it": (
+    sql,
+    fixtures,
+  ) => {
+    const key = record(sql, fixtures);
+    const agent = connectionFor(sql);
+    const secrets = () =>
+      sql.all<{ name: string }>("SELECT name FROM secrets ORDER BY name").map((s) => s.name);
+    const proposalOf = (sha256: string) => {
+      const [row] = sql.all<{ id: string; action: string }>(
+        "SELECT id, action FROM proposals WHERE status = 'open' AND action LIKE ?",
+        `%passport.uto.${sha256.slice(0, 12)}%`,
+      );
+      ok(row);
+      return { id: row.id, raw: (JSON.parse(row.action) as { raw: string }).raw };
+    };
+    // Rejected by the person.
+    const first = upload(sql, key, PASSPORT, via(agent)).sha256;
+    same(secrets(), [`passport.uto.${first.slice(0, 12)}`]);
+    equal(decide(sql, proposalOf(first).id, "reject", human).status, "rejected");
+    same(secrets(), []);
+    // Withdrawn by its agent.
+    const second = upload(sql, key, `Scanned again\n${PASSPORT}`, via(agent)).sha256;
+    equal(withdraw(sql, proposalOf(second).id, via(agent)).status, "withdrawn");
+    same(secrets(), []);
+    // One the person saved a domain for while it waited is theirs now.
+    const third = upload(sql, key, `Third scan\n${PASSPORT}`, via(agent)).sha256;
+    const name = `passport.uto.${third.slice(0, 12)}`;
+    ok("secret" in saveSecret(sql, key, { name, domain: "visa.uto.example" }, human));
+    equal(decide(sql, proposalOf(third).id, "reject", human).status, "rejected");
+    same(secrets(), [name]);
+  },
+
+  "a rejected proposal never takes a secret something else names": (sql, fixtures) => {
+    const key = record(sql, fixtures);
+    const agent = connectionFor(sql);
+    const { sha256 } = upload(sql, key, PASSPORT, via(agent));
+    const name = `passport.uto.${sha256.slice(0, 12)}`;
+    const [proposal] = sql.all<{ id: string; action: string }>(
+      "SELECT id, action FROM proposals WHERE status = 'open'",
+    );
+    ok(proposal);
+    const { raw } = JSON.parse(proposal.action) as { raw: string };
+    // The person wrote the passport's note themselves before turning the agent's down: its number stays.
+    const own = mutate(
+      sql,
+      { op: "create", path: "identity/my-passport.md", raw, class: "sensitive" },
+      human,
+    );
+    equal(own.status, "applied", JSON.stringify(own));
+    equal(decide(sql, proposal.id, "reject", human).status, "rejected");
+    same(
+      sql.all<{ name: string }>("SELECT name FROM secrets").map((s) => s.name),
+      [name],
+    );
+    // A secret the person saved stays when an agent's proposal naming it is turned down.
+    ok("secret" in saveSecret(sql, key, { name: "portal.tum", value: "hunter2" }, human));
+    const named = mutate(
+      sql,
+      {
+        op: "create",
+        path: "identity/portal.md",
+        raw: raw.replace(/^id: .*$/m, "id: 01KA0000000000000000000000").replace(name, "portal.tum"),
+        class: "sensitive",
+      },
+      via(agent),
+    );
+    ok(named.status === "proposed", JSON.stringify(named));
+    equal(decide(sql, named.proposalId, "reject", human).status, "rejected");
+    same(
+      sql.all<{ name: string }>("SELECT name FROM secrets ORDER BY name").map((s) => s.name),
+      [name, "portal.tum"],
+    );
   },
 
   "loosening a confirmed kind needs the person's passkey, tightening doesn't": (sql, fixtures) => {

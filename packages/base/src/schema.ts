@@ -337,6 +337,9 @@ const MIGRATIONS: readonly (readonly string[])[] = [
   // The actor that registered each sync client id; only it may use the id. Rows from before have none and go
   // to the next actor that uses them.
   ["ALTER TABLE clients ADD COLUMN actor TEXT"],
+  // The proposal that brought each secret in (a passport's number, waiting with its note's proposal), so turning
+  // the proposal down takes the secret with it. The person's own saves have none.
+  ["ALTER TABLE secrets ADD COLUMN proposalId TEXT"],
 ];
 
 /** The SQL schema version this code writes. */
