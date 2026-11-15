@@ -26,6 +26,7 @@ import { connectionCases } from "./connection-cases.ts";
 import { githubCases } from "./github-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
+import { papersCases } from "./papers-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
 import { vaultCases } from "./vault-cases.ts";
 import { toolCases } from "./tool-cases.ts";
@@ -117,6 +118,7 @@ export const cases: Record<string, Case> = {
   ...privacyCases,
   ...vaultCases,
   ...ingestCases,
+  ...papersCases,
   ...toolCases,
   ...githubCases,
   "a new record migrates to the latest version": (sql) => {

@@ -312,6 +312,9 @@ importers:
       '@simplewebauthn/server':
         specifier: 13.3.3
         version: 13.3.3
+      arktype:
+        specifier: 2.2.9
+        version: 2.2.9
       better-auth:
         specifier: 1.7.22
         version: 1.7.22(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0)

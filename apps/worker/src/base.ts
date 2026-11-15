@@ -8,6 +8,7 @@ import {
   dataKey,
   getFile,
   installFile,
+  installLookup,
   kindHash,
   repoDeleted,
   syncRepos,
@@ -29,6 +30,7 @@ import {
   type FileToken,
   type Extracted,
   type FileView,
+  type Found,
   type Uploaded,
   connect,
   connectionOf,
@@ -109,9 +111,13 @@ interface Socket {
   readonly clientId: string | null;
 }
 
-/** What a job works on, for the jobs consumer: a note to index, or a file to extract (and index once cleared). */
+/**
+ * What a job works on, for the jobs consumer: a note to index, a file to extract (and index once cleared), or a
+ * paper's DOI to look up. A lookup leaves with the DOI alone, never the note.
+ */
 export type JobWork =
   | { readonly kind: "index"; readonly note: NoteRow }
+  | { readonly kind: "doi"; readonly doi: string }
   | {
       readonly kind: "file";
       readonly sha256: string;
@@ -617,7 +623,10 @@ export class Base extends DurableObject<Env> {
       this.wake();
       return null;
     }
-    if ("note" in input) return { kind: "index", note: input.note };
+    if ("note" in input)
+      return input.job.kind === "doi"
+        ? { kind: "doi", doi: String(JSON.parse(input.note.fm)["doi"]) }
+        : { kind: "index", note: input.note };
     const { file } = input;
     const object = await this.env.BLOBS.get(file.r2Key);
     // Gone from R2 is a bug, not a state: fail the job loudly rather than mark the file read.
@@ -638,6 +647,17 @@ export class Base extends DurableObject<Env> {
     const result = finishJob(this.sql, jobId, (job) => putChunks(this.sql, job.noteId, job.rev, chunks));
     // The job made room on the queue for the next one.
     this.wake();
+    return result;
+  }
+
+  /**
+   * Writes what a paper's DOI lookup found into its `synced:` block, as the DOI connector, while the paper is still
+   * at the job's revision (packages/base/src/papers.ts).
+   */
+  installLookup(jobId: string, found: Found): "installed" | "dropped" {
+    const before = currentSeq(this.sql);
+    const result = installLookup(this.sql, jobId, found, Date.now());
+    this.changed(before);
     return result;
   }
 

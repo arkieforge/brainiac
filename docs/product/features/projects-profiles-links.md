@@ -5,7 +5,8 @@ Projects come in from GitHub, profiles are checked for drift, and useful links a
 | Phase | Source                                                                  | How                                                                                                                       | Brings in                                                  |
 | ----- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | M2    | **GitHub**                                                              | Our GitHub App on the repos you pick; webhooks + a daily ETag sweep                                                       | Repos, stars, language, archived, last push                |
-| M2    | **ORCID + DOIs**                                                        | ORCID OAuth; Crossref and OpenAlex (free)                                                                                 | Works, venues, author position, citations                  |
+| M2    | **DOIs**                                                                | Crossref and OpenAlex (free, no key), looked up again weekly                                                              | Title, venue, date, authors, citations                     |
+| M2    | **ORCID** (#112)                                                        | ORCID OAuth                                                                                                               | A verified iD, your works, your author position            |
 | M2    | **LinkedIn**                                                            | Your data export zip                                                                                                      | Positions, education, skills, certifications               |
 | M3    | **Drift checks**                                                        | Through treg: `linkedin.user.profile`, `x.user.profile`, `google.serp.scholar` (your own public profiles, started by you) | "LinkedIn says 2025, record says 2026", with text to paste |
 | later | Kaggle, LeetCode, Hugging Face, npm, app stores, Credly, Devpost, blogs | Public APIs or treg                                                                                                       | Ranks, packages, apps, certificates, talks                 |
@@ -31,5 +32,8 @@ synced: {repo_id: R_kgDOJx..., repo: nadia-karim/library-seat-finder, url: "http
   proposal or a deleted project is never proposed again. Disconnecting on the account page stops the reading;
   your projects stay. Laptops get projects through sync; agents read and query them like any note; the
   extension has no part in it.
+- **Papers**: a Paper note with a `doi` gets a `synced:` block (title, venue, published, authors, citations,
+  checked), refreshed weekly; a DOI no registry knows says `missing: true`. Which author you are is your own
+  `position` field, asked until it is set, until ORCID (#112) can tell from your verified iD.
 - **Ownership is verified** before a profile counts (OAuth, a code in your bio, or a `rel="me"` link), and private-repo projects default to private.
 - **Links**: saved from the extension, the phone, the CLI or MCP `add`. Text via treg `web.extract`, a PDF snapshot via Browser Rendering, a weekly health check, and a signal when an application depends on a dead link.
