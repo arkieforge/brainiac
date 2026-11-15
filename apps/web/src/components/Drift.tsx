@@ -85,7 +85,9 @@ export function NoteDrift({
   readonly noteId: string;
 }) {
   const checks: Check[] = detect(parsedNotes(client), manifest, Date.now()).filter(
-    (check) => check.noteId === noteId && (check.detector === "drift" || check.detector === "unchecked"),
+    (check) =>
+      check.noteId === noteId &&
+      (check.detector === "drift" || check.detector === "unchecked" || check.detector === "dead"),
   );
   if (checks.length === 0) return null;
   return (

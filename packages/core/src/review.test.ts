@@ -611,6 +611,80 @@ describe("drift", () => {
   });
 });
 
+const linkChecks = (notes: readonly ReviewNote[]) =>
+  detect(notes, manifest, NOW)
+    .filter((c) => c.detector === "dead" || (c.detector === "unchecked" && c.field === "url"))
+    .map(({ noteId, detector, evidence, related }) => ({ noteId, detector, evidence, related }));
+
+describe("links", () => {
+  const URL = "https://example.org/scholarships/daad";
+  const link = (data: Record<string, unknown>) =>
+    note("links/daad-scholarship-database.md", {
+      type: "Link",
+      url: URL,
+      title: "DAAD scholarship database",
+      ...data,
+    });
+  const dead = { url: URL, status: "dead", code: 404, checked: "2026-11-14T03:00:00Z" };
+
+  it("a dead link an open application relies on is a flag naming the application, by its own `for` or a requirement", () => {
+    const forTum = link({ for: "../applications/tum-msc-informatics-2027/application.md", synced: dead });
+    expect(linkChecks([...fixture, forTum])).toEqual([
+      {
+        noteId: forTum.id,
+        detector: "dead",
+        evidence: "Gone (404) when checked 2026-11-14, and TUM MSc Informatics, Winter 2027 relies on it",
+        related: [TUM.id],
+      },
+    ]);
+    expect(
+      overview([...fixture, forTum], manifest, NOW).items.find((i) => i.noteId === forTum.id)?.mark,
+    ).toBe("wrong");
+    // A requirement that names links is relied on the same way, and one application is named once.
+    const needs = edited(TUM, {
+      requirements: [
+        ...(TUM.data["requirements"] as unknown[]),
+        { need: "Funding page", check: { type: "Link" } },
+      ],
+    });
+    const required = link({ synced: dead });
+    expect(
+      linkChecks([...replace(fixture, needs), forTum, required]).map((c) => [c.noteId, c.related]),
+    ).toEqual([
+      [forTum.id, [TUM.id]],
+      [required.id, [TUM.id]],
+    ]);
+  });
+
+  it("a dead link nothing open relies on, a live one, and a block for another address raise nothing", () => {
+    const decided = replace(fixture, edited(TUM, { status: "decided" }));
+    const forTum = { for: "../applications/tum-msc-informatics-2027/application.md" };
+    expect(linkChecks([...fixture, link({ synced: dead })])).toEqual([]);
+    expect(linkChecks([...decided, link({ ...forTum, synced: dead })])).toEqual([]);
+    expect(
+      linkChecks([...fixture, link({ ...forTum, synced: { ...dead, status: "live", code: undefined } })]),
+    ).toEqual([]);
+    expect(
+      linkChecks([...fixture, link({ ...forTum, synced: { ...dead, url: "https://example.org/old" } })]),
+    ).toEqual([]);
+  });
+
+  it("a link that couldn't be checked says why, and is never called dead", () => {
+    const blocked = link({
+      for: "../applications/tum-msc-informatics-2027/application.md",
+      synced: { url: URL, status: "unchecked", why: "it answered 403", checked: "2026-11-14T03:00:00Z" },
+    });
+    expect(linkChecks([...fixture, blocked])).toEqual([
+      {
+        noteId: blocked.id,
+        detector: "unchecked",
+        evidence: "Couldn't be checked: it answered 403, and TUM MSc Informatics, Winter 2027 relies on it",
+        related: [TUM.id],
+      },
+    ]);
+  });
+});
+
 describe("seeded errors", () => {
   it("are found with precision and recall of at least 0.90", () => {
     // What the clean fixture already raises is true of it, not a seed: it doesn't count either way.

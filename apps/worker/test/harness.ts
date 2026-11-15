@@ -30,6 +30,7 @@ export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
   readonly #lookups: ((result: "installed" | "dropped") => void)[] = [];
   readonly #profiles: ((result: "installed" | "dropped") => void)[] = [];
+  readonly #links: ((result: "installed" | "dropped") => void)[] = [];
   readonly #alarms: (() => void)[] = [];
   /** Sync messages left before the one this instance dies handling; 0 is none. */
   #dieAt = 0;
@@ -226,6 +227,17 @@ export class TestBase extends Base {
     const result = super.installProfile(...args);
     for (const resolve of this.#profiles.splice(0)) resolve(result);
     return result;
+  }
+
+  override async installLink(...args: Parameters<Base["installLink"]>): Promise<"installed" | "dropped"> {
+    const result = await super.installLink(...args);
+    for (const resolve of this.#links.splice(0)) resolve(result);
+    return result;
+  }
+
+  /** Resolves when the queue consumer next hands a link check back. Call it before dispatching. */
+  nextLink(): Promise<"installed" | "dropped"> {
+    return new Promise((resolve) => this.#links.push(resolve));
   }
 
   /** Resolves when the queue consumer next hands a profile read back. Call it before dispatching. */

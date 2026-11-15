@@ -140,6 +140,19 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       synced: { kind: "mapping", example: "{url: https://x.com/nadia, owned: true}" },
     },
   },
+  // A page the person saved (packages/base/src/links.ts). `for` names the application that relies on it, if one
+  // does; `synced` is what the links connector last saw there: whether it answers, its text, its PDF snapshot.
+  Link: {
+    version: 1,
+    folder: "links",
+    headline: "{title}",
+    fields: {
+      url: { kind: "text", required: true, example: "https://www.daad.de/en/scholarships" },
+      title: { kind: "text" },
+      for: { kind: "relation", example: "../applications/tum-msc-informatics-2027/application.md" },
+      synced: { kind: "mapping", example: "{url: https://www.daad.de/en/scholarships, status: live}" },
+    },
+  },
 };
 
 // Every note has these, whatever its type.

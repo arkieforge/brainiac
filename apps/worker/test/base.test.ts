@@ -14,6 +14,7 @@ const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(FIXTURES, TUM), "utf8");
 const PAPER = "facts/papers/swahili-ner-2026.md";
 const PROFILE = "profiles/linkedin.md";
+const APPLICATION = "applications/tum-msc-informatics-2027/application.md";
 const human = { actor: "human" };
 /** Reads as a connection without the sensitive scope. */
 const agent = { sensitive: false };
@@ -161,6 +162,47 @@ describe("Base DO", () => {
       },
     });
     expect(await base.actorOf(id ?? "")).toBe("connector:doi");
+  });
+
+  it("flags a saved link that is gone while the fixture application relies on it, through the queue and the consumer", async () => {
+    const base = (await record("link"))();
+    const manifest = readFileSync(join(FIXTURES, "okf-base.yaml"), "utf8");
+    await base.setManifest(manifest);
+    const link = [
+      "---",
+      "id: 01M6AM78G0STS7TB29G7A10KNK",
+      "type: Link",
+      "title: DAAD scholarship database",
+      // Nothing answers it in the test's outside world: a 404, as a page that was taken down.
+      "url: https://example.org/scholarships/daad",
+      "for: ../applications/tum-msc-informatics-2027/application.md",
+      "---",
+      "",
+    ].join("\n");
+    const [, id] = await base.seed([
+      { path: APPLICATION, raw: readFileSync(join(FIXTURES, APPLICATION), "utf8"), class: "normal" },
+      { path: "links/daad-scholarship-database.md", raw: link, class: "normal" },
+    ]);
+    const checked = base.nextLink();
+    await base.dispatch();
+    expect(await checked).toBe("installed");
+    expect(await base.actorOf(id ?? "")).toBe("connector:links");
+
+    const notes = await base.notes(human);
+    if (!Array.isArray(notes)) throw new Error(JSON.stringify(notes));
+    const parsed: ReviewNote[] = notes.map((n) => ({ id: n.id, path: n.path, data: parseNote(n.raw).data }));
+    expect(parsed.find((n) => n.id === id)?.data["synced"]).toMatchObject({ status: "dead", code: 404 });
+    expect(detect(parsed, parseManifest(manifest), Date.now()).filter((c) => c.noteId === id)).toEqual([
+      {
+        noteId: id,
+        detector: "dead",
+        field: "url",
+        evidence: expect.stringMatching(
+          /^Gone \(404\) when checked \d{4}-\d{2}-\d{2}, and TUM MSc Informatics, Winter 2027 relies on it$/,
+        ),
+        related: [parsed.find((n) => n.path === APPLICATION)?.id],
+      },
+    ]);
   });
 
   it("checks the fixture LinkedIn for drift through treg, and asking again the same day reads nothing", async () => {

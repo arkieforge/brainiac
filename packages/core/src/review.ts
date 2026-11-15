@@ -37,6 +37,8 @@ export type Detector =
   | "stale"
   /** One of the person's own profiles (LinkedIn, X, Google Scholar) says something else than the record. */
   | "drift"
+  /** A saved link an open application relies on is gone (404 or 410 at its last check). */
+  | "dead"
   /** A profile couldn't be read, or isn't shown to be the person's yet, so nothing was compared. */
   | "unchecked";
 
@@ -272,6 +274,7 @@ export function detect(notes: readonly ReviewNote[], manifest: Manifest | null, 
   sameItems(current, manifest, verified, add);
   spellings(current, manifest, verified, add);
   expiries(notes, current, resolve, now, add);
+  deadLinks(notes, current, resolve, now, add);
   for (const check of driftChecks(notes)) add(check);
   const order = new Map(notes.map((note, i) => [note.id, i]));
   return checks.toSorted((a, b) => (order.get(a.noteId) ?? 0) - (order.get(b.noteId) ?? 0));
@@ -734,7 +737,63 @@ function expiries(
   }
 }
 
-const WRONG = new Set<Detector>(["document", "duplicate", "impossible", "spelling", "expired", "drift"]);
+/**
+ * A saved link an open application relies on, through a requirement check or the link's own `for`, that was gone
+ * at its last health check, or couldn't be checked. A link nothing relies on is only the person's bookmark.
+ */
+function deadLinks(
+  notes: readonly ReviewNote[],
+  current: readonly ReviewNote[],
+  resolve: Resolve,
+  now: number,
+  add: Add,
+) {
+  const relies = new Map<ReviewNote, Set<ReviewNote>>();
+  const rely = (link: ReviewNote, application: ReviewNote) =>
+    relies.set(link, (relies.get(link) ?? new Set()).add(application));
+  for (const { application, matches } of requirements(notes, current, resolve, now))
+    for (const match of matches) if (match.data["type"] === "Link") rely(match, application);
+  for (const link of current) {
+    const application = link.data["type"] === "Link" ? resolve(link, link.data["for"]) : undefined;
+    if (application && isOpen(application)) rely(link, application);
+  }
+  for (const [link, applications] of relies) {
+    const synced = link.data["synced"];
+    // A block filled for another address says nothing about this one: it is checked again on its own.
+    if (!isRecord(synced) || synced["url"] !== link.data["url"]) continue;
+    const apps = [...applications];
+    const names = apps.map(labelOf);
+    const who = `${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)} rely` : `${names[0]} relies`} on it`;
+    const related = apps.map((app) => app.id);
+    const checked = typeof synced["checked"] === "string" ? synced["checked"].slice(0, 10) : undefined;
+    if (synced["status"] === "dead")
+      add({
+        noteId: link.id,
+        detector: "dead",
+        field: "url",
+        evidence: `Gone (${show(synced["code"])}) when checked${checked ? ` ${checked}` : ""}, and ${who}`,
+        related,
+      });
+    else if (synced["status"] === "unchecked")
+      add({
+        noteId: link.id,
+        detector: "unchecked",
+        field: "url",
+        evidence: `Couldn't be checked: ${show(synced["why"])}, and ${who}`,
+        related,
+      });
+  }
+}
+
+const WRONG = new Set<Detector>([
+  "document",
+  "duplicate",
+  "impossible",
+  "spelling",
+  "expired",
+  "drift",
+  "dead",
+]);
 
 /** How bad a check is: a conflict, then a value that looks wrong, then staleness, then missing proof. */
 const rankOf = (check: Check) =>
