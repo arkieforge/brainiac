@@ -8,6 +8,7 @@ import { ulid } from "@brainiac/core";
 import { advance, canonical, type Signature } from "./approvals.ts";
 import { DAY_MS } from "./hold.ts";
 import type { NoteRow } from "./notes.ts";
+import { PERSON, project, type Principal } from "./project.ts";
 import type { Sql } from "./sql.ts";
 
 export type Level = "read" | "propose" | "write";
@@ -58,9 +59,13 @@ export function getConnection(sql: Sql, id: string): Connection | undefined {
 export const connectionOf = (sql: Sql, actor: string): Connection | undefined =>
   actor.startsWith("connection:") ? getConnection(sql, actor.slice("connection:".length)) : undefined;
 
-/** Whether `connection` may see `note`. The person (no connection) sees everything. */
-export const canSee = (connection: Connection | undefined, note: Pick<NoteRow, "class">): boolean =>
-  connection === undefined || note.class !== "sensitive" || connection.sensitive;
+/** What a connection may read, for `project`. The person (no connection) reads everything. */
+export const principalOf = (connection: Connection | undefined): Principal =>
+  connection === undefined ? PERSON : { sensitive: connection.sensitive };
+
+/** Whether `connection` may see `note`: `project`, the one read check, for a connection. */
+export const canSee = (connection: Connection | undefined, note: Pick<NoteRow, "class" | "type">): boolean =>
+  project(note, principalOf(connection)) !== undefined;
 
 /**
  * A new connection at the floor: propose, no sensitive notes, the default hold. An MCP client that connects again

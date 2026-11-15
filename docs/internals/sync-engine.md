@@ -42,6 +42,19 @@ the plan the person signs (each note's base revision, path, class and effect) an
 the site, the client resends the edit with the `approvalId` under a new `clientSeq` and a new `changeId`: the
 record answers a `changeId` it has seen with the answer it gave.
 
+- **Each socket reads as its principal**: the route that opens it sets who it speaks for, from the session or
+  token: the person, or a connection. What a connection may read comes from its own row in the record, read
+  again for every message and push. Changing a connection's grants closes its open sockets, so its client says
+  hello again and gets a snapshot that names every note it may no longer hold as withheld; a disconnected one
+  can't reconnect. `snapshot`, `changes` and every push pass through the read projection
+  (`project` in `packages/base`), so a socket without the sensitive scope never gets a sensitive note. A
+  note it may not see, or one that just turned sensitive, comes as deleted and `withheld`, in snapshots too:
+  the device drops it the way it drops a note that turned sensitive, file, index and history, even while
+  paused, and learns its id and when it changes, nothing else. A hello under another principal than the client's cursor was
+  earned under gets a snapshot. Its changes to such a note are refused as if there were no note. Paths are one
+  namespace across classes, as on disk, so creating a note at a path a hidden note holds fails: a caller can
+  confirm a path it guessed exactly, but a refusal never names another note's path.
+
 - **Exactly once, in order**: each client's mutations are applied strictly in sequence. The DO accepts only `highWater + 1`; a gap is refused, so the client resends in order. Results are kept until the client acknowledges them. A duplicate older than that gets "already processed, reconcile": the client re-reads that note's current revision, which is enough because the change log or a snapshot shows what happened.
 - **Every result consumes its number**: a mutation that comes back as a conflict, `needsApproval` or invalid still uses up its `clientSeq` (the high-water mark advances in the same transaction); the edit moves to _blocked_, and the queue keeps going. Resending it later (after you approve or fix it) takes a new number. Acknowledgment is implicit: every `hello` and `mutate` carries `ackedUpTo`, and the DO drops results and digests up to that point. A reconcile never discards local intent: if the client's edit differs from what the server has, it goes back in the queue with its **original** base revision and base text, so it passes through the three-way merge and can't silently overwrite another device's later change.
 - **Two machines, one identity** (for example a full OS migration while the old laptop still runs): a `clientSeq` that arrives with a different digest, or one the DO has already dropped, gets a `reset` naming it. The copy that still holds that change as pending repairs under a new id; the other ignores it, so a late duplicate never resets a healthy client.

@@ -23,9 +23,9 @@ meta         { key PK, value }                                      // schemaVer
 notes        { id ULID, path, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt?,
                type, title, kind, status, date, deadline, expires }  // the last row generated from fm
 revisions    { noteId, rev, raw, patch, actor, runId, at }         // patch: each field's before and after; undo applies it in reverse
-changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed, 90 days; op: create | update | delete | restore
+changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed, 90 days; op: create | update | delete | restore | classify
 landed       { changeId PK, result JSON, at }                       // every sync change answered, 90 days: a replay gets the same answer
-clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion }   // strict in-order apply; ackedUpTo: the highest it sent
+clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion, reader }   // strict in-order apply; ackedUpTo: the highest it sent; reader: the principal its cursor was earned under
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
 proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema, action?, runId? }   // status: open | applied | rejected | withdrawn; a held change keeps its plan in patch and what applies it in action
 approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)], assertion, credentialId, at, usedAt? }   // used once

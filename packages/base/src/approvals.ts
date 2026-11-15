@@ -1,7 +1,8 @@
 // Approvals (contract §4): a change whose effect alters, clears or deletes a verified value, or sets
 // verification, lands only with a passkey signature over its plan hash, or inside a review session the person
-// signed. The DO checks the signature (it holds the passkey's key); this module judges effects, hashes plans
-// and keeps each signature to one use, in the mutation's own transaction, so cloud and local judge alike.
+// signed. Loosening privacy (a sensitive note made normal) needs its own plan-hash signature. The DO checks
+// the signature (it holds the passkey's key); this module judges effects, hashes plans and keeps each
+// signature to one use, in the mutation's own transaction, so cloud and local judge alike.
 import { createHash, randomBytes } from "node:crypto";
 
 import { deepEqual, findClash, isUlid, PathError, resolveRelation, type PlanItem } from "@brainiac/core";
@@ -90,6 +91,13 @@ function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown):
   return target && Object.hasOwn(liveData(target) ?? {}, "verified") ? target.id : undefined;
 }
 
+/**
+ * A sensitive note the effect leaves normal: privacy loosened (contract §4). Live or not, since a deleted note
+ * comes back with a plain edit, so a normal tombstone made from a sensitive note is as loose as a live one.
+ */
+const loosens = ({ before, after }: Effect) =>
+  before !== undefined && before.class !== "normal" && after.class === "normal";
+
 /** The verified notes an effect adds, moves or removes a `supersedes` edge into. */
 function edgesMoved(sql: Sql, { before, after }: Effect): string[] {
   const was = liveData(before)?.["supersedes"];
@@ -165,7 +173,9 @@ export function settle(
   const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
   // Deleting more than five notes at once needs a signature whatever they hold, and no review session covers it.
   const bulk = deleting.length > BULK_DELETE;
-  const needing = bulk ? effects : effects.filter((effect) => needsApproval(sql, effect));
+  // Loosening privacy, like a bulk delete, always needs its own signature: no review session covers it.
+  const loosening = effects.some(loosens);
+  const needing = bulk || loosening ? effects : effects.filter((effect) => needsApproval(sql, effect));
   if (needing.length === 0) return undefined;
   const items = planOf(effects);
   const hash = planHash(items);
@@ -184,7 +194,8 @@ export function settle(
       review.actor === ctx.actor &&
       review.assertion !== "" &&
       review.expiresAt > ctx.now &&
-      !bulk
+      !bulk &&
+      !loosening
     ) {
       const shown = new Set<string>(JSON.parse(review.items));
       // The edges an edit moves count as items too: a session can't redirect one into a note it didn't show.

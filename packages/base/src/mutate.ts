@@ -21,12 +21,13 @@ import {
   type YamlValue,
 } from "@brainiac/core";
 
-import { planOf, settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
-import { canSee, type Connection } from "./connections.ts";
+import { planOf, relationTarget, settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
+import { canSee, principalOf, type Connection } from "./connections.ts";
+import { PERSON, project, type Principal } from "./project.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
 import { DAY_MS, holds, manifestOf, recordHeld, type Action, type Proposed } from "./hold.ts";
 import { enqueue } from "./jobs.ts";
-import { getNote, getNoteByPath, putNote, type NoteClass, type NoteRow } from "./notes.ts";
+import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
 import { putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
@@ -47,6 +48,11 @@ export interface Context extends Grant {
    * edits are unattributed (contract §3): those skip the hold, never the approval list.
    */
   readonly connection?: Connection;
+  /**
+   * What the sender may read, for a sync edit (which carries no connection): it decides only what an answer may
+   * say about notes the sender can't see, never the level or the hold.
+   */
+  readonly reader?: Principal;
 }
 
 /** The connection's level doesn't allow the change at all. */
@@ -67,7 +73,12 @@ export type Mutation =
   /** Sets a note's whole text, as a sync client sends it. On a deleted note it restores the note with that text. */
   | { readonly op: "put"; readonly noteId: string; readonly baseRev: number; readonly raw: string }
   /** Leaves a tombstone for 30 days; undoing the run restores it. */
-  | { readonly op: "delete"; readonly noteId: string; readonly baseRev: number };
+  | { readonly op: "delete"; readonly noteId: string; readonly baseRev: number }
+  /**
+   * Sets a note's privacy class. Making it sensitive takes it out of the normal index in this transaction;
+   * making it normal loosens privacy, which needs its own passkey signature (contract §4).
+   */
+  | { readonly op: "classify"; readonly noteId: string; readonly baseRev: number; readonly class: NoteClass };
 
 export type MutationResult =
   | {
@@ -116,6 +127,27 @@ class Held extends Error {
   }
 }
 
+const supersedesOf = (note: NoteRow | undefined): unknown =>
+  note && note.deletedAt === null ? JSON.parse(note.fm)["supersedes"] : undefined;
+
+/**
+ * Whether an effect adds, redirects or removes a `supersedes` edge whose target `reader` can't see. For a reader
+ * that can't see every note (no sensitive scope, or a type scope) a missing target counts too, so a hidden note there and none get the same answer,
+ * never one that says the hidden note is verified or of a held type.
+ */
+function blindEdge(sql: Sql, reader: Principal, { before, after }: Effect): boolean {
+  const was = supersedesOf(before);
+  const is = supersedesOf(after);
+  if (deepEqual(was, is) && before?.path === after.path) return false;
+  const blind = (from: NoteRow | undefined, relation: unknown) => {
+    if (relation === undefined) return false;
+    const target = relationTarget(sql, from, relation);
+    // A reader that can't see every note can't tell a hidden target from a missing one, so both are blind to it.
+    return target ? !project(target, reader) : !reader.sensitive || reader.types !== undefined;
+  };
+  return blind(before, was) || blind(after, is);
+}
+
 /**
  * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
  * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
@@ -154,6 +186,14 @@ function judged<T extends { readonly status: string }>(
                 message:
                   "The record changed since this was held. Reject it, and make the change again if it's still wanted.",
               },
+            ],
+          });
+        const reader = connection ? principalOf(connection) : (ctx.reader ?? PERSON);
+        if (reader !== PERSON && effects.some((effect) => blindEdge(sql, reader, effect)))
+          throw new Held({
+            status: "invalid",
+            issues: [
+              { field: "supersedes", message: "supersedes must name a note this connection can see." },
             ],
           });
         const verdict = settle(sql, effects, ctx, scope);
@@ -222,7 +262,7 @@ function check(sql: Sql, raw: string, id?: string): Issue[] | Readonly<Record<st
   return issues.length > 0 ? issues : data;
 }
 
-type Op = "create" | "update" | "delete" | "restore";
+type Op = "create" | "update" | "delete" | "restore" | "classify";
 
 /** Writes the next revision of a note: the row, its revision with the inverse patch, its change, its job. */
 function write(
@@ -258,13 +298,11 @@ function write(
     ctx.actor,
     ctx.now,
   );
-  // A deleted note leaves the search index and the outbox in the same transaction; a live one is re-indexed
-  // by a job.
+  // A deleted note, or one whose class changed, leaves the search index in this transaction, before any job
+  // runs, so it never matches in the family it left; a live one is then re-indexed by a job.
+  if (next.deletedAt !== null || (prev && prev.class !== next.class)) putChunks(sql, next.id, rev, []);
   if (next.deletedAt === null) enqueue(sql, "index", next.id, rev);
-  else {
-    putChunks(sql, next.id, rev, []);
-    sql.all("DELETE FROM jobs WHERE noteId = ?", next.id);
-  }
+  else sql.all("DELETE FROM jobs WHERE noteId = ?", next.id);
   return { status: "applied", noteId: next.id, rev, seq, runId };
 }
 
@@ -305,12 +343,8 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
       "SELECT path, class FROM notes WHERE deletedAt IS NULL",
     );
     const clash = live.find((row) => findClash([row.path], path) !== undefined);
-    if (clash !== undefined) {
-      // A connection that can't see the note there isn't told its path.
-      return canSee(ctx.connection, clash)
-        ? invalid("path", `${path} clashes with ${clash.path}.`)
-        : invalid("path", `${path} is taken.`);
-    }
+    // Never names the other note: it may be one the caller can't see, and a sync edit carries no connection.
+    if (clash !== undefined) return invalid("path", `${path} is taken.`);
     return write(
       sql,
       started,
@@ -331,6 +365,12 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
   if (note.rev !== mutation.baseRev) return { status: "conflict", noteId: note.id, rev: note.rev };
   if (mutation.op === "delete")
     return write(sql, started, ctx, runId, note, { ...note, deletedAt: ctx.now }, "delete");
+  if (mutation.op === "classify") {
+    if (mutation.class === note.class)
+      return { status: "applied", noteId: note.id, rev: note.rev, seq: note.seq, runId };
+    // Loosening is judged with the rest of the transaction's effect (approvals.ts).
+    return write(sql, started, ctx, runId, note, { ...note, class: mutation.class }, "classify");
+  }
 
   let raw: string;
   try {
@@ -345,12 +385,7 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
   const data = check(sql, raw, note.id);
   if (Array.isArray(data)) return { status: "invalid", issues: data };
   const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
-  if (taken !== undefined) {
-    const holder = getNoteByPath(sql, taken);
-    return holder && !canSee(ctx.connection, holder)
-      ? invalid("path", `${note.path} is taken since this note was deleted.`)
-      : invalid("path", `${note.path} is taken by ${taken} since this note was deleted.`);
-  }
+  if (taken !== undefined) return invalid("path", `${note.path} is taken since this note was deleted.`);
   return write(
     sql,
     started,
@@ -418,7 +453,8 @@ const livePaths = (sql: Sql) =>
  * values, so a restored number is written in YAML's canonical form (`8.0` comes back as `8`). What can't go
  * back becomes a conflict proposal and the note keeps its current value: a field edited since, a note the
  * run created and someone edited since, a deleted note whose path is taken, a note deleted since, or an
- * undo that would leave the note failing its type.
+ * undo that would leave the note failing its type. A class goes back only while the note is live and still
+ * has the one the run gave it; putting a note back to normal loosens privacy, so that undo needs a signature.
  */
 export function undoRun(
   sql: Sql,
@@ -464,6 +500,11 @@ function undoing(
     });
     if (hidden) return { status: "forbidden", reason: "This run changed notes this connection can't see." };
     const undone = new Set<string>();
+    // Notes the run created or restored: undoing deletes them, so their class stays as it is (a sensitive one
+    // stays so, never a normal tombstone made from it).
+    const created = new Set(
+      revisions.filter((r) => (JSON.parse(r.patch) as Diff).live?.before === false).map((r) => r.noteId),
+    );
     // One pending conflict per note. Once a field, the body or the note's existence is in it, older steps
     // only move the conflict's target back; they never touch the note, so no later edit is rolled back.
     const pending = new Map<
@@ -492,6 +533,15 @@ function undoing(
       const d: Diff = JSON.parse(revision.patch);
       const now = stateOf(note);
       const held = pending.get(note.id);
+
+      // A class change (it is a revision of its own): a class set since is newer intent, and stays.
+      if (d.class) {
+        if (now.live && note.class === d.class.after && !created.has(note.id)) {
+          write(sql, started, undo, undoRunId, note, { ...note, class: d.class.before }, "classify");
+          undone.add(note.id);
+        }
+        continue;
+      }
 
       // Created by the run: undoing deletes it, unless it was edited since.
       if (d.live?.before === false) {

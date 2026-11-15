@@ -21,6 +21,7 @@ import {
   migrate,
   mutate,
   openReview,
+  PERSON,
   planHash,
   recordApproval,
   REVIEW_MS,
@@ -377,14 +378,15 @@ export const approvalCases: Record<string, Case> = {
         attempt: 0,
       },
       ctx,
+      PERSON,
     );
-    const first = serve(sql, mutateMessage(1, "c1"), ctx);
+    const first = serve(sql, mutateMessage(1, "c1"), ctx, PERSON);
     const [result] = first.replies;
     ok(result?.type === "result" && result.needsApproval, JSON.stringify(result));
     equal(result.ok, false);
     equal(first.push, undefined);
     const approvalId = approve(sql, { status: "needsApproval", ...result.needsApproval });
-    const second = serve(sql, mutateMessage(2, "c2", approvalId), ctx);
+    const second = serve(sql, mutateMessage(2, "c2", approvalId), ctx, PERSON);
     same(
       second.replies.map((r) => r.type === "result" && [r.ok, r.rev]),
       [[true, note.rev + 1]],

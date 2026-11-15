@@ -255,6 +255,41 @@ export const cases: Record<string, Case> = {
     synced(world, await world.restart(laptop, open("laptop")));
   },
 
+  // A restart must hear again which notes to keep off the device, in case it stopped before they left it.
+  async "a note the record withholds keeps the stored cursor empty until it is visible again"(open) {
+    const client = await SyncClient.open({
+      send: () => {},
+      newClientId: () => "agent",
+      schemaVersion: 1,
+      appVersion: "test",
+      store: open("agent"),
+    });
+    client.connect();
+    const note = {
+      noteId: A,
+      deleted: false,
+      rev: 1,
+      path: "notes/a.md",
+      raw: "x",
+      class: "normal",
+    } as const;
+    client.receive({ type: "snapshot", seq: 1, attempt: 1, notes: [{ ...note, seq: 1 }] });
+    client.receive({
+      type: "changes",
+      from: 1,
+      to: 2,
+      items: [{ noteId: A, seq: 2, deleted: true, withheld: true }],
+    });
+    await client.saved();
+    ok(client.withheld(A));
+    equal((await open("agent").load())?.cursor, null, "a restart takes a snapshot, which names it again");
+    // Shown again (the scope was granted): the cursor is kept once more.
+    client.receive({ type: "changes", from: 2, to: 3, items: [{ ...note, seq: 3 }] });
+    await client.saved();
+    ok(!client.withheld(A));
+    equal((await open("agent").load())?.cursor, 3);
+  },
+
   async "sensitive notes stay out of the store unless the device keeps them"(open) {
     const world = new World();
     world.seed(A, "notes/a.md");

@@ -15,6 +15,8 @@ export {
 export {
   authenticate,
   canSee,
+  connectionOf,
+  principalOf,
   connect,
   disconnect,
   getConnection,
@@ -66,6 +68,7 @@ export {
   type NoteRow,
 } from "./notes.ts";
 export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
+export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
 export { chunkNote, putChunks, search, type ChunkInput, type Family, type Hit } from "./search.ts";
 export { changesSince, currentSeq, hello, receive, serve, type Served } from "./sync.ts";

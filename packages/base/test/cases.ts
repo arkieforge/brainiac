@@ -14,13 +14,19 @@ import {
   putNote,
   SCHEMA_VERSION,
   schemaVersion,
+  PERSON,
   search,
   type NoteInput,
+  type Principal,
   type Sql,
 } from "../src/index.ts";
 import { approvalCases } from "./approval-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
+import { privacyCases } from "./privacy-cases.ts";
+
+/** A connection without the sensitive scope, as every connection starts. */
+export const AGENT: Principal = { sensitive: false };
 
 export interface Fixture {
   readonly path: string;
@@ -97,6 +103,7 @@ export const cases: Record<string, Case> = {
   ...mutateCases,
   ...approvalCases,
   ...connectionCases,
+  ...privacyCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);
@@ -240,7 +247,7 @@ export const cases: Record<string, Case> = {
     throws(() => putNote(sql, { ...first, class: "secret" }), /CHECK/);
   },
 
-  "search finds words in one family only, and only live notes": (sql, fixtures) => {
+  "search reads only the families its principal may see, and only live notes": (sql, fixtures) => {
     migrate(sql);
     seed(sql, fixtures);
     const tum = byPath(sql, "applications/tum-msc-informatics-2027/application.md");
@@ -257,24 +264,24 @@ export const cases: Record<string, Case> = {
     ]);
 
     same(
-      search(sql, "normal", "okafor letter").map((hit) => hit.noteId),
+      search(sql, AGENT, "okafor letter").map((hit) => hit.noteId),
       [tum.id],
     );
-    same(search(sql, "normal", "listening"), []);
+    same(search(sql, AGENT, "listening"), []);
     same(
-      search(sql, "sensitive", "listening").map((hit) => hit.noteId),
+      search(sql, PERSON, "listening").map((hit) => hit.noteId),
       [ielts.id],
     );
     // Diacritics fold, and FTS5 syntax in the query is plain text.
     same(
-      search(sql, "normal", "Okáfor").map((hit) => hit.noteId),
+      search(sql, AGENT, "Okáfor").map((hit) => hit.noteId),
       [tum.id],
     );
-    same(search(sql, "normal", 'letter" OR "listening'), []);
-    same(search(sql, "normal", "   "), []);
+    same(search(sql, AGENT, 'letter" OR "listening'), []);
+    same(search(sql, AGENT, "   "), []);
 
     putNote(sql, { ...tum, deletedAt: 1_000, rev: 2, seq: 100 });
-    same(search(sql, "normal", "okafor"), []);
+    same(search(sql, AGENT, "okafor"), []);
   },
 
   "re-indexing a note replaces its chunks in both families": (sql, fixtures) => {
@@ -285,9 +292,9 @@ export const cases: Record<string, Case> = {
     // The note turns sensitive: its words leave the normal index in the same call.
     putNote(sql, { ...role, class: "sensitive", rev: 2, seq: 100 });
     putChunks(sql, role.id, 2, [{ family: "sensitive", header: "[Role]", text: "transit routing intern" }]);
-    same(search(sql, "normal", "transit"), []);
+    same(search(sql, AGENT, "transit"), []);
     same(
-      search(sql, "sensitive", "transit").map((hit) => hit.noteId),
+      search(sql, PERSON, "transit").map((hit) => hit.noteId),
       [role.id],
     );
     same(sql.all("SELECT rev, family FROM chunks WHERE noteId = ?", role.id), [
@@ -301,7 +308,7 @@ export const cases: Record<string, Case> = {
     const role = byPath(sql, "facts/roles/acme-intern-2025.md");
     putChunks(sql, role.id, 1, [{ family: "normal", header: "[Role]", text: "transit routing intern" }]);
     putNote(sql, { ...role, class: "sensitive", rev: 2, seq: 100 });
-    same(search(sql, "normal", "transit"), []);
+    same(search(sql, AGENT, "transit"), []);
   },
 };
 

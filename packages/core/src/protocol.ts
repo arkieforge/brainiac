@@ -17,13 +17,14 @@ interface BeforeAfter<T> {
 
 /**
  * What one transaction does to one note: each top-level front-matter field's value before and after (a missing
- * side means the field was absent), the body, and whether the note was live. Revisions store it as their
- * inverse patch; approvals sign it.
+ * side means the field was absent), the body, whether the note was live, and its privacy class when that
+ * changed. Revisions store it as their inverse patch; approvals sign it.
  */
 export interface Diff {
   readonly fields: Readonly<Record<string, BeforeAfter<unknown>>>;
   readonly body?: BeforeAfter<string>;
   readonly live?: BeforeAfter<boolean>;
+  readonly class?: { readonly before: "normal" | "sensitive"; readonly after: "normal" | "sensitive" };
 }
 
 /** One note's part of a plan: the note, the revision the change starts from, and what it does. */
@@ -83,7 +84,13 @@ export type NoteState =
       readonly raw: string;
       readonly class: "normal" | "sensitive";
     }
-  | { readonly noteId: string; readonly seq: number; readonly deleted: true };
+  | {
+      readonly noteId: string;
+      readonly seq: number;
+      readonly deleted: true;
+      /** Still in the record, but not for this reader (it turned sensitive, say): every copy and its history go. */
+      readonly withheld?: true;
+    };
 
 export interface Result {
   readonly type: "result";
@@ -124,7 +131,7 @@ export type ServerMessage =
    * The client that still holds that change as pending repairs under a new id; any other ignores it.
    */
   | { readonly type: "reset"; readonly clientId: string; readonly clientSeq: number; readonly reason: string }
-  /** Every live note, for a client with no cursor or one older than the change feed. */
+  /** Every live note, for a client with no cursor or one older than the change feed; withheld ones only as such. */
   | {
       readonly type: "snapshot";
       readonly seq: number;
