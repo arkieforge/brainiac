@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { CASES, factsOf, passes } from "./cases.ts";
+import { answersGates, CASES, factsOf, passes } from "./cases.ts";
 
 // The fixture record the eval asks, all of it: its connection may read sensitive notes.
 const FIXTURES = join(import.meta.dirname, "../../fixtures/nadia");
@@ -18,6 +18,10 @@ const check = (id: string, said: string) => {
   if (!found) throw new Error(id);
   return found.check({ said, ...RECORD });
 };
+
+// A sample's row as the runner writes it, and the gates' verdicts on a run of them.
+const row = (id: string, ok: boolean, refused = false) => ({ case: id, ok, refused });
+const verdicts = (rows: Parameters<typeof answersGates>[0]) => answersGates(rows).map((g) => g.ok);
 
 describe("answers eval", () => {
   it("an exact-value case fails on any failing sample; the others when half or more fail", () => {
@@ -250,5 +254,25 @@ describe("answers eval", () => {
     ];
     for (const [id, said, why] of failing)
       expect([said, check(id, said)]).toEqual([said, expect.stringMatching(why)]);
+  });
+
+  it("gates a run: any failing exact sample, or answerable questions refused in more than 5% of samples", () => {
+    const clean = CASES.flatMap((c) => [row(c.id, true), row(c.id, true)]);
+    expect(verdicts(clean)).toEqual([true, true]);
+    // Over-refusal on the control alone: the exact gate stays green, answerability catches it.
+    const refusing = [
+      ...CASES.filter((c) => c.exact).flatMap((c) => [row(c.id, true), row(c.id, true)]),
+      row("bsc-university", false, true),
+      row("bsc-university", false, true),
+    ];
+    expect(verdicts(refusing)).toEqual([true, false]);
+    // Saying the GRE isn't there is the right answer, never over-refusal.
+    expect(verdicts([row("gre-not-in-record", true, true), row("bsc-university", true)])).toEqual([
+      true,
+      true,
+    ]);
+    expect(verdicts([row("cgpa-unverified", false), row("bsc-university", true)])).toEqual([false, true]);
+    // A run that measured nothing proves nothing.
+    expect(verdicts([])).toEqual([false, false]);
   });
 });

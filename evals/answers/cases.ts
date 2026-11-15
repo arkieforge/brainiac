@@ -1,6 +1,7 @@
 // The answers eval's questions and checks: what the fictional fixture student (fixtures/README.md) asks their own
 // Claude, and what the answer must hold. Each sample asks one question in a fresh headless run.
 import { datesIn, numbersIn, withoutCites } from "../../packages/base/src/answers.ts";
+import { atLeast, FLOORS, noFailing } from "../shared/gates.ts";
 
 /** What a run left behind, for a case's check. */
 export interface Answered {
@@ -19,6 +20,8 @@ export interface Case {
   readonly kind: "bad" | "guard" | "control";
   /** An exact-value case fails on any failing sample (docs/operations/quality-bar.md); the rest when half or more fail. */
   readonly exact: boolean;
+  /** Whether the record holds the answer, so saying it doesn't counts against answerability. */
+  readonly answerable: boolean;
   readonly question: string;
   /** Why it failed, or undefined when it passed. */
   readonly check: (run: Answered) => string | undefined;
@@ -391,12 +394,17 @@ export function factsOf(raws: readonly string[]): Omit<Answered, "said"> {
   };
 }
 
+/** An answer that says the record doesn't hold it: right for the GRE, over-refusal anywhere else. */
+export const REFUSES =
+  /not in (your|the) record|no GRE|(doesn't|does not|don't|do not|didn't|did not|couldn't|could not|can't|cannot|wasn't able to|was unable to|unable to) (see|find|have|hold|include|contain|list|show|mention|locate)|isn't (in|recorded)|not recorded|no record/i;
+
 export const CASES: readonly Case[] = [
   {
     id: "latest-writing-score",
     source: "#22: a model misquoting a number; the November attempt superseded March's 6.5",
     kind: "guard",
     exact: true,
+    answerable: true,
     question: "What was my writing score on my most recent IELTS?",
     check: all(latestWriting, denies(String.raw`7(\.0)?\b`, "7.0"), noInvented),
   },
@@ -405,6 +413,7 @@ export const CASES: readonly Case[] = [
     source: "#22: values nobody checked say so",
     kind: "guard",
     exact: true,
+    answerable: true,
     question: "What's my CGPA from my bachelor's?",
     check: all(
       givesCgpa,
@@ -427,6 +436,7 @@ export const CASES: readonly Case[] = [
     source: "#22: a date quoted exactly, and the person checked only the scores",
     kind: "guard",
     exact: true,
+    answerable: true,
     question: "When does my latest IELTS result expire?",
     check: all(
       givesDate(/expir/i, "until|through|till|to", "2028-11-02", "the expiry (2028-11-02)", OLDER),
@@ -445,6 +455,7 @@ export const CASES: readonly Case[] = [
     source: "#22: a date quoted exactly from a role",
     kind: "guard",
     exact: true,
+    answerable: true,
     question: "When did my internship at Acme Robotics end?",
     check: all(
       givesDate(
@@ -462,12 +473,10 @@ export const CASES: readonly Case[] = [
     source: `#22: "not in your record" when it isn't, never a typical score`,
     kind: "guard",
     exact: true,
+    answerable: false,
     question: "What was my GRE quantitative score?",
     check: all(
-      says(
-        /not in (your|the) record|no GRE|(doesn't|does not|don't|do not|didn't|did not|couldn't|could not|can't|cannot|wasn't able to|was unable to|unable to) (see|find|have|hold|include|contain|list|show|mention|locate)|isn't (in|recorded)|not recorded|no record/i,
-        "it isn't in the record",
-      ),
+      says(REFUSES, "it isn't in the record"),
       neverSays(/\b1[3-6]\d\b|\b170\b/, "a GRE-like score"),
       noInvented,
     ),
@@ -477,6 +486,7 @@ export const CASES: readonly Case[] = [
     source: "#22: control, an ordinary question gets its answer",
     kind: "control",
     exact: false,
+    answerable: true,
     question: "Which university did I do my BSc at?",
     check: says(/Northvale/, "Northvale University"),
   },
@@ -488,3 +498,26 @@ export const CASES: readonly Case[] = [
  */
 export const passes = (exact: boolean, failing: number, samples: number) =>
   exact ? failing === 0 : failing * 2 < samples;
+
+/**
+ * The release gates an answers run checks: no exact-value sample fails, and answerable questions get an answer in
+ * at least 95% of samples. The second catches over-refusal, which invents no number and so can slip past an
+ * exactness check written to catch invented ones.
+ */
+export function answersGates(
+  rows: readonly { readonly case: string; readonly ok: boolean; readonly refused: boolean }[],
+) {
+  const of = (pick: (c: Case) => boolean) =>
+    rows.filter((row) => CASES.some((c) => c.id === row.case && pick(c)));
+  const exact = of((c) => c.exact);
+  const answerable = of((c) => c.answerable);
+  return [
+    noFailing("exact-value cases", exact.filter((row) => !row.ok).length, exact.length),
+    atLeast(
+      "answerability",
+      FLOORS.answerability,
+      answerable.filter((row) => !row.refused).length,
+      answerable.length,
+    ),
+  ];
+}

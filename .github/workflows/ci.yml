@@ -36,6 +36,9 @@ jobs:
             run: vp test run
           - name: Unused code
             run: knip
+          # Paid eval runs stay local; CI proves each eval still loads its world and cases (graders run in Test).
+          - name: Eval dry runs
+            run: vp run eval:answers --out evals/runs/ci --dry-run && vp run eval:filing --out evals/runs/ci --dry-run && vp run eval:photos --out evals/runs/ci --dry-run
     steps:
       - uses: actions/checkout@v7
         with:

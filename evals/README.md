@@ -7,8 +7,8 @@ Write or run an eval when a change affects what a model sees: MCP tool descripti
 results, the agent skill, or prompts. The planned evals and their release gates are in
 [docs/operations/quality-bar.md](../docs/operations/quality-bar.md).
 
-The shared harness is issue #27 (M1). The evals so far are [`filing`](filing/README.md),
-[`answers`](answers/README.md) and [`photos`](photos/README.md); every eval follows this shape:
+The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md) and
+[`photos`](photos/README.md); every eval follows this shape:
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.
@@ -19,6 +19,23 @@ The shared harness is issue #27 (M1). The evals so far are [`filing`](filing/REA
 - Flags: `--out <dir>` (required), `--model`, `--case`, `--samples` (default 2, a 3rd on disagreement),
   `--baseline <results>`, `--dry-run`, `--context`.
 - A run writes result rows and a `summary.md` with its cost to `--out` (`evals/runs/` is gitignored).
+- Graders are plain functions with a `cases.test.ts` beside them. CI runs those tests and each eval's
+  `--dry-run`; paid runs stay on the team's own subscriptions.
+
+## Release gates
+
+A run checks the [release gates](../docs/operations/quality-bar.md#release-gates) its eval measures, through
+[`shared/gates.ts`](shared/gates.ts), and fails when one misses its floor, as a failing case does. Its
+`summary.md` has a gate table. Gates so far:
+
+| Eval      | Gate                                                                       | Floor              |
+| --------- | -------------------------------------------------------------------------- | ------------------ |
+| `answers` | Exact-value cases                                                          | no failing sample  |
+| `answers` | Answerability: questions the record answers don't get "not in your record" | >= 0.95 of samples |
+| `filing`  | Guards (the injection corpus never gets past the approval list)            | no failing sample  |
+
+Answerability exists because over-refusal invents no number: an answer that says "not in your record" to
+every question would pass a check that only looks for wrong values.
 
 ## Rules for cases
 
