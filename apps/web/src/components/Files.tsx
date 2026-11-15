@@ -1,7 +1,12 @@
+import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { fileIcon } from "../icons.ts";
+import { LIST } from "../motion.ts";
 import { api, refresh, type FileItem } from "../record.ts";
+import { DropZone } from "./DropZone.tsx";
+import { FileBox } from "./FileBox.tsx";
 
 /** A file's name: the person's own, or what they said it is, or that nobody has yet. */
 export const fileLabel = (file: FileItem) =>
@@ -24,6 +29,7 @@ export function Files({
   const navigate = useNavigate();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [list] = useAutoAnimate<HTMLUListElement>(LIST);
   const upload = async (file: File) => {
     setBusy(true);
     setError(undefined);
@@ -53,32 +59,26 @@ export function Files({
   return (
     <section className="files">
       {loose.length > 0 && <h2>Files without a note</h2>}
-      <ul>
-        {loose.map((file) => (
-          <li key={file.sha256}>
-            <Link
-              to="/files/$fileId"
-              params={{ fileId: file.sha256 }}
-              aria-current={file.sha256 === selected ? "page" : undefined}
-              onClick={onOpen}
-            >
-              {fileLabel(file)}
-            </Link>
-          </li>
-        ))}
+      <ul ref={list}>
+        {loose.map((file) => {
+          const FileGlyph = fileIcon(file.mime);
+          return (
+            <li key={file.sha256} data-class={file.class}>
+              <Link
+                to="/files/$fileId"
+                params={{ fileId: file.sha256 }}
+                aria-current={file.sha256 === selected ? "page" : undefined}
+                onClick={onOpen}
+              >
+                <FileGlyph size={15} weight="duotone" />
+                <span>{fileLabel(file)}</span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
-      <label className="small">
-        {busy ? "Uploading…" : "Upload a file"}
-        <input
-          type="file"
-          disabled={busy}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (file) void upload(file);
-          }}
-        />
-      </label>
+      {files.length === 0 && <FileBox />}
+      <DropZone busy={busy} onFile={(file) => void upload(file)} />
       {error && <p role="alert">{error}</p>}
     </section>
   );

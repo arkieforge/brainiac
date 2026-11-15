@@ -227,4 +227,6 @@ files. Details: [Architecture](docs/internals/architecture.md), [Sync engine](do
   record, and maps errors.
 - Comments say why, not what.
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
+- The site follows [DESIGN.md](DESIGN.md): tokens only from `apps/web/src/styles.css`, one library per job, and
+  motion only in answer to something the person did.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.

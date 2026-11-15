@@ -1,5 +1,6 @@
 import { parseNote, pathKey, PathError, resolveFile } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
+import { TextMorph } from "torph/react";
 
 import { approvePlan } from "../approve.ts";
 import { fieldsOf } from "../fields.ts";
@@ -10,6 +11,8 @@ import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
 import { FileFacts, FileView, KindForm } from "./FilePane.tsx";
 import { fileLabel } from "./Files.tsx";
+import { titleTransition } from "./Overview.tsx";
+import { Pip } from "./Pip.tsx";
 
 /** The stored file a note's `file:` names, resolved from the note's own folder, as the record resolves it. */
 function fileOf(files: readonly FileItem[], path: string, file: unknown): FileItem | undefined {
@@ -58,7 +61,9 @@ function SyncState({ client, noteId }: { readonly client: SyncClient; readonly n
   const pending = client.state.pending.some((p) => p.noteId === noteId);
   return (
     <p className="sync-state muted" role="status">
-      {pending ? "Saving" : "Saved"}
+      <TextMorph duration={260} ease="cubic-bezier(0.23, 1, 0.32, 1)">
+        {pending ? "Saving…" : "Saved"}
+      </TextMorph>
     </p>
   );
 }
@@ -70,7 +75,13 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
   const remote = client?.state.remote.get(noteId);
   if (!client || raw === undefined || !remote)
     return (
-      <p className="empty">{status === "loading" || status === "connecting" ? "Loading" : "No such note."}</p>
+      <div className="empty">
+        {status === "loading" || status === "connecting" ? (
+          <Pip sticker="thinking" say="Loading…" />
+        ) : (
+          <Pip sticker="detective" say="No such note. It may have moved or been deleted." />
+        )}
+      </div>
     );
   let data: Readonly<Record<string, unknown>>;
   try {
@@ -86,7 +97,7 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
     <article className="note">
       <header className="pane-head">
         <div className="path">{remote.path}</div>
-        <h1>{title}</h1>
+        <h1 style={titleTransition(noteId)}>{title}</h1>
         <span className="badge">{typeof data["type"] === "string" ? data["type"] : "No type"}</span>
         {remote.class === "sensitive" && <span className="badge sensitive">sensitive</span>}
         <SyncState client={client} noteId={noteId} />

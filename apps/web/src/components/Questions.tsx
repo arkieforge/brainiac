@@ -150,7 +150,7 @@ function WeeklyEmail() {
 export function Questions() {
   const { client, manifest, status, schemaLoaded } = useRecord();
   const [all, setAll] = useState(false);
-  if (!client) return <p className="empty">{status === "loading" ? "Loading" : "No record yet."}</p>;
+  if (!client) return <p className="empty">{status === "loading" ? "Loading…" : "No record yet."}</p>;
   const now = Date.now();
   const open = questionsOf(client, manifest, now);
   const asked = all ? open : askNow(open, now);
