@@ -279,6 +279,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.3.0
         version: 6.3.0(@voidzero-dev/vite-plus-core@1.6.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      happy-dom:
+        specifier: 21.0.4
+        version: 21.0.4
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@1.6.0
         version: '@voidzero-dev/vite-plus-core@1.6.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)'

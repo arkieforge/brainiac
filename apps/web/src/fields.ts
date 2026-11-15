@@ -121,12 +121,22 @@ export function editField(
   return { raw: patch(raw, [op]) };
 }
 
+/** A note's text at a revision: what an edit was made on. */
+export interface Base {
+  readonly rev: number;
+  readonly raw: string;
+}
+
+/** An online save's answer: what the record now has, why it wasn't saved, or undefined when nothing changed. */
+export type Saved = Base | { readonly error: string } | undefined;
+
 /**
- * Saves a sensitive note's edit online only, straight to the record (`POST /api/notes/<id>`). `edit` turns the
- * latest text the tab knows into the new text, so edits made while an earlier one is on its way build on it.
- * Resolves to why it wasn't saved, if it wasn't.
+ * Saves a sensitive note's edit online only, straight to the record (`POST /api/notes/<id>`), one at a time per
+ * note. `edit` turns the base into the new text; the base is `base` when given (the text a draft was typed over,
+ * so a note changed since is a conflict, never an overwrite), otherwise the latest text the tab knows, so a
+ * field edit made while an earlier one is on its way builds on it. Edits that change nothing aren't sent.
  */
-export type SaveOnline = (noteId: string, edit: (raw: string) => string) => Promise<string | undefined>;
+export type SaveOnline = (noteId: string, edit: (raw: string) => string, base?: Base) => Promise<Saved>;
 
 /**
  * A sensitive note's edits never enter the sync client: its queue (pending and blocked edits, with their text)
@@ -153,13 +163,16 @@ export async function commitField(
   if (base === undefined) return "This note is gone.";
   const edited = editField(base, manifest, field, input);
   if ("issue" in edited) return edited.issue;
-  if (edited.raw === base) return undefined;
-  if (savesOnline(client, noteId))
-    return online(noteId, (latest) => {
+  // Online, whether it changes anything is judged in order against the latest text the record accepted: the
+  // client's copy lags an earlier save still on its way, so typing back its old value is still a change.
+  if (savesOnline(client, noteId)) {
+    const saved = await online(noteId, (latest) => {
       const again = editField(latest, manifest, field, input);
       return "raw" in again ? again.raw : latest;
     });
-  client.edit(noteId, edited.raw, base);
+    return saved && "error" in saved ? saved.error : undefined;
+  }
+  if (edited.raw !== base) client.edit(noteId, edited.raw, base);
   return undefined;
 }
 

@@ -7,7 +7,7 @@ import { SyncClient } from "@brainiac/sync";
 import { openTabStore } from "@brainiac/sync/browser";
 import { useSyncExternalStore } from "react";
 
-import type { SaveOnline } from "./fields.ts";
+import type { Saved, SaveOnline } from "./fields.ts";
 
 export type Status = "loading" | "connecting" | "live" | "offline" | "signed-out";
 
@@ -71,12 +71,18 @@ const remembered = () => {
   }
 };
 
+/**
+ * Opens the signed-in account's copy. Sign-out can land during any await here, so each one is followed by a check:
+ * a copy opened after it is let go again at once, never kept or connected.
+ */
 async function openStore(user: string) {
   await release?.();
+  release = undefined;
   socket?.close();
+  if (stopped) return;
   const slot = await openTabStore(`${STORE_PREFIX}${user}`);
-  release = slot.release;
-  client = await SyncClient.open({
+  if (stopped) return slot.release();
+  const opened = await SyncClient.open({
     store: slot.store,
     send: (message) => socket?.send(JSON.stringify(message)),
     newClientId: () => crypto.randomUUID(),
@@ -84,12 +90,21 @@ async function openStore(user: string) {
     schemaVersion: 0,
     appVersion: "web",
   });
+  if (stopped) return slot.release();
+  release = slot.release;
+  client = opened;
   client.subscribe(changed);
   changed();
 }
 
 function connect() {
-  if (!client || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+  if (
+    stopped ||
+    !client ||
+    socket?.readyState === WebSocket.OPEN ||
+    socket?.readyState === WebSocket.CONNECTING
+  )
+    return;
   const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/sync`);
   socket = ws;
   setStatus("connecting");
@@ -120,7 +135,6 @@ export const OFFLINE_SENSITIVE = "Sensitive notes save only while you're online 
 const accepted = new Map<string, { readonly rev: number; readonly raw: string }>();
 /** Each sensitive note's online saves, in order: the next builds on what the last one wrote. */
 const saving = new Map<string, Promise<unknown>>();
-const queued = new Map<string, number>();
 
 /** The latest text of a sensitive note: what an online save wrote, until the sync push brings it. */
 const latest = (noteId: string) => {
@@ -129,16 +143,12 @@ const latest = (noteId: string) => {
   return mine && (!remote || mine.rev > remote.rev) ? mine : remote;
 };
 
-/** True while a sensitive note has an online save on its way, or one the sync push hasn't brought back yet. */
-export const savingOnline = (noteId: string): boolean =>
-  (queued.get(noteId) ?? 0) > 0 || latest(noteId) !== client?.state.remote.get(noteId);
-
 /** Saves a sensitive note's edit straight to the record, as the person; never through the client's queue. */
-export const saveOnline: SaveOnline = (noteId, edit) => {
-  const run = async (): Promise<string | undefined> => {
-    if (status !== "live") return OFFLINE_SENSITIVE;
-    const base = latest(noteId);
-    if (!base) return "This note is gone.";
+export const saveOnline: SaveOnline = (noteId, edit, from) => {
+  const run = async (): Promise<Saved> => {
+    if (status !== "live") return { error: OFFLINE_SENSITIVE };
+    const base = from ?? latest(noteId);
+    if (!base) return { error: "This note is gone." };
     const raw = edit(base.raw);
     if (raw === base.raw) return undefined;
     const res = await api(`/api/notes/${noteId}`, {
@@ -146,17 +156,13 @@ export const saveOnline: SaveOnline = (noteId, edit) => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ raw, baseRev: base.rev }),
     }).catch(() => undefined);
-    if (!res) return "You're offline, so this edit wasn't saved.";
+    if (!res) return { error: "You're offline, so this edit wasn't saved." };
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) return body.error ?? "This edit wasn't saved.";
+    if (!res.ok) return { error: body.error ?? "This edit wasn't saved." };
     accepted.set(noteId, { rev: body.rev, raw });
-    return undefined;
+    return { rev: body.rev, raw };
   };
-  queued.set(noteId, (queued.get(noteId) ?? 0) + 1);
-  const next = (saving.get(noteId) ?? Promise.resolve()).then(run).finally(() => {
-    queued.set(noteId, (queued.get(noteId) ?? 1) - 1);
-    changed();
-  });
+  const next = (saving.get(noteId) ?? Promise.resolve()).then(run).finally(changed);
   saving.set(noteId, next);
   return next;
 };
@@ -164,8 +170,12 @@ export const saveOnline: SaveOnline = (noteId, edit) => {
 /** Loads the manifest and the file list; both come from the record over HTTP, not the sync socket. */
 export async function refresh() {
   const [schema, list] = await Promise.all([api("/api/schema"), api("/api/files")]);
-  if (schema.ok) manifest = (await schema.json()).manifest;
-  if (list.ok) files = (await list.json()).files;
+  const next = {
+    manifest: schema.ok ? (await schema.json()).manifest : manifest,
+    files: list.ok ? (await list.json()).files : files,
+  };
+  if (stopped) return;
+  ({ manifest, files } = next);
   changed();
 }
 
@@ -173,7 +183,6 @@ export async function refresh() {
 export const api = (path: string, init: RequestInit = {}) =>
   fetch(path, { ...init, credentials: "same-origin" });
 
-/** Starts this tab's client once: the stored copy at once, then the session, then the socket. */
 /** Lets go of this tab's copy: the socket, the client and its IndexedDB connection and slot. */
 async function stop() {
   stopped = true;
@@ -190,6 +199,7 @@ async function stop() {
   changed();
 }
 
+/** Starts this tab's client once: the stored copy at once, then the session, then the socket. */
 export async function start() {
   if (started) return;
   started = true;
@@ -215,6 +225,8 @@ export async function start() {
   } catch {
     return setStatus(client ? "offline" : "signed-out");
   }
+  // Signed out while the session answered: stop() let the copy go, and nothing opens or connects again.
+  if (stopped) return;
   if (!user) return setStatus("signed-out");
   if (user !== last) {
     try {
@@ -224,6 +236,7 @@ export async function start() {
     }
     await openStore(user);
   }
+  if (stopped) return;
   connect();
   addEventListener("online", connect);
   // A socket can sit open for a while after the network goes; offline is offline now (sensitive notes go read-only).

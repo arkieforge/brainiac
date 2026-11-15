@@ -131,6 +131,22 @@ describe("field form", () => {
       expect(stored).not.toContain(secret);
   });
 
+  it("saves a sensitive field typed back to its old value while the change before it is still on its way", async () => {
+    const { client } = tab(IELTS, "sensitive");
+    // The record's side, in order: each edit applies to the latest text it accepted; the client still shows 8.
+    let accepted = IELTS;
+    const save: SaveOnline = async (_id, edit) => {
+      const raw = edit(accepted);
+      if (raw === accepted) return undefined;
+      accepted = raw;
+      return { rev: 0, raw };
+    };
+    const overall = field(IELTS, "overall");
+    expect(await commit(client, ID, manifest, overall, "8.5", save)).toBeUndefined();
+    expect(await commit(client, ID, manifest, overall, "8", save)).toBeUndefined();
+    expect(parseNote(accepted).data["overall"]).toBe(8);
+  });
+
   it("queues a normal note's edit in the client, as the store keeps it until the record answers", async () => {
     const { writes, online, commitField } = tab(IELTS, "normal");
     expect(await commitField(ID, manifest, field(IELTS, "trf_number"), "26GB009999KARN001A")).toBeUndefined();
