@@ -10,6 +10,7 @@ import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
+import { createAuthenticator } from "../src/auth/test-authenticator.ts";
 import type { TestBase } from "./harness.ts";
 
 const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
@@ -17,6 +18,8 @@ const ROLE = "facts/roles/acme-intern-2025.md";
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(import.meta.dirname, "../../../fixtures/nadia", TUM), "utf8");
 const ID = "01M6AM78G0STS7TB29G7A10DCY";
+const IELTS = "facts/tests/ielts-2026-11.md";
+const ielts = readFileSync(join(FIXTURES, IELTS), "utf8");
 
 let mf: Miniflare;
 beforeAll(async () => {
@@ -394,5 +397,105 @@ describe("reaching a record: /sync, brainiac login and logout", () => {
     expect(await base.authenticate(token)).toBeNull();
     expect(await opens(bearer(token))).toBe(401);
     expect((await logout()).status).toBe(401);
+  });
+});
+
+/**
+ * The site's approval route as a tab of `user` posts to it, with the passkey Neon holds for them riding in the
+ * fake session (harness.ts): `sign` is that passkey answering a challenge.
+ */
+function approver(user: string) {
+  const authenticator = createAuthenticator(ORIGIN);
+  const neon = {
+    credentialId: authenticator.id,
+    publicKey: authenticator.publicKey,
+    counter: 0,
+    approvesAt: new Date(0).toISOString(),
+    origin: ORIGIN,
+  };
+  const approve = (items: unknown, response: unknown, extra = {}) =>
+    mf.dispatchFetch(`${ORIGIN}/api/approve`, {
+      method: "POST",
+      headers: {
+        ...session(user),
+        "content-type": "application/json",
+        "x-test-passkey": JSON.stringify(neon),
+      },
+      body: JSON.stringify({ items, response, ...extra }),
+    });
+  return { approve, sign: (challenge: string) => authenticator.authenticate({ challenge }) };
+}
+
+describe("approving a blocked edit on the site", () => {
+  it("lands the edit the plan shows, once, resent under a new clientSeq and changeId", async () => {
+    const base = await record("approve");
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const tab = await online("approve-tab", session("approve"));
+    const refused = tab.next((m) => m.type === "result");
+    tab.client.edit(id, ielts.replace("overall: 8.0", "overall: 8.5"));
+    const first = await refused;
+    // Blocked with the plan to sign: the verified score, before and after.
+    const plan = tab.client.state.blocked.get(id)?.at(-1)?.needsApproval;
+    if (!plan || first.type !== "result") throw new Error("not blocked for approval");
+    expect(plan.items.map((item) => item.patch.fields["overall"])).toEqual([{ before: 8, after: 8.5 }]);
+    expect(await base.rev(id)).toBe(1);
+
+    const { approve, sign } = approver("approve");
+    const response = sign(plan.planHash);
+    // The items sent are the ones the record hashes: a signature over the plan shown approves no other plan.
+    const tampered = structuredClone(plan.items).map((item) => ({
+      ...item,
+      patch: { ...item.patch, fields: { overall: { before: 8, after: 9 } } },
+    }));
+    expect((await approve(tampered, response)).status).toBe(403);
+    const approved = await approve(plan.items, sign(plan.planHash));
+    const { approvalId } = (await approved.json()) as { approvalId: string };
+    expect(approved.status).toBe(200);
+
+    const landed = tab.next((m) => m.type === "result" && m.ok);
+    expect(tab.client.approved(id, plan.planHash, approvalId)).toBe(true);
+    const resent = tab.client.state.pending.at(-1);
+    expect(resent?.clientSeq).toBeGreaterThan(first.clientSeq);
+    expect(resent?.changeId).not.toBe(first.changeId);
+    expect(resent?.approvalId).toBe(approvalId);
+    const result = await landed;
+    expect(result).toMatchObject({ ok: true, rev: 2 });
+    expect(tab.client.state.blocked.get(id)).toBeUndefined();
+    expect(await base.rev(id)).toBe(2);
+
+    // Used up: the same signature can't approve the plan again, or anything else.
+    expect((await approve(plan.items, response)).status).toBe(403);
+    expect((await approve(plan.items, sign(plan.planHash))).status).toBe(403);
+  });
+
+  it("takes only a signature from one of the person's own passkeys, over this plan", async () => {
+    const base = await record("approve-own");
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const tab = await online("approve-own-tab", session("approve-own"));
+    const refused = tab.next((m) => m.type === "result");
+    tab.client.edit(id, ielts.replace("overall: 8.0", "overall: 6.0"));
+    await refused;
+    const plan = tab.client.state.blocked.get(id)?.at(-1)?.needsApproval;
+    if (!plan) throw new Error("not blocked for approval");
+    const own = approver("approve-own");
+    // A passkey Neon doesn't hold for this person, even with a body naming its key: the approver is Neon's.
+    const stranger = createAuthenticator(ORIGIN);
+    const named = {
+      approver: { credentialId: stranger.id, publicKey: stranger.publicKey, counter: 0, origin: ORIGIN },
+    };
+    expect(
+      (await own.approve(plan.items, stranger.authenticate({ challenge: plan.planHash }), named)).status,
+    ).toBe(403);
+    // Their own passkey signing something else.
+    expect((await own.approve(plan.items, own.sign("c29tZXRoaW5nIGVsc2U"))).status).toBe(403);
+    // Another person approving the same plan in their own record approves nothing here.
+    const other = approver("approve-other");
+    const elsewhere = await other.approve(plan.items, other.sign(plan.planHash));
+    const { approvalId } = (await elsewhere.json()) as { approvalId: string };
+    const again = tab.next((m) => m.type === "result");
+    tab.client.approved(id, plan.planHash, approvalId);
+    expect(await again).toMatchObject({ ok: false, needsApproval: { planHash: plan.planHash } });
+    expect(await base.rev(id)).toBe(1);
+    expect((await own.approve([], own.sign(plan.planHash))).status).toBe(400);
   });
 });

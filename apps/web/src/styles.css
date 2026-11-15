@@ -645,3 +645,39 @@ audio.media {
   background: var(--bg-raised);
   border-right: 1px solid var(--border);
 }
+
+/* An approval: the plan a passkey signature lets through, field by field. */
+.approval .plan {
+  color: var(--fg);
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.approval .plan dl {
+  margin: 4px 0 0;
+}
+.approval .plan dl > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.approval .plan dt {
+  font-family: var(--mono);
+}
+.approval .plan dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.approval del {
+  color: var(--fg-muted);
+}
+.approval ins {
+  text-decoration: none;
+  font-weight: 600;
+}
+.approval .plan pre {
+  white-space: pre-wrap;
+  max-height: 12em;
+  overflow: auto;
+  margin: 4px 0;
+}

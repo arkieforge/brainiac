@@ -11,6 +11,7 @@ import {
 } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 
+import { sign } from "./approve.ts";
 import { api } from "./record.ts";
 
 /** How long a session lasts after its signature (REVIEW_MS in packages/base), less a margin for the clock. */
@@ -41,20 +42,9 @@ export async function openSession(noteIds: readonly string[]): Promise<string | 
   if (!started?.ok || typeof body?.nonce !== "string")
     return { error: body?.error ?? "Review couldn't start. Are you online?" };
   const nonce: string = body.nonce;
-  let credential: Credential | null;
-  try {
-    credential = await navigator.credentials.get({
-      publicKey: PublicKeyCredential.parseRequestOptionsFromJSON({
-        challenge: nonce,
-        userVerification: "required",
-      }),
-    });
-  } catch {
-    return { error: "No passkey answered, so nothing was checked." };
-  }
-  if (!(credential instanceof PublicKeyCredential))
-    return { error: "No passkey answered, so nothing was checked." };
-  const opened = await postJson("/api/review/open", { nonce, response: credential.toJSON() }).catch(
+  const signed = await sign(nonce);
+  if ("error" in signed) return { error: "No passkey answered, so nothing was checked." };
+  const opened = await postJson("/api/review/open", { nonce, response: signed.response }).catch(
     () => undefined,
   );
   const answer = await opened?.json().catch(() => ({}));

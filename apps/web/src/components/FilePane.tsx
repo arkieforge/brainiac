@@ -1,7 +1,9 @@
 import { ImageViewer, MediaPlayer, SandboxedFrame, TableViewer } from "@brainiac/render";
 import { lazy, Suspense, useEffect, useState } from "react";
 
+import { sign } from "../approve.ts";
 import { api, refresh, useRecord, type FileItem } from "../record.ts";
+import { ApproveButton } from "./Approval.tsx";
 import { fileLabel } from "./Files.tsx";
 
 const PdfViewer = lazy(() => import("@brainiac/render/pdf").then((m) => ({ default: m.PdfViewer })));
@@ -131,21 +133,34 @@ function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }
 function KindForm({ file }: { readonly file: FileItem }) {
   const [kind, setKind] = useState(file.kind ?? "");
   const [message, setMessage] = useState<string>();
-  const save = async () => {
+  /** The kind change waiting for the person's passkey, and the challenge the record gave for it. */
+  const [asked, setAsked] = useState<{ readonly kind: string; readonly challenge: string }>();
+  const send = async (body: { readonly kind: string; readonly response?: unknown }) => {
     const res = await api(`/api/files/${file.sha256}/kind`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind }),
-    });
-    const body = await res.json().catch(() => ({}));
-    setMessage(
-      res.ok
-        ? undefined
-        : body.needsApproval
-          ? "Changing a kind you confirmed to one agents may read needs your passkey approval, which isn't on the site yet."
-          : (body.error ?? "That didn't save."),
-    );
+      body: JSON.stringify(body),
+    }).catch(() => undefined);
+    const answer = await res?.json().catch(() => ({}));
     await refresh();
+    return { res, answer };
+  };
+  const save = async () => {
+    setAsked(undefined);
+    const { res, answer } = await send({ kind });
+    if (res?.status === 409 && typeof answer?.challenge === "string")
+      return setAsked({ kind, challenge: answer.challenge });
+    setMessage(res?.ok ? undefined : (answer?.error ?? "That didn't save."));
+  };
+  const approve = async () => {
+    if (!asked) return undefined;
+    const signed = await sign(asked.challenge);
+    if ("error" in signed) return signed;
+    const { res, answer } = await send({ kind: asked.kind, response: signed.response });
+    if (!res?.ok) return { error: answer?.error ?? "Your passkey's answer didn't check out." };
+    setAsked(undefined);
+    setMessage(undefined);
+    return undefined;
   };
   return (
     <form
@@ -168,6 +183,15 @@ function KindForm({ file }: { readonly file: FileItem }) {
         {file.confirmed ? "Change kind" : "Confirm kind"}
       </button>
       {message && <p role="alert">{message}</p>}
+      {asked && (
+        <div className="approval" role="status">
+          <p>
+            You confirmed this file as {file.kind}. Changing it to {asked.kind} lets agents read more of it,
+            so it needs your passkey.
+          </p>
+          <ApproveButton approve={approve} />
+        </div>
+      )}
     </form>
   );
 }

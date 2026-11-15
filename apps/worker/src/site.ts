@@ -1,8 +1,9 @@
 // The site's own routes beside `/sync`: who is signed in, the record's manifest, its files, its secrets and the
-// fills agents asked for, and whether the weekly questions email goes out. Each one finds the
+// fills agents asked for, the person's passkey approvals, and whether the weekly questions email goes out. Each one finds the
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import type { FileToken } from "@brainiac/base";
+import type { PlanItem } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 import type { Approver } from "./approvals.ts";
@@ -105,6 +106,17 @@ async function serveApi(
       return failed(400, `Send the ids of the notes to review, up to ${REVIEW_ITEMS}.`);
     return json({ nonce: await record.startReview(ids, PERSON) });
   }
+  // The person signed a plan a change came back `needsApproval` with: the change cites the approval once.
+  if (pathname === "/api/approve" && post) {
+    const items = field(body, "items");
+    if (!signer || !Array.isArray(items) || items.length === 0 || items.length > REVIEW_ITEMS)
+      return failed(400, "Send the plan's items and your passkey's answer over its hash.");
+    if (!person.approver) return failed(403, "That passkey isn't one of yours.");
+    // The record hashes these items itself: a signature over any other plan doesn't check out.
+    const plan: PlanItem[] = items;
+    const approved = await record.approve(plan, signer, person.approver);
+    return "error" in approved ? failed(403, approved.error) : json({ approvalId: approved.approvalId });
+  }
   if (pathname === "/api/review/open" && post) {
     if (!signed) return failed(400, "Send the review's nonce and your passkey's answer.");
     if (!person.approver) return failed(403, "That passkey isn't one of yours.");
@@ -139,10 +151,16 @@ async function serveApi(
   if (file[2] === "kind") {
     const kind = typeof body === "object" && body !== null && "kind" in body ? body.kind : undefined;
     if (typeof kind !== "string") return failed(400, "Say what the file is, like transcript.");
-    const classified = await record.classifyFile(sha256, kind, PERSON);
+    if (signer && !person.approver) return failed(403, "That passkey isn't one of yours.");
+    const classified = await record.classifyFile(
+      sha256,
+      kind,
+      PERSON,
+      signer && person.approver && { response: signer, approver: person.approver },
+    );
     // Loosening a kind the person confirmed needs a passkey signature over `challenge` (contract §4).
     if ("status" in classified && classified.status === "needsApproval")
-      return json({ needsApproval: true }, 409);
+      return json({ needsApproval: true, challenge: classified.challenge }, 409);
     if ("status" in classified) return refusal(classified);
     return "error" in classified ? refusal(classified) : json({ file: classified.file });
   }

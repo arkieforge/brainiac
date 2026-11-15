@@ -440,8 +440,7 @@ export class Base extends DurableObject<Env> {
 
   // Approvals. Only the site's session route may call these, with the record owner's passkey loaded from Neon
   // (`Approver`); no agent, token or MCP tool reaches them, so none can approve.
-  // Review mode's routes (site.ts) call startReview and openReview.
-  // shortcut: no route calls approve yet; the site's approval page arrives with #99.
+  // The site's routes (site.ts) call approve (`/api/approve`), startReview and openReview.
 
   /**
    * Checks a passkey signature over `planHash(items)` and records it, for the change with that exact effect to
