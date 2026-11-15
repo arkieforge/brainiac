@@ -144,6 +144,8 @@ describe("brainiac hook", () => {
       ["Bash", { command: "cat brainiac/identity/passport.md" }, home],
       ["Bash", { command: "printf new > brainiac/facts/roles/new.md" }, home],
       ["Bash", { command: "cat ../brainiac/me.md" }],
+      ["Bash", { command: "cat \\\n../brainiac/identity/passport.md" }],
+      ["Bash", { command: 'echo "$(cat ../brainiac/identity/passport.md)"' }],
     ];
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);
@@ -190,6 +192,7 @@ describe("brainiac hook", () => {
       ["Write", { file_path: join(home, "brainiac-notes.md") }],
       ["Bash", { command: "ls -la" }],
       ["Bash", { command: 'git commit -m "brainiac notes"' }],
+      ["Bash", { command: `cat ${home}/brainiac-notes.md ${home}/brainiac.bak` }],
       ["Grep", { pattern: "cgpa", path: join(vault, "facts/roles") }],
       ["Glob", { pattern: "facts/roles/*.md", path: vault }],
       ["Glob", { pattern: "src/**/*.ts" }],
