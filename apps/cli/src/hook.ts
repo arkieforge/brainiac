@@ -32,9 +32,35 @@ export type ToolCall = typeof ToolCall.infer;
  * case-insensitive disk opens `Identity/` as `identity/`), also when it doesn't exist yet (a file Write would make).
  */
 function real(path: string): string {
-  if (existsSync(path)) return realpathSync.native(path);
-  const parent = dirname(path);
-  return parent === path ? path : join(real(parent), basename(path));
+  const missing: string[] = [];
+  let found = path;
+  while (!existsSync(found)) {
+    const parent = dirname(found);
+    if (parent === found) return path;
+    missing.unshift(basename(found));
+    found = parent;
+  }
+  return join(realpathSync.native(found), ...missing);
+}
+
+/** A command's words as the shell passes them: quotes and backslashes joined in, operators split out. */
+function shellWords(command: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let quote = "";
+  for (let i = 0; i < command.length; i++) {
+    const char = command.charAt(i);
+    if (quote && char === quote) quote = "";
+    else if (quote === "'") word += char;
+    else if (char === "\\") word += command.charAt(++i);
+    else if (quote) word += char;
+    else if (char === "'" || char === '"') quote = char;
+    else if (/[\s;|&<>()=`]/.test(char)) {
+      if (word) words.push(word);
+      word = "";
+    } else word += char;
+  }
+  return word ? [...words, word] : words;
 }
 
 /** Whether `path` is `folder` or inside it. */
@@ -67,12 +93,10 @@ export function refusal(call: ToolCall, configured: string, home = homedir()): s
     return `${at(file)} is in the person's Brainiac record, which changes only through Brainiac. ${tools}, so the change is attributed and checked.`;
 
   if (call.tool_name === "Bash") {
-    // Every word read as a path from the working folder. Best effort: a variable or glob can still reach the vault.
-    const words = (text(input["command"]) ?? "")
-      .replaceAll(/\$\{?HOME\}?(?=$|[\\/\s])/g, home)
-      .split(/[\s'"`;|&<>()=]+/)
-      .filter((word) => word !== "");
-    if ([".", ...words].some((word) => within(at(word), vault)))
+    // Every word read as a path from the working folder, and the vault's path anywhere in the text (`-o/vault/x`).
+    // Best effort: a variable or glob can still reach the vault.
+    const command = (text(input["command"]) ?? "").replaceAll(/\$\{HOME\}|\$HOME(?!\w)/g, home);
+    if (command.includes(vault) || [".", ...shellWords(command)].some((word) => within(at(word), vault)))
       return `This command touches ${vault}, the person's Brainiac record. Don't read or change it from the shell. ${tools}.`;
   }
 

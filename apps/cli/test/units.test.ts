@@ -147,6 +147,19 @@ describe("brainiac hook", () => {
     ];
     for (const [tool, input, cwd] of calls)
       expect(check(tool, input, cwd), `${tool} ${JSON.stringify(input)}`).toMatch(/Brainiac record/);
+    // A vault whose name has a space: quoted and escaped words are one path, as the shell reads them.
+    const spaced = join(home, "My Record");
+    mkdirSync(join(spaced, "identity"), { recursive: true });
+    for (const command of [
+      `cat "${spaced}/identity/passport.md"`,
+      "printf new > 'My Record/facts/roles/new.md'",
+      "cat My\\ Record/me.md",
+      'ls "$HOME"/My\\ Record',
+    ])
+      expect(
+        refusal({ tool_name: "Bash", tool_input: { command }, cwd: home }, spaced, home),
+        command,
+      ).toMatch(/Brainiac record/);
   });
 
   it("refuses reads of sensitive folders, vault documents and the inbox, and searches that reach them", () => {
