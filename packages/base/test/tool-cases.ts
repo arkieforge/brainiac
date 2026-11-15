@@ -1112,6 +1112,18 @@ export const toolCases: Record<string, Case> = {
     );
     call(sql, bg, "inbox", { lease, release: [item] });
     same(taken(call(sql, bg, "inbox", {})), []);
+
+    // A question about one of the item's fields stops waiting once that field changes, as the person's list has it.
+    const link = String(call(sql, PERSON_CTX, "add", { text: "The award page" })["id"]);
+    const me = as(connection(sql, { level: "write", holdDays: 0 }));
+    const held = call(sql, me, "inbox", {});
+    call(sql, me, "request_info", { question: "Which page?", note: link, field: "url" });
+    call(sql, me, "inbox", { lease: held["lease"], release: [link] });
+    same(taken(call(sql, me, "inbox", {})), []);
+    const set = { op: "patch", noteId: link, baseRev: revOf(sql, link) } as const;
+    const url = { op: "set", path: ["url"], value: "https://example.org/award" } as const;
+    equal(mutate(sql, { ...set, ops: [url] }, PERSON_CTX).status, "applied");
+    same(taken(call(sql, me, "inbox", {})), [link]);
   },
 
   "a done past the day's five deletes waits for the passkey, and goes through when sent with it": (

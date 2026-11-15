@@ -47,6 +47,7 @@ export {
   findQuestions,
   QUESTION_CAP,
   questionLine,
+  sameValue,
   valueAt,
   type Edit,
   type Input,

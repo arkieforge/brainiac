@@ -13,6 +13,7 @@ import {
   PathError,
   relationTo,
   resolveRelation,
+  sameValue,
   splitNote,
   ulid,
   type PatchOp,
@@ -1031,11 +1032,14 @@ function waitingForPerson(sql: Sql): Set<string> {
   // The note an open asked question is about, whoever may see the question: only ids leave here, and a question a
   // background run asked as sensitive must still keep the next run off its item.
   for (const question of listNotes(sql, { type: "Question" })) {
-    const { status, about } = fieldsOf(question);
+    const { status, about, field, was } = fieldsOf(question);
     if (status !== "open" || typeof about !== "string") continue;
     try {
       const target = getNoteByPath(sql, resolveRelation(question.path, about));
-      if (target) ids.add(target.id);
+      // As findQuestions judges it: a field that changed since it was asked answered the question.
+      const answered =
+        typeof field === "string" && target && !sameValue(valueAt(fieldsOf(target), field), was);
+      if (target && !answered) ids.add(target.id);
     } catch (error) {
       if (!(error instanceof PathError)) throw error;
     }
