@@ -15,6 +15,7 @@ import {
 import { scan } from "@brainiac/core";
 
 import type { JobMessage, JobWork } from "./base.ts";
+import { lookupDoi, type Web } from "./connectors/doi.ts";
 import type { Env } from "./env.ts";
 
 /** The part of Workers AI ingest uses: document-to-text and embeddings, no generation. */
@@ -34,6 +35,8 @@ export interface Models {
 export async function consume(
   batch: MessageBatch<JobMessage>,
   env: Pick<Env, "BASE"> & { readonly AI: Models },
+  /** The outside world, for lookups: a test answers in its place. */
+  web: Web = fetch,
 ): Promise<void> {
   // A batch's jobs run side by side, so a re-index backlog doesn't hold a fresh upload behind it one at a time.
   await Promise.all(
@@ -51,6 +54,8 @@ export async function consume(
               return vector ? { ...chunk, vector } : chunk;
             }),
           );
+        } else if (work?.kind === "doi") {
+          await base.installLookup(message.body.jobId, await lookupDoi(work.doi, web));
         } else if (work?.kind === "file") {
           const extracted = await extract(env.AI, work);
           // Only pages that can be indexed are embedded: none, while a page needs reading.

@@ -1046,12 +1046,12 @@ describe("MCP clients", () => {
     // A second student, with an empty record of their own, signed in on the same server.
     const other = await connect(ada, undefined, "someone.else@example.edu");
     expect((await answer(ada.auth, other.access, "describe", {})).counts.notes).toBe(0);
-    expect((await answer(ada.auth, ada.access, "describe", {})).counts.notes).toBe(6);
+    expect((await answer(ada.auth, ada.access, "describe", {})).counts.notes).toBe(7);
 
     // A CLI token reaches its own record, and its secret under another record's id reaches nothing.
     const cli = await ada.base.addConnection({ kind: "cli" });
     const cliToken = await ada.base.mintToken(cli.id);
-    expect((await answer(ada.auth, cliToken, "describe", {})).counts.notes).toBe(6);
+    expect((await answer(ada.auth, cliToken, "describe", {})).counts.notes).toBe(7);
     const otherId = bases.idFromName(await ada.studentId("someone.else@example.edu")).toString();
     const forged = cliToken.replace(/^brn_[0-9a-f]+_/, `brn_${otherId}_`);
     for (const bad of [forged, "brn_zz_nope", `${cliToken}x`]) {

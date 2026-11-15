@@ -192,12 +192,18 @@ export function headline(note: ReviewNote, manifest: Manifest | null): string {
   const parts = template.split(" · ").flatMap((part) => {
     let missing = false;
     const filled = part.replaceAll(/\{([\w.]+)(?:\|(\w+))?\}/g, (_, field: string, format?: string) => {
-      const value = field === "title" ? title : note.data[field];
+      // `{synced.venue}` reaches into a mapping, such as the block a connector fills.
+      const value =
+        field === "title"
+          ? title
+          : field.split(".").reduce<unknown>((at, key) => (isRecord(at) ? at[key] : undefined), note.data);
       if (value === undefined || value === null || value === "") {
         missing = true;
         return "";
       }
-      if (format === "year" && isDate(value)) return value.slice(0, 4);
+      // A registry's date may be only a month or a year (`2026-03`, `2026`).
+      if (format === "year" && typeof value === "string" && /^\d{4}(?:-|$)/.test(value))
+        return value.slice(0, 4);
       if (format === "month" && isDate(value)) return value.slice(0, 7);
       if (format !== undefined && /^\d$/.test(format) && typeof value === "number")
         return value.toFixed(Number(format));

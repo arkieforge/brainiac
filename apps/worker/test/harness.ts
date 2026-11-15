@@ -21,9 +21,11 @@ import { cliLogin, cliLogout, openSync, type SignedIn } from "../src/devices.ts"
 import type { Env } from "../src/env.ts";
 import { consume, type Models } from "../src/jobs.ts";
 import { routeSite, type Session } from "../src/site.ts";
+import { registries } from "./registries.ts";
 
 export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
+  readonly #lookups: ((result: "installed" | "dropped") => void)[] = [];
   readonly #alarms: (() => void)[] = [];
   /** Sync messages left before the one this instance dies handling; 0 is none. */
   #dieAt = 0;
@@ -167,6 +169,17 @@ export class TestBase extends Base {
     return result;
   }
 
+  override installLookup(...args: Parameters<Base["installLookup"]>): "installed" | "dropped" {
+    const result = super.installLookup(...args);
+    for (const resolve of this.#lookups.splice(0)) resolve(result);
+    return result;
+  }
+
+  /** Resolves when the queue consumer next hands a DOI lookup back. Call it before dispatching. */
+  nextLookup(): Promise<"installed" | "dropped"> {
+    return new Promise((resolve) => this.#lookups.push(resolve));
+  }
+
   /** The model each stored vector was made with, one per chunk that has one. */
   vectorModels(): string[] {
     return this.sql
@@ -237,7 +250,8 @@ const models = {
 } satisfies Models;
 
 export default {
-  queue: (batch: MessageBatch<JobMessage>, env: Env) => consume(batch, { ...env, AI: models }),
+  queue: (batch: MessageBatch<JobMessage>, env: Env) =>
+    consume(batch, { ...env, AI: models }, registries().web),
   fetch: (request: Request, env: Env) => {
     const site = routeSite(request, env, fakeSiteSession(request, env));
     if (site) return site;

@@ -366,7 +366,7 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/", url), request));
     return new Response("Not found", { status: 404 });
   },
-  queue: consume,
+  queue: (batch, env) => consume(batch, env),
   async scheduled(controller, env, ctx) {
     if (controller.cron === SWEEP_CRON) {
       const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });

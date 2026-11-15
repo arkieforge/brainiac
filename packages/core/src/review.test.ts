@@ -37,6 +37,7 @@ const IELTS = at("facts/tests/ielts-2026-11.md");
 const OLD_IELTS = at("facts/tests/ielts-2025-03.md");
 const TUM = at("applications/tum-msc-informatics-2027/application.md");
 const TRF = at("documents/ielts-trf-2026.md");
+const PAPER = at("facts/papers/swahili-ner-2026.md");
 
 /** A fictional note at `path`, of the fixture's types. */
 const note = (path: string, data: Record<string, unknown>): ReviewNote => {
@@ -65,12 +66,22 @@ describe("headlines", () => {
     // No template: the title.
     expect(headline(BSC, null)).toBe("BSc Computer Science, Northvale University");
   });
+
+  it("reach into a connector's block, and take the year of a date that has only a year", () => {
+    const title = "Named Entity Recognition for Low-Resource Swahili News";
+    // Nothing looked up yet: no venue or year to show.
+    expect(headline(PAPER, manifest)).toBe(`${title} · author 1`);
+    const synced = { venue: "Journal of Fictional Linguistics", published: "2026" };
+    expect(headline(edited(PAPER, { synced }), manifest)).toBe(
+      `${title} · Journal of Fictional Linguistics · 2026 · author 1`,
+    );
+  });
 });
 
 describe("the fixture record", () => {
   it("has no flags, only what is really true of it", () => {
-    // The role has no source; the old IELTS score is superseded, so it isn't asked for proof.
-    expect(found(fixture)).toEqual([`${ROLE.id}:proof:`]);
+    // The paper and the role have no source; the old IELTS score is superseded, so it isn't asked for proof.
+    expect(found(fixture)).toEqual([`${PAPER.id}:proof:`, `${ROLE.id}:proof:`]);
     const { items, counts } = overview(fixture, manifest, NOW);
     const ielts = items.find((i) => i.noteId === IELTS.id);
     expect(ielts).toMatchObject({

@@ -2,6 +2,7 @@ import { ulid } from "@brainiac/core";
 
 import { getNote, type NoteRow } from "./notes.ts";
 import { PIPELINE } from "./pages.ts";
+import { nextLookup, papersDue } from "./papers.ts";
 import { CHUNKS, EMBED_MODEL, fileOwner } from "./search.ts";
 import type { Sql } from "./sql.ts";
 import { getFile, needsJob, type FileRow } from "./vault.ts";
@@ -23,9 +24,9 @@ export const CHANGES_MS = 90 * 24 * 60 * 60_000;
 /**
  * Follow-up work for one revision of a note or a file. `index` rebuilds a note's search chunks and vectors;
  * `file` extracts an upload's text, runs the vault's checks over it and, once the file is cleared, indexes its
- * pages.
+ * pages; `doi` looks a paper's DOI up and fills its `synced:` block (papers.ts).
  */
-export type JobKind = "index" | "file";
+export type JobKind = "index" | "file" | "doi";
 
 export interface Job {
   readonly id: string;
@@ -62,6 +63,7 @@ export function enqueue(sql: Sql, kind: JobKind, noteId: string, rev: number): v
 export function dueJobs(sql: Sql, now: number): Job[] {
   return sql.transaction(() => {
     sql.all(`DELETE FROM jobs WHERE NOT (${CURRENT})`);
+    for (const paper of papersDue(sql, now)) enqueue(sql, "doi", paper.id, paper.rev);
     sql.all(
       "UPDATE jobs SET status = 'failed' WHERE status = 'dispatched' AND attempts >= ? AND dispatchedAt <= ?",
       MAX_ATTEMPTS,
@@ -114,13 +116,13 @@ const CURRENT = `EXISTS (SELECT 1 FROM notes
 
 /** What a job works on, as of its revision. */
 export type JobInput =
-  | { readonly job: Job & { readonly kind: "index" }; readonly note: NoteRow }
+  | { readonly job: Job & { readonly kind: "index" | "doi" }; readonly note: NoteRow }
   | { readonly job: Job & { readonly kind: "file" }; readonly file: FileRow };
 
 /** The note or file a job works on, at the job's revision; a stale job is dropped and `undefined` returned. */
 export function jobInput(sql: Sql, jobId: string): JobInput | undefined {
   const [job] = sql.all<Job>(`SELECT * FROM jobs WHERE id = ? AND (${CURRENT})`, jobId);
-  if (job?.kind === "index") {
+  if (job?.kind === "index" || job?.kind === "doi") {
     const note = getNote(sql, job.noteId);
     if (note) return { job: { ...job, kind: job.kind }, note };
   }
@@ -134,14 +136,24 @@ export function jobInput(sql: Sql, jobId: string): JobInput | undefined {
 
 /**
  * Completes a job with `install`, but only while its note or file is still at the job's revision; otherwise the
- * result is dropped. Either way the job is done.
+ * result is dropped. Either way the job is done, unless `install` says the result failed: then it stays, failed.
  */
-export function finishJob(sql: Sql, jobId: string, install: (job: Job) => void): "installed" | "dropped" {
+export function finishJob(
+  sql: Sql,
+  jobId: string,
+  install: (job: Job) => void | "failed",
+): "installed" | "dropped" {
   return sql.transaction(() => {
     const [job] = sql.all<Job>(`SELECT * FROM jobs WHERE id = ? AND (${CURRENT})`, jobId);
+    if (!job) {
+      sql.all("DELETE FROM jobs WHERE id = ?", jobId);
+      return "dropped";
+    }
+    if (install(job) === "failed") {
+      sql.all("UPDATE jobs SET status = 'failed' WHERE id = ?", jobId);
+      return "dropped";
+    }
     sql.all("DELETE FROM jobs WHERE id = ?", jobId);
-    if (!job) return "dropped";
-    install(job);
     return "installed";
   });
 }
@@ -216,7 +228,7 @@ export function nextWake(sql: Sql, now: number): number | null {
   const [held] = sql.all<{ at: number | null }>(
     "SELECT min(autoApplyAt) AS at FROM proposals WHERE status = 'open' AND autoApplyAt IS NOT NULL",
   );
-  const times = [row?.at, held?.at].filter((at) => typeof at === "number");
+  const times = [row?.at, held?.at, nextLookup(sql, now)].filter((at) => typeof at === "number");
   return times.length > 0 ? Math.min(...times) : null;
 }
 

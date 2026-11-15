@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { parseNote } from "@brainiac/core";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +12,7 @@ import type { TestBase } from "./harness.ts";
 const FIXTURES = join(import.meta.dirname, "../../../fixtures/nadia");
 const TUM = "applications/tum-msc-informatics-2027/application.md";
 const raw = readFileSync(join(FIXTURES, TUM), "utf8");
+const PAPER = "facts/papers/swahili-ner-2026.md";
 const human = { actor: "human" };
 /** Reads as a connection without the sensitive scope. */
 const agent = { sensitive: false };
@@ -131,5 +133,32 @@ describe("Base DO", () => {
     await base.githubRepoDeleted(repo.id);
     const [after] = await base.notes(human).then((notes) => (Array.isArray(notes) ? notes : []));
     expect(JSON.parse(after?.fm ?? "{}").synced).toMatchObject({ stars: 3, archived: true });
+  });
+
+  it("fills the fixture paper from its DOI, through the queue and the consumer", async () => {
+    const base = (await record("paper"))();
+    await base.setManifest(readFileSync(join(FIXTURES, "okf-base.yaml"), "utf8"));
+    const [id] = await base.seed([
+      { path: PAPER, raw: readFileSync(join(FIXTURES, PAPER), "utf8"), class: "normal" },
+    ]);
+    const filled = base.nextLookup();
+    await base.dispatch();
+    expect(await filled).toBe("installed");
+
+    const notes = await base.notes(human);
+    if (!Array.isArray(notes)) throw new Error(JSON.stringify(notes));
+    const paper = notes.find((note) => note.id === id);
+    expect(parseNote(paper?.raw ?? "").data).toMatchObject({
+      title: "Named Entity Recognition for Low-Resource Swahili News",
+      position: 1,
+      synced: {
+        doi: "10.5555/brainiac.swahili-ner.2026",
+        venue: "Journal of Fictional Linguistics",
+        published: "2026-03-14",
+        authors: ["Nadia Karim", "Amara Okafor"],
+        citations: 3,
+      },
+    });
+    expect(await base.actorOf(id ?? "")).toBe("connector:doi");
   });
 });

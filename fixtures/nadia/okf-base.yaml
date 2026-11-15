@@ -45,6 +45,18 @@ types:
       start: {kind: date, required: true}
       end: {kind: date, ask: "When did your role at {org} end?"}
       current: {kind: boolean}
+  Paper:
+    version: 1
+    held: true
+    folder: facts/papers
+    headline: "{title} · {synced.venue} · {synced.published|year} · author {position}"
+    key: [doi]
+    fields:
+      doi: {kind: text, example: "10.5555/12345678"}
+      position: {kind: number, example: 1, ask: "Which author are you on {title}? 1 is the first."}
+      synced: {kind: mapping}
+      sources: {kind: list}
+      verified: {kind: mapping}
   Application:
     version: 1
     folder: applications
