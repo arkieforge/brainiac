@@ -253,6 +253,10 @@ describe("pdfHidesText", () => {
   });
 });
 
+/** The header of a long note's last section, under an H2 line. */
+const lastHeader = (line: string) =>
+  chunkNote(note(`${IELTS}\n${"Detail. ".repeat(LONG_BODY / 8)}\n${line}\n\nText.\n`)).at(-1)?.header;
+
 describe("chunkNote", () => {
   it("a short note is one chunk: its fields as written, then its body, under a header", () => {
     const [chunk, ...rest] = chunkNote(note(IELTS));
@@ -265,11 +269,9 @@ describe("chunkNote", () => {
   });
 
   it("reads H2 headings as CommonMark does, in time linear in the line", () => {
-    const last = (line: string) =>
-      chunkNote(note(`${IELTS}\n${"Detail. ".repeat(LONG_BODY / 8)}\n${line}\n\nText.\n`)).at(-1)?.header;
-    expect(last("## Plan ##")).toBe("[TestScore · IELTS Academic, November 2026 › Plan]");
-    expect(last("## C#")).toBe("[TestScore · IELTS Academic, November 2026 › C#]");
-    expect(last(`## ${" ".repeat(50_000)}x`)).toBe("[TestScore · IELTS Academic, November 2026 › x]");
+    expect(lastHeader("## Plan ##")).toBe("[TestScore · IELTS Academic, November 2026 › Plan]");
+    expect(lastHeader("## C#")).toBe("[TestScore · IELTS Academic, November 2026 › C#]");
+    expect(lastHeader(`## ${" ".repeat(50_000)}x`)).toBe("[TestScore · IELTS Academic, November 2026 › x]");
   });
 
   it("reads a value an alias repeats", () => {
