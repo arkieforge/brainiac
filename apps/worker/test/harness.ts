@@ -42,6 +42,19 @@ export class TestBase extends Base {
     return getNote(this.sql, noteId)?.rev ?? null;
   }
 
+  /** Gives the record a manifest, as onboarding does. */
+  setManifest(yaml: string): void {
+    this.sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", yaml);
+  }
+
+  actorOf(noteId: string): string | null {
+    const [row] = this.sql.all<{ actor: string }>(
+      "SELECT actor FROM revisions WHERE noteId = ? ORDER BY rev DESC LIMIT 1",
+      noteId,
+    );
+    return row?.actor ?? null;
+  }
+
   override installIndex(jobId: string, chunks: readonly ChunkInput[]): "installed" | "dropped" {
     const result = super.installIndex(jobId, chunks);
     for (const resolve of this.#waiting.splice(0)) resolve(result);
@@ -56,7 +69,7 @@ export class TestBase extends Base {
 
 export default {
   queue: consume,
-  // Stands in for the authenticated route (#13): every socket reaches one record, as "tester".
+  // Stands in for the authenticated route (#87): every socket reaches one record, as "tester".
   fetch: (request: Request, env: Env) => {
     const headers = new Headers(request.headers);
     headers.set(ACTOR_HEADER, "tester");

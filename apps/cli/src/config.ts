@@ -10,7 +10,7 @@ export interface Config {
   readonly deviceId: string;
   readonly vault?: string;
   readonly server?: string;
-  /** The connection token; until `brainiac login` exists (#13) it comes from BRAINIAC_TOKEN. */
+  /** The connection token; until `brainiac login` exists (#87) it comes from BRAINIAC_TOKEN. */
   readonly token?: string;
   /** "Keep sensitive notes on this laptop", for a device the person marked as theirs. */
   readonly keepSensitive?: boolean;

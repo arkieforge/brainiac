@@ -8,7 +8,7 @@ const RETRY_MS = [1_000, 30_000] as const;
 /**
  * The daemon's socket to the record: `<server>/sync`, with the connection's token. It reconnects for as long
  * as the daemon runs; the sync client resends whatever is pending on each `open`.
- * shortcut: the Worker serves /sync to signed-in sessions and CLI tokens once connections land (#13).
+ * shortcut: the Worker serves /sync to signed-in sessions and CLI tokens with #87.
  */
 export function socketLink(server: string, token: string | undefined): Connect {
   const url = new URL("/sync", server.replace(/^http/, "ws"));

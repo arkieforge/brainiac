@@ -19,6 +19,7 @@ import {
   type Sql,
 } from "../src/index.ts";
 import { approvalCases } from "./approval-cases.ts";
+import { connectionCases } from "./connection-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 
 export interface Fixture {
@@ -95,6 +96,7 @@ const byPath = (sql: Sql, path: string) => {
 export const cases: Record<string, Case> = {
   ...mutateCases,
   ...approvalCases,
+  ...connectionCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);

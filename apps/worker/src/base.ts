@@ -1,5 +1,19 @@
 import {
+  authenticate,
+  canSee,
   changesSince,
+  connect,
+  decide,
+  disconnect,
+  getConnection,
+  grant,
+  grantHash,
+  listNotes,
+  mintToken,
+  releaseDue,
+  restrict,
+  search,
+  withdraw,
   lastCounter,
   openReview,
   planHash,
@@ -21,13 +35,17 @@ import {
   undoRun,
   type Approved,
   type ChunkInput,
+  type Connection,
+  type Context,
+  type Decided,
+  type Forbidden,
+  type GrantPlan,
+  type Granted,
   type Mutation,
   type MutationResult,
-  type NeedsApproval,
   type NoteRow,
   type Opened,
   type Sql,
-  type UndoResult,
 } from "@brainiac/base";
 import { decodeClientMessage, type PlanItem, type ServerMessage } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
@@ -41,7 +59,7 @@ const RETRY_MS = 60_000;
 /**
  * Who a sync socket speaks for. The Worker's authenticated route sets it on the upgrade request; nothing
  * outside the Worker can reach a DO, so the header can't come from a client.
- * shortcut: no route forwards sockets yet; it lands with connection tokens (#13), which carry the base id.
+ * shortcut: no route forwards sockets yet; /sync lands with #87, routing a CLI token by the base id inside it.
  */
 export const ACTOR_HEADER = "x-brainiac-actor";
 
@@ -60,7 +78,13 @@ export interface JobMessage {
 
 /** Who asks for a change. Set by the transport from the session or token, never from the request body. */
 export interface Caller {
+  /** For the person on the site; a connection's actor is always `connection:<id>`. */
   readonly actor: string;
+  /**
+   * The connection a tool call comes through (a CLI token's, or an MCP client's consent): its level, sensitive
+   * scope and hold window apply. Absent only on the site's session route, which speaks for the person.
+   */
+  readonly connectionId?: string;
   readonly runId?: string;
   /** An approval the person gave for this exact change (from `approve`); used up when the change lands. */
   readonly approvalId?: string;
@@ -88,18 +112,106 @@ export class Base extends DurableObject<Env> {
     return schemaVersion(this.sql);
   }
 
+  /** The caller as the record knows it: a connection's grants come from its own table, never the caller. */
+  private context(caller: Caller): Context | Forbidden {
+    const { connectionId, ...rest } = caller;
+    const now = Date.now();
+    if (connectionId === undefined) return { ...rest, now };
+    const connection = getConnection(this.sql, connectionId);
+    if (!connection) return { status: "forbidden", reason: "This connection was disconnected." };
+    return { ...rest, actor: `connection:${connection.id}`, connection, now };
+  }
+
   mutate(mutation: Mutation, caller: Caller): MutationResult {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
     const before = currentSeq(this.sql);
-    const result = mutate(this.sql, mutation, { ...caller, now: Date.now() });
+    const result = mutate(this.sql, mutation, ctx);
     this.changed(before);
     return result;
   }
 
-  undoRun(runId: string, caller: Caller): UndoResult | NeedsApproval {
+  undoRun(runId: string, caller: Caller): ReturnType<typeof undoRun> {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
     const before = currentSeq(this.sql);
-    const result = undoRun(this.sql, runId, { ...caller, now: Date.now() });
+    const result = undoRun(this.sql, runId, ctx);
     this.changed(before);
     return result;
+  }
+
+  /** Live notes the caller may see: a connection sees sensitive ones only with the scope granted. */
+  notes(caller: Caller): NoteRow[] | Forbidden {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    return listNotes(this.sql).filter((note) => canSee(ctx.connection, note));
+  }
+
+  /** Keyword search over the families the caller may see. */
+  search(text: string, caller: Caller): string[] | Forbidden {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const families = canSee(ctx.connection, { class: "sensitive" })
+      ? (["normal", "sensitive"] as const)
+      : (["normal"] as const);
+    return families.flatMap((family) => search(this.sql, family, text).map((hit) => hit.noteId));
+  }
+
+  // Proposals. A connection may withdraw its own; only the site's session route may decide one.
+
+  withdraw(proposalId: string, caller: Caller): Decided {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : withdraw(this.sql, proposalId, ctx);
+  }
+
+  decide(proposalId: string, decision: "accept" | "reject", caller: Caller): Decided {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const before = currentSeq(this.sql);
+    const result = decide(this.sql, proposalId, decision, ctx);
+    this.changed(before);
+    return result;
+  }
+
+  // Connections. Only the site's session route may call these, for the record's owner; the Worker routes a CLI
+  // token to its record by the id inside it (`tokenBase`), and `authenticate` decides whether it is good.
+  // shortcut: no route calls them yet; /sync and /mcp resolve their connections with #17.
+
+  /** A new connection at the floor (propose, no sensitive notes, a 3-day hold), or an MCP client's existing one. */
+  // Not `connect`: a Durable Object's `connect` is its TCP socket handler.
+  addConnection(input: Parameters<typeof connect>[1]): Connection {
+    return connect(this.sql, input, Date.now());
+  }
+
+  /** A new token for a CLI connection, naming this record. Shown once. */
+  mintToken(connectionId: string): string {
+    return mintToken(this.sql, this.ctx.id.toString(), connectionId, Date.now());
+  }
+
+  authenticate(token: string): Connection | null {
+    return authenticate(this.sql, token, Date.now()) ?? null;
+  }
+
+  /** Loosens a connection with the person's passkey over `grantHash(plan)` (contract §4). */
+  async grant(plan: GrantPlan, response: AuthenticationResponseJSON, approver: Approver): Promise<Granted> {
+    const signed = await this.check(response, grantHash(plan), approver);
+    // The check awaited: a change to the connection meanwhile moved its rev, which the plan names.
+    if ("error" in signed) return signed;
+    const result = grant(this.sql, plan, signed);
+    // A grant can move or clear waiting releases: the alarm follows them.
+    this.wake();
+    return result;
+  }
+
+  /** Tightens a connection; no passkey needed. */
+  restrict(connectionId: string, change: Parameters<typeof restrict>[2]): Granted {
+    const result = restrict(this.sql, connectionId, change);
+    this.wake();
+    return result;
+  }
+
+  disconnect(connectionId: string): void {
+    disconnect(this.sql, connectionId);
   }
 
   // Approvals. Only the site's session route may call these, with the record owner's passkey loaded from Neon
@@ -209,13 +321,16 @@ export class Base extends DurableObject<Env> {
   }
 
   /**
-   * Dispatches due jobs and purges expired tombstones. A job is marked dispatched only after the queue has
+   * Dispatches due jobs, purges expired tombstones and applies held changes whose hold ran out. A job is marked dispatched only after the queue has
    * it, so a crash at any point sends it again; a dispatched job nobody acknowledges is sent again after its
    * lease. Both sides drop stale results, so a duplicate delivery costs work, not correctness.
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
     purge(this.sql, now);
+    const seq = currentSeq(this.sql);
+    releaseDue(this.sql, now);
+    if (currentSeq(this.sql) > seq) this.push(changesSince(this.sql, seq));
     const due = dueJobs(this.sql, now);
     if (due.length > 0) {
       try {

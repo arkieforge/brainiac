@@ -27,11 +27,11 @@ changes      { seq PK, noteId, rev, op, actor, at }                 // sync feed
 landed       { changeId PK, result JSON, at }                       // every sync change answered, 90 days: a replay gets the same answer
 clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion }   // strict in-order apply; ackedUpTo: the highest it sent
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
-proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema }
+proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema, action?, runId? }   // status: open | applied | rejected | withdrawn; a held change keeps its plan in patch and what applies it in action
 approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)], assertion, credentialId, at, usedAt? }   // used once
 review_runs  { nonce, actor, items JSON, assertion, credentialId, expiresAt }   // one signature, only for its opener and the items shown; assertion '' until signed
 passkey_keys { credentialId PK, publicKey, counter }                // the last counter each passkey signed with here
-connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, createdAt }
+connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, rev, createdAt }   // rev: bumped by every grant change; a grant signature names it
 inbox_leases { itemId, agent, expiresAt }                            // one filer per item
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }
@@ -42,7 +42,7 @@ chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
 vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory
 edges        { fromId, toId, rel }
 schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
-tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
+tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens, brn_<base id>_<secret>, stored as a hash of the whole token; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
 secrets      { name PK, ciphertext, policy, domain }
 audit        { id, at, actor, tool, noteIds, secretName?, approvalId? }
 ```

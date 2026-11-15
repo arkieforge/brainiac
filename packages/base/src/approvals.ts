@@ -29,7 +29,7 @@ export interface NeedsApproval {
 }
 
 /** JSON with object keys sorted, so equal plans hash equally whatever order their fields were built in. */
-const canonical = (value: unknown): string =>
+export const canonical = (value: unknown): string =>
   Array.isArray(value)
     ? `[${value.map(canonical).join(",")}]`
     : typeof value === "object" && value !== null
@@ -58,12 +58,12 @@ function verifiedFields(verified: unknown): string[] | "all" {
 }
 
 /**
- * The live verified note a `supersedes` relation (a path relative to the note, or an id) names, if any. Paths
- * match as the record matches them, whatever their case or Unicode form, as a Mac or Obsidian would open them.
- * Anything else that reads `supersedes` (an edges table, a "current score" query) must resolve it exactly like
- * this, or a form it accepts and this doesn't would carry an edge past approvals.
+ * The live note a relation (a path relative to the note, or an id) names, if any. Paths match as the record
+ * matches them, whatever their case or Unicode form, as a Mac or Obsidian would open them. Anything else that
+ * reads `supersedes` (an edges table, a "current score" query) must resolve it exactly like this, or a form it
+ * accepts and this doesn't would carry an edge past approvals and the hold.
  */
-function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): string | undefined {
+export function relationTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): NoteRow | undefined {
   if (!from || typeof relation !== "string") return undefined;
   let target: NoteRow | undefined;
   if (isUlid(relation)) target = getNote(sql, relation);
@@ -81,9 +81,13 @@ function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown):
     const match = findClash(live, path);
     target = match === undefined ? undefined : getNoteByPath(sql, match);
   }
-  return target !== undefined && target.id !== from.id && Object.hasOwn(liveData(target) ?? {}, "verified")
-    ? target.id
-    : undefined;
+  return target !== undefined && target.id !== from.id && target.deletedAt === null ? target : undefined;
+}
+
+/** The live verified note a `supersedes` relation names, if any. */
+function verifiedTarget(sql: Sql, from: NoteRow | undefined, relation: unknown): string | undefined {
+  const target = relationTarget(sql, from, relation);
+  return target && Object.hasOwn(liveData(target) ?? {}, "verified") ? target.id : undefined;
 }
 
 /** The verified notes an effect adds, moves or removes a `supersedes` edge into. */
@@ -134,23 +138,9 @@ export interface Grant {
   readonly review?: string;
 }
 
-/**
- * Lets a transaction's effects stand, or says what must be signed. An approval covers one plan once: it is used
- * up here, in the transaction that applies it. A review session covers edits (and, for an undo, restores and
- * deletes) to the notes it showed, until it expires.
- */
-export function settle(
-  sql: Sql,
-  effects: readonly Effect[],
-  ctx: Grant & { readonly actor: string; readonly now: number },
-  scope: "change" | "undo",
-): NeedsApproval | undefined {
-  const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
-  // Deleting more than five notes at once needs a signature whatever they hold, and no review session covers it.
-  const bulk = deleting.length > BULK_DELETE;
-  const needing = bulk ? effects : effects.filter((effect) => needsApproval(sql, effect));
-  if (needing.length === 0) return undefined;
-  const items = effects
+/** What a transaction's effects come to, note by note, in a stable order: what a passkey signs. */
+export const planOf = (effects: readonly Effect[]): PlanItem[] =>
+  effects
     .map(({ before, after }): PlanItem => ({
       noteId: after.id,
       baseRev: before?.rev ?? 0,
@@ -159,12 +149,31 @@ export function settle(
       patch: diff(stateOf(before), stateOf(after)),
     }))
     .toSorted((a, b) => (a.noteId < b.noteId ? -1 : a.noteId > b.noteId ? 1 : 0));
+
+/**
+ * Lets a transaction's effects stand, or says what must be signed. An approval covers one plan once: it is used
+ * up here, in the transaction that applies it. A review session covers edits (and, for an undo, restores and
+ * deletes) to the notes it showed, until it expires. `signed` means the person's signature let it through, which
+ * also releases it from the hold window.
+ */
+export function settle(
+  sql: Sql,
+  effects: readonly Effect[],
+  ctx: Grant & { readonly actor: string; readonly now: number },
+  scope: "change" | "undo",
+): NeedsApproval | "signed" | undefined {
+  const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
+  // Deleting more than five notes at once needs a signature whatever they hold, and no review session covers it.
+  const bulk = deleting.length > BULK_DELETE;
+  const needing = bulk ? effects : effects.filter((effect) => needsApproval(sql, effect));
+  if (needing.length === 0) return undefined;
+  const items = planOf(effects);
   const hash = planHash(items);
   if (ctx.approvalId !== undefined) {
     const [approval] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ?", ctx.approvalId);
     if (approval && approval.planHash === hash && approval.usedAt === null) {
       sql.all("UPDATE approvals SET usedAt = ? WHERE id = ?", ctx.now, approval.id);
-      return undefined;
+      return "signed";
     }
   }
   if (ctx.review !== undefined) {
@@ -186,7 +195,7 @@ export function settle(
           (scope === "undo" ||
             (liveData(before) !== undefined && liveData(after) !== undefined && before?.path === after.path)),
       );
-      if (covered) return undefined;
+      if (covered) return "signed";
     }
   }
   return { status: "needsApproval", planHash: hash, items };
@@ -212,7 +221,7 @@ export function lastCounter(sql: Sql, credentialId: string): number {
  * Takes a passkey's counter forward, or refuses an assertion that doesn't move it (a replay or a cloned key).
  * Authenticators that keep no counter always report 0; those rely on the one-use rows instead.
  */
-function advance(sql: Sql, signature: Signature): boolean {
+export function advance(sql: Sql, signature: Signature): boolean {
   const last = lastCounter(sql, signature.credentialId);
   if ((signature.counter > 0 || last > 0) && signature.counter <= last) return false;
   sql.all(

@@ -117,8 +117,8 @@ export function finishJob(sql: Sql, jobId: string, install: (job: Job) => void):
 const HISTORY_GRACE_MS = 24 * 60 * 60_000;
 
 /**
- * When the record next has background work: a job to dispatch or retry, a tombstone to purge, or history
- * (revisions, the change feed) past its window.
+ * When the record next has background work: a job to dispatch or retry, a tombstone to purge, history
+ * (revisions, the change feed) past its window, or a held change whose hold runs out.
  */
 export function nextWake(sql: Sql, now: number): number | null {
   const [row] = sql.all<{ at: number | null }>(
@@ -136,7 +136,12 @@ export function nextWake(sql: Sql, now: number): number | null {
     CHANGES_MS + HISTORY_GRACE_MS,
     CHANGES_MS + HISTORY_GRACE_MS,
   );
-  return row?.at ?? null;
+  // Its own query: Durable Object SQLite allows no more terms in one compound SELECT.
+  const [held] = sql.all<{ at: number | null }>(
+    "SELECT min(autoApplyAt) AS at FROM proposals WHERE status = 'open' AND autoApplyAt IS NOT NULL",
+  );
+  const times = [row?.at, held?.at].filter((at) => typeof at === "number");
+  return times.length > 0 ? Math.min(...times) : null;
 }
 
 /** Removes tombstones past 30 days with everything derived from them, and history past its window. */

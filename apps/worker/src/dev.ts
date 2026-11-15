@@ -94,7 +94,7 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
   if (mint) {
     const resource = mcpResource(url.origin);
     // The claims /mcp checks (mcp/handler.ts), signed with this stage's own keys. No OAuth client or consent stands
-    // behind `brainiac-dev`, so once tools check consent (#13, #17) they need to let it through on non-prod stages.
+    // behind `brainiac-dev`, so once tools check consent (#17) they need to let it through on non-prod stages.
     const { token: accessToken } = await auth.api.signJWT({
       body: {
         payload: {
