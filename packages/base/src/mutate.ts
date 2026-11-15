@@ -149,7 +149,11 @@ function judged<T extends { readonly status: string }>(
           throw new Held({
             status: "invalid",
             issues: [
-              { field: "proposal", message: "The record changed since this was held. Look at it again." },
+              {
+                field: "proposal",
+                message:
+                  "The record changed since this was held. Reject it, and make the change again if it's still wanted.",
+              },
             ],
           });
         const verdict = settle(sql, effects, ctx, scope);

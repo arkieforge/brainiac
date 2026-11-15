@@ -73,8 +73,17 @@ function heldOf(manifest: Manifest | undefined) {
 
 const body = (note: NoteRow) => splitNote(note.raw).body;
 
-const appended = (was: string, is: string) =>
-  is.startsWith(was) && (was === "" || was.endsWith("\n") || is.startsWith("\n", was.length));
+/**
+ * Whether `is` only adds new blocks after `was`: a blank line where they meet, or a heading on a line of its own.
+ * Text on the next line without a blank one continues the last paragraph, so it changes what that says.
+ */
+function appended(was: string, is: string): boolean {
+  if (!is.startsWith(was)) return false;
+  const added = is.slice(was.length);
+  if (added === "" || was.trim() === "") return true;
+  const breaks = (/\n*$/.exec(was)?.[0].length ?? 0) + (/^\n*/.exec(added)?.[0].length ?? 0);
+  return breaks >= 2 || (breaks === 1 && added.replace(/^\n/, "").startsWith("#"));
+}
 
 /** Whether a write-level change with this effect waits out the hold. */
 export function holds(sql: Sql, manifest: Manifest | undefined, { before, after }: Effect): boolean {

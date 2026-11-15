@@ -452,18 +452,25 @@ export const connectionCases: Record<string, Case> = {
     applied(mutate(sql, patchOf(sql, role, [section("Next", "A second internship.\n")]), via(writer)));
 
     // Run onto a last line with no newline, it changes what that line says.
-    const head = (getNote(sql, role)?.raw ?? "").slice(0, splitNote(getNote(sql, role)?.raw ?? "").bodyStart);
-    const rev = () => getNote(sql, role)?.rev ?? 0;
-    applied(mutate(sql, { op: "put", noteId: role, baseRev: rev(), raw: `${head}Led a team of 5` }, human()));
-    for (const body of ["Led a team of 50", "Led a team of 5 (declined)"])
-      proposed(mutate(sql, { op: "put", noteId: role, baseRev: rev(), raw: head + body }, via(writer)));
-    applied(
-      mutate(
-        sql,
-        { op: "put", noteId: role, baseRev: rev(), raw: `${head}Led a team of 5\nThen more.` },
-        via(writer),
-      ),
-    );
+    const withBody = (body: string): Mutation => {
+      const note = getNote(sql, role);
+      ok(note);
+      return {
+        op: "put",
+        noteId: role,
+        baseRev: note.rev,
+        raw: note.raw.slice(0, splitNote(note.raw).bodyStart) + body,
+      };
+    };
+    applied(mutate(sql, withBody("Led a team of 5"), human()));
+    // So is the next line without a blank one: markdown reads it as the same paragraph.
+    for (const body of ["Led a team of 50", "Led a team of 5 (declined)", "Led a team of 5\n(declined)"])
+      proposed(mutate(sql, withBody(body), via(writer)));
+    // A new field leaves that body as it is.
+    applied(mutate(sql, patchOf(sql, role, [set("floor", 3)]), via(writer)));
+    // A new paragraph or heading is new text.
+    applied(mutate(sql, withBody("Led a team of 5\n\nThen more."), via(writer)));
+    applied(mutate(sql, withBody("Led a team of 5\n\nThen more.\n## Later\n"), via(writer)));
   },
 
   "a released change applies only as it was held": (sql, fixtures) => {
@@ -490,6 +497,11 @@ export const connectionCases: Record<string, Case> = {
     releaseDue(sql, held.autoApplyAt ?? 0);
     equal(field(sql, role, "end"), "2025-09-30");
     equal(proposal(sql, held.proposalId)?.autoApplyAt, T0 + 10 * DAY_MS);
+    // A longer hold signed with other grants does the same.
+    const now = getConnection(sql, writer.id);
+    ok(now);
+    ok("connection" in grant(sql, { ...now, connectionId: now.id, sensitive: true, holdDays: 12 }, signed()));
+    equal(proposal(sql, held.proposalId)?.autoApplyAt, T0 + 12 * DAY_MS);
   },
 
   "a held undo undoes only what the run had done when it was held": (sql, fixtures) => {
@@ -527,6 +539,8 @@ export const connectionCases: Record<string, Case> = {
     const writer = granted(sql, { level: "write" });
     const lowered = proposed(mutate(sql, patchOf(sql, role, [set("end", "2025-10-31")]), via(writer)));
     ok("connection" in restrict(sql, writer.id, { level: "propose" }));
+    // It shows no release time it won't keep.
+    equal(proposal(sql, lowered.proposalId)?.autoApplyAt, null);
     releaseDue(sql, lowered.autoApplyAt ?? 0);
     equal(field(sql, role, "end"), "2025-09-30");
     same(proposal(sql, lowered.proposalId), { status: "open", kind: "change", autoApplyAt: null });

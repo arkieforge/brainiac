@@ -171,7 +171,20 @@ function invalidGrant(plan: Omit<GrantPlan, "connectionId" | "rev">): string | u
   return undefined;
 }
 
+/**
+ * Sets a connection's grants, and what that means for its waiting held changes: below write they no longer apply
+ * on their own (the person decides them), and a longer hold pushes them back by the added days.
+ */
 function setGrants(sql: Sql, id: string, grants: Omit<GrantPlan, "connectionId" | "rev">): Connection {
+  const before = getConnection(sql, id);
+  if (!before) throw new Error(`no connection ${id}`);
+  sql.all(
+    `UPDATE proposals SET autoApplyAt = CASE WHEN ? THEN NULL ELSE autoApplyAt + ? END
+     WHERE actor = ? AND status = 'open' AND autoApplyAt IS NOT NULL`,
+    grants.level === "write" ? 0 : 1,
+    Math.max(0, grants.holdDays - before.holdDays) * DAY_MS,
+    `connection:${id}`,
+  );
   sql.all(
     "UPDATE connections SET level = ?, sensitive = ?, holdDays = ?, rev = rev + 1 WHERE id = ?",
     grants.level,
@@ -222,13 +235,6 @@ export function restrict(
       (next.sensitive && !connection.sensitive) ||
       next.holdDays < connection.holdDays;
     if (looser) return { error: "Loosening a connection needs your passkey." };
-    // A longer hold applies to what is already waiting, too.
-    sql.all(
-      `UPDATE proposals SET autoApplyAt = autoApplyAt + ?
-       WHERE actor = ? AND status = 'open' AND autoApplyAt IS NOT NULL`,
-      (next.holdDays - connection.holdDays) * DAY_MS,
-      `connection:${id}`,
-    );
     return { connection: setGrants(sql, id, next) };
   });
 }
