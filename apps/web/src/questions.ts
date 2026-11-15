@@ -32,9 +32,9 @@ function issueWith(manifest: Manifest | null, raw: string, fields: ReadonlySet<s
 }
 
 /**
- * Sends an answer, one note at a time and in order, as the person's edits. Stops at the first that can't be made:
- * an asked question is closed last, so it never says answered when its value didn't land. Resolves to why it
- * stopped, or undefined once every edit is sent.
+ * Sends an answer's edits, in order, as the person's. An asked question about a field is never closed here: it
+ * closes once its field changes, so an edit the record refuses later leaves it open. Resolves to why an edit
+ * couldn't be made, or undefined once every edit is sent.
  */
 export async function answer(
   client: SyncClient,

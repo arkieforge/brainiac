@@ -33,6 +33,8 @@ export interface Question {
   readonly input: Input;
   /** "Still there": an end date the item doesn't have yet. */
   readonly ongoing?: boolean;
+  /** For an asked question about a field: the value it holds now, as it did when asked. */
+  readonly current?: YamlValue;
   /** A value the person can take with one tap; never applied without it. */
   readonly suggested?: YamlValue;
   /** The soonest deadline of an open application that relies on the note. */
@@ -130,7 +132,7 @@ export function findQuestions(
     return type !== undefined && Object.hasOwn(types, type) ? types[type] : undefined;
   };
   /** The soonest open application relying on the note, as why it's asked now. */
-  const reason = (note: ReviewNote): { why: string; deadline: string } | undefined => {
+  const reason = (note: ReviewNote): { why: string; deadline: string; from: QuestionNote } | undefined => {
     const apps = (used.get(note.id) ?? [])
       .flatMap((id) => [byId.get(id) ?? []].flat())
       .flatMap((app) => {
@@ -139,7 +141,14 @@ export function findQuestions(
       })
       .toSorted((a, b) => a.deadline.localeCompare(b.deadline));
     const [first] = apps;
-    return first && { why: `For ${labelOf(first.app)}, due ${first.deadline}`, deadline: first.deadline };
+    return (
+      first && {
+        why: `For ${labelOf(first.app)}, due ${first.deadline}`,
+        deadline: first.deadline,
+        // The why names the application, so it is as private as the application is.
+        from: first.app,
+      }
+    );
   };
   const sensitive = (...from: readonly (QuestionNote | undefined)[]) =>
     from.some((note) => note?.class === "sensitive");
@@ -169,9 +178,10 @@ export function findQuestions(
         about && field !== undefined
           ? askedInput(specOf(about), field, valueAt(about.data, field) ?? suggested)
           : { kind: "text" },
+      ...(!empty(question.data["was"]) && { current: question.data["was"] as YamlValue }),
       ...(!empty(suggested) && { suggested: suggested as YamlValue }),
       ...(context && { deadline: context.deadline }),
-      sensitive: sensitive(question, about),
+      sensitive: sensitive(question, about, why ? undefined : context?.from),
     });
   }
 
@@ -201,7 +211,7 @@ export function findQuestions(
         input,
         ...(ongoing && { ongoing }),
         ...(context && { deadline: context.deadline }),
-        sensitive: sensitive(note),
+        sensitive: sensitive(note, context?.from),
       });
     }
   }
@@ -238,9 +248,10 @@ export function askNow<T extends Pick<Question, "deadline">>(
 }
 
 /**
- * The edits an answer makes, in order: the value goes to the field it's about, "still there" sets `current`, and
- * "not applicable" is remembered on the note. An asked question records the answer and closes itself last, so
- * it never says answered when the value didn't land.
+ * The edits an answer makes: the value goes to the field it's about, "still there" sets `current`, and "not
+ * applicable" is remembered on the note. An asked question about a field closes itself once the field changes, so
+ * a refused edit leaves it open; only a reply that keeps the value it holds closes it outright. One about nothing
+ * records the answer on itself.
  */
 export function answerEdits(question: Question, reply: Reply): Edit[] {
   const close = (status: "answered" | "not-applicable", answer?: YamlValue): Edit => ({
@@ -261,16 +272,12 @@ export function answerEdits(question: Question, reply: Reply): Edit[] {
     if (!question.ongoing) return [];
     return [{ noteId: question.noteId, ops: [{ op: "set", path: ["current"], value: true }] }];
   }
-  const set: Edit[] =
-    question.field === undefined
-      ? []
-      : [
-          {
-            noteId: question.noteId,
-            ops: [{ op: "set", path: question.field.split("."), value: reply.value }],
-          },
-        ];
-  return question.kind === "asked" ? [...set, close("answered", reply.value)] : set;
+  if (question.field === undefined) return [close("answered", reply.value)];
+  if (question.kind === "asked" && question.current !== undefined && same(question.current, reply.value))
+    return [close("answered", reply.value)];
+  return [
+    { noteId: question.noteId, ops: [{ op: "set", path: question.field.split("."), value: reply.value }] },
+  ];
 }
 
 /** A question as one line of an email or a list: what it asks and why. Never for a sensitive one in an email. */

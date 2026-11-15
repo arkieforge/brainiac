@@ -501,6 +501,28 @@ export const toolCases: Record<string, Case> = {
       [["Which internship came first?", "answered", "Acme, then the lab"]],
     );
     match(refused(sql, floor, "request_info", { question: "When?", field: "end" }), /field goes with note/);
+
+    // A question holds its note's values, so when the note turns sensitive, so does the question.
+    const asked = String(
+      call(sql, floor, "request_info", {
+        question: "Is Acme the org?",
+        note: n.role,
+        field: "org",
+        suggested: "Acme",
+      })["question"],
+    );
+    equal(fieldsOf(sql, asked)["was"], "Acme Robotics");
+    equal(
+      mutate(
+        sql,
+        { op: "classify", noteId: n.role, baseRev: revOf(sql, n.role), class: "sensitive" },
+        { actor: "human", now: T0 },
+      ).status,
+      "applied",
+    );
+    equal(getNote(sql, asked)?.class, "sensitive");
+    same(call(sql, floor, "get", { ids: [asked] })["missing"], [asked]);
+    ok(!rows(sql, floor, { type: "Question" }).some((r) => r.id === asked));
   },
 
   "the weekly email says a normal question's words, only counts a sensitive one, and stops when turned off": (

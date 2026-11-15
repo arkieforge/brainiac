@@ -231,6 +231,12 @@ function judged<T extends { readonly status: string }>(
   });
 }
 
+/** The normal Question notes whose `about` names `note`. */
+const questionsAbout = (sql: Sql, note: NoteRow) =>
+  sql
+    .all<NoteRow>(`SELECT * FROM notes WHERE type = 'Question' AND class = 'normal' AND deletedAt IS NULL`)
+    .filter((question) => relationTarget(sql, question, JSON.parse(question.fm)["about"])?.id === note.id);
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 const invalid = (field: string, message: string): MutationResult => ({
@@ -439,7 +445,12 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
     if (mutation.class === note.class)
       return { status: "applied", noteId: note.id, rev: note.rev, seq: note.seq, runId };
     // Loosening is judged with the rest of the transaction's effect (approvals.ts).
-    return write(sql, started, ctx, runId, note, { ...note, class: mutation.class }, "classify");
+    const result = write(sql, started, ctx, runId, note, { ...note, class: mutation.class }, "classify");
+    // A question about a note holds its values (`was`, `suggested`, `answer`), so it is as private as the note.
+    if (mutation.class === "sensitive")
+      for (const question of questionsAbout(sql, note))
+        write(sql, started, ctx, runId, question, { ...question, class: "sensitive" }, "classify");
+    return result;
   }
 
   let raw: string;

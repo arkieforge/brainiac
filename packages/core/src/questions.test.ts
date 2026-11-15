@@ -134,6 +134,23 @@ describe("found questions", () => {
     expect(texts).toContain("What's the end for Software Engineering Intern, Acme Robotics?");
   });
 
+  it("a question whose why names a sensitive application is sensitive", () => {
+    const record = fixture();
+    edit(record, BSC, [{ op: "unset", path: ["cgpa"] }]);
+    edit(record, TUM, [
+      {
+        op: "append",
+        path: ["requirements"],
+        value: { need: "A degree", check: { type: "Education", degree: "BSc Computer Science" } },
+      },
+    ]);
+    expect(ask(record).map((q) => [q.why, q.sensitive])).toEqual([
+      ["For TUM MSc Informatics, Winter 2027, due 2027-05-31", false],
+    ]);
+    record.set(TUM, { raw: record.get(TUM)?.raw ?? "", class: "sensitive" });
+    expect(ask(record).map((q) => q.sensitive)).toEqual([true]);
+  });
+
   it("a sensitive note's question is sensitive", () => {
     const record = fixture();
     edit(record, ROLE, [{ op: "unset", path: ["end"] }]);
@@ -225,18 +242,32 @@ describe("asked questions", () => {
     ]);
   });
 
-  it("answering sets the field, then records the answer and closes the question", () => {
+  it("a new value only sets the field: the change closes it, so a refused edit leaves it open", () => {
     const record = fixture();
     const id = asked(record, {
       title: "Is 3.82 your final CGPA?",
       about: `../${BSC}`,
       field: "cgpa",
       was: 3.82,
-      suggested: 3.82,
     });
     const question = one(record, id);
-    expect(answerEdits(question, { value: 3.82 })).toEqual([
-      { noteId: idAt(record, BSC), ops: [{ op: "set", path: ["cgpa"], value: 3.82 }] },
+    expect(question.current).toBe(3.82);
+    expect(answerEdits(question, { value: 3.84 })).toEqual([
+      { noteId: idAt(record, BSC), ops: [{ op: "set", path: ["cgpa"], value: 3.84 }] },
+    ]);
+    answer(record, question, { value: 3.84 });
+    expect(ids(record)).toEqual([]);
+  });
+
+  it("a reply that keeps the value it has records the answer and closes the question", () => {
+    const record = fixture();
+    const id = asked(record, {
+      title: "Is 3.82 your final CGPA?",
+      about: `../${BSC}`,
+      field: "cgpa",
+      was: 3.82,
+    });
+    expect(answerEdits(one(record, id), { value: 3.82 })).toEqual([
       {
         noteId: id,
         ops: [
@@ -245,7 +276,7 @@ describe("asked questions", () => {
         ],
       },
     ]);
-    answer(record, question, { value: 3.82 });
+    answer(record, one(record, id), { value: 3.82 });
     expect(ids(record)).toEqual([]);
   });
 
