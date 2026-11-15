@@ -1311,6 +1311,7 @@ const cases: Record<string, () => Promise<void>> = {
           "ask",
           "add",
           "create",
+          "import",
           "update",
           "undo",
           "request_info",

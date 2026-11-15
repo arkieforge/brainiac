@@ -39,6 +39,7 @@ import {
   type MutationResult,
   type UndoResult,
 } from "./mutate.ts";
+import { importInto } from "./imports.ts";
 import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
 import { withdraw, type Decided } from "./proposals.ts";
@@ -772,6 +773,45 @@ const create = tool(
       });
     // Every answer names the note, so a retry after an approval can make exactly it.
     return ok({ ...outcome(run()), id, path });
+  },
+);
+
+const ImportNote = type({
+  "+": "reject",
+  raw: "string <= 200000",
+  "path?": "string | null",
+  "sensitive?": "boolean | null",
+});
+const ImportText = type({ "+": "reject", text: "string <= 200000", "sensitive?": "boolean | null" });
+
+const importTool = tool(
+  `Bring in what the person already has elsewhere, for them to review: brainiac import sends a LinkedIn export's roles and schools, an OKF vault's notes and a CV's text. notes are whole markdown files with front-matter and a type, each with the path it goes to; every one waits as a proposal for the person, whatever your level, and a sensitive one needs the sensitive scope. inbox takes text to file later, like add. What the record already has (a note or open proposal of that type with the same key fields or title, or an inbox item with the same text) comes back as duplicate, so importing again changes nothing. For one new note, use create.`,
+  type({
+    "+": "reject",
+    "notes?": ImportNote.array().atMostLength(100).or("null"),
+    "inbox?": ImportText.array().atMostLength(20).or("null"),
+  }),
+  (sql, args, ctx) => {
+    if (readOnly(ctx)) return ok(READ_ONLY);
+    if (!ctx.connection) return fail("import comes through a connection.");
+    // A filing run files what is in the inbox; bringing more in is the person's, like add.
+    if (ctx.background)
+      return ok({ status: "forbidden", message: "A background run files the inbox; it doesn't import." });
+    const results = importInto(
+      sql,
+      { notes: args.notes?.map(present) ?? [], inbox: args.inbox?.map(present) ?? [] },
+      { ...ctx, connection: ctx.connection },
+    );
+    return ok({
+      results: results.map((imported) => {
+        if (!("result" in imported)) {
+          const twin = getNoteByPath(sql, imported.of);
+          if (twin) ctx.shown.add(twin.id);
+          return imported;
+        }
+        return { ...(imported.path !== undefined && { path: imported.path }), ...outcome(imported.result) };
+      }),
+    });
   },
 );
 
@@ -1565,6 +1605,7 @@ export const TOOLS = {
   ask,
   add,
   create,
+  import: importTool,
   update,
   undo,
   request_info: requestInfo,

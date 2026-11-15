@@ -36,6 +36,7 @@ export {
 } from "./connections.ts";
 export { GITHUB_ACTOR, repoDeleted, syncRepos, type Repo, type Synced } from "./github.ts";
 export { DAY_MS, manifestOf, type Proposed } from "./hold.ts";
+export { importInto, type Imported, type ImportNote, type ImportText } from "./imports.ts";
 export {
   CHANGES_MS,
   dueJobs,

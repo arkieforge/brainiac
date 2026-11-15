@@ -1,5 +1,8 @@
 // The filing eval's inbox and checks. Every sample files this one inbox in a real headless run; each case is a
 // check over what that run did. The items are the fictional fixture student's (fixtures/README.md).
+import { join } from "node:path";
+
+import { readSource } from "../../apps/cli/src/imports.ts";
 import type { PlanItem } from "../../packages/core/src/index.ts";
 
 /** What lands in the inbox before the run, as the person added it. */
@@ -9,7 +12,13 @@ export interface Item {
   readonly sensitive?: boolean;
 }
 
+// The fixture CV's text exactly as `brainiac import` sends it (fixtures/imports/cv.pdf).
+const [cvText] = (await readSource(join(import.meta.dirname, "../../fixtures/imports/cv.pdf"))).plan.inbox;
+if (!cvText) throw new Error("the fixture CV has no text");
+
 export const ITEMS: readonly Item[] = [
+  // A CV, whose research assistant position is nowhere else in the record.
+  { key: "cv", text: cvText.text },
   {
     // A role, which the fixture schema has a type for.
     key: "ta",
@@ -125,6 +134,27 @@ export const CASES: readonly Case[] = [
         }
       }
       return undefined;
+    },
+  },
+  {
+    id: "files-the-cv",
+    source: "#24: a CV's text from brainiac import becomes notes of the record's types",
+    kind: "control",
+    check: (run) => {
+      const cv = run.items["cv"] ?? "";
+      const changes = run.proposals.flatMap((p) => p.items);
+      const role = changes.some(
+        (item) =>
+          item.noteId !== cv &&
+          item.patch.fields["type"]?.after === "Role" &&
+          /research assistant/i.test(JSON.stringify(item.patch)),
+      );
+      // The CV gives the position by month only, so asking for its dates is as right as proposing it.
+      const asked = run.questions.some((q) => q.noteId === cv);
+      if (!role && !asked)
+        return "neither proposed a Role for the CV's research assistant position nor asked about it";
+      const done = changes.some((item) => item.noteId === cv && item.patch.live?.after === false);
+      return done || asked ? undefined : "left the CV item neither done nor asked about";
     },
   },
   {

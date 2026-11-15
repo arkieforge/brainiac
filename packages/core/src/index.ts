@@ -2,6 +2,17 @@
 export { parsePassport, scan, type Finding, type Passport } from "./checks.ts";
 export { pageHost, placement, savedDomain, type Placement } from "./domains.ts";
 export { isUlid, ulid } from "./ids.ts";
+export {
+  csvRows,
+  fromCv,
+  fromLinkedIn,
+  fromVault,
+  isLinkedIn,
+  linkedInDate,
+  type Draft,
+  type InboxText,
+  type Plan,
+} from "./imports.ts";
 export { merge, merge3, type Merged } from "./merge.ts";
 export {
   ClientMessage,

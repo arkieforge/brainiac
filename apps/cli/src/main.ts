@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // `brainiac`: the laptop side. Built into one binary with `bun build --compile`.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { doctor, lockVault, request, restore, watchRequests } from "./commands.ts";
@@ -11,6 +11,7 @@ import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
 import { fileable, fileInbox, filer, type Bridge } from "./filing.ts";
 import { refusal, ToolCall } from "./hook.ts";
+import { importSources, readSource, scanReport, type Source } from "./imports.ts";
 import { socketLink } from "./link.ts";
 import { callRecord, serveStdio } from "./mcp.ts";
 import { localCopy, tokenKey } from "./offline.ts";
@@ -24,6 +25,8 @@ brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
 brainiac mcp serve [--server <url>] [--background]
+brainiac scan <file or folder>...
+brainiac import [<file or folder>...] [--vault <folder>]
 brainiac questions [--all] [--json]
 brainiac filing [on|off|now]
 brainiac hook
@@ -93,14 +96,17 @@ async function main(argv: readonly string[]): Promise<void> {
     fail(
       `This computer is logged in to ${config.server}. Run brainiac logout first, or brainiac login --server ${values.server}.`,
     );
+  // scan and import read --vault as the folder to import from: it's not the vault this computer syncs.
+  const source = command === "scan" || command === "import";
   // Flags given once are remembered, so the login service needs none.
-  if (values.vault || values.server) {
+  if ((values.vault && !source) || values.server) {
     config = {
       ...config,
       // Stored resolved, so the daemon and every command name one vault, even through an alias.
-      ...(values.vault && {
-        vault: existsSync(values.vault) ? realpathSync(values.vault) : resolve(values.vault),
-      }),
+      ...(values.vault &&
+        !source && {
+          vault: existsSync(values.vault) ? realpathSync(values.vault) : resolve(values.vault),
+        }),
       // Login saves its server only with the token it gets from it.
       ...(values.server && command !== "login" && { server: values.server }),
     };
@@ -221,6 +227,47 @@ async function main(argv: readonly string[]): Promise<void> {
         ...(values.background && { background: true }),
         offline: copy.call,
       });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (command === "scan" || command === "import") {
+    // What scan read is remembered, so `brainiac import` alone sends it.
+    const last = join(dir, "scan.json");
+    const named = [
+      ...[sub, ...rest].filter((path) => path !== undefined),
+      ...(values.vault ? [values.vault] : []),
+    ];
+    let paths = named.map((path) => resolve(path));
+    if (command === "scan" && paths.length === 0) fail("brainiac scan <file or folder>...");
+    if (paths.length === 0) {
+      if (!existsSync(last)) fail("Nothing to import: brainiac scan <file or folder> first, or name them.");
+      paths = JSON.parse(readFileSync(last, "utf8")).paths;
+    }
+    const sources: Source[] = [];
+    for (const path of paths) {
+      try {
+        sources.push(await readSource(path, vault));
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (command === "scan") {
+      for (const line of sources.flatMap(scanReport)) console.log(line);
+      writeFileSync(last, JSON.stringify({ paths }));
+      return console.log(
+        "\nNothing has left this computer. brainiac import sends these: each note as a proposal you review, and inbox items for your Claude to file.",
+      );
+    }
+    if (!config.server || !token) fail("brainiac import needs brainiac login first.");
+    const server = config.server;
+    try {
+      const { lines, failed } = await importSources(sources, (args) =>
+        callRecord(server, token, "import", args),
+      );
+      for (const line of lines) console.log(line);
+      if (failed) process.exitCode = 1;
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }

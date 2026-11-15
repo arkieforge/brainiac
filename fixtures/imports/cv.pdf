@@ -1,0 +1,48 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 1189 >>
+stream
+BT
+/F1 18 Tf 1 0 0 1 56 764 Tm (Nadia Karim) Tj
+/F1 10 Tf 1 0 0 1 56 746 Tm (nadia.karim@example.org  -  Dhaka, Bangladesh) Tj
+/F1 13 Tf 1 0 0 1 56 707 Tm (Education) Tj
+/F1 10 Tf 1 0 0 1 56 689 Tm (BSc Computer Science, Northvale University, Sep 2021 to Jun 2025) Tj
+/F1 10 Tf 1 0 0 1 56 671 Tm (Thesis on low-resource named entity recognition, supervised by Dr Amara Okafor.) Tj
+/F1 13 Tf 1 0 0 1 56 632 Tm (Experience) Tj
+/F1 10 Tf 1 0 0 1 56 614 Tm (Teaching Assistant, Compilers, Northvale University, Sep 2025 to present) Tj
+/F1 10 Tf 1 0 0 1 56 596 Tm (Software Engineering Intern, Acme Robotics, Jul 2025 to Sep 2025) Tj
+/F1 10 Tf 1 0 0 1 56 578 Tm (Built the fleet telemetry dashboard and cut alert noise by a third.) Tj
+/F1 10 Tf 1 0 0 1 56 560 Tm (Research Assistant, Northvale NLP Lab, Jan 2024 to Jun 2025) Tj
+/F1 10 Tf 1 0 0 1 56 542 Tm (Annotated 4,000 Swahili news sentences for the named entity corpus.) Tj
+/F1 13 Tf 1 0 0 1 56 503 Tm (Publications) Tj
+/F1 10 Tf 1 0 0 1 56 485 Tm (Named Entity Recognition for Low-Resource Swahili News, 2026, first author.) Tj
+/F1 13 Tf 1 0 0 1 56 446 Tm (Skills) Tj
+/F1 10 Tf 1 0 0 1 56 428 Tm (Python, TypeScript, PyTorch, spaCy) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1579
+%%EOF
