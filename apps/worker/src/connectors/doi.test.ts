@@ -47,8 +47,8 @@ it("keeps only what the registry has, and fails rather than answer while a servi
   };
   // OpenAlex hasn't indexed it yet: no citation count, rather than zero.
   expect(await lookupDoi(doi, registries({ [`${CROSSREF}${doi}`]: preprint }).web)).toEqual({
-    // Markup that a single pass leaves half of still leaves no tag.
-    title: "A iptpreprint/i",
+    // Nested markup leaves no tag behind, and an unclosed one no bracket.
+    title: "A preprint/i",
     venue: "arXiv",
     published: "2026",
     authors: ["Northvale NLP Group", "Nadia Karim"],

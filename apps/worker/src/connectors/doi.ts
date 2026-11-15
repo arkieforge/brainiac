@@ -35,15 +35,17 @@ const CrossrefWork = type({
 const OpenAlexWork = type({ cited_by_count: "number.integer >= 0" });
 
 /** Crossref keeps some markup in titles (`<i>In vivo</i>`); a note holds the words. */
-const plain = (text: string | undefined) => {
-  const words = text
-    ?.replaceAll(/<[^>]*>/g, "")
-    // What one pass leaves of nested or unclosed markup (`<scr<script>ipt>`) is never a tag either.
-    .replaceAll(/[<>]/g, "")
-    .replaceAll(/\s+/g, " ")
-    .trim();
+function plain(text: string | undefined): string | undefined {
+  // Innermost tags first, until none is left: one pass over `<scr<script>ipt>` would leave a tag behind.
+  let stripped = text ?? "";
+  for (let last = ""; stripped !== last;) {
+    last = stripped;
+    stripped = stripped.replaceAll(/<[^<>]*>/g, "");
+  }
+  // An unclosed one (`</i`) is never a tag either.
+  const words = stripped.replaceAll(/[<>]/g, "").replaceAll(/\s+/g, " ").trim();
   return words || undefined;
-};
+}
 
 /** `2026-03-14`, `2026-03` or `2026`: no more precise than the registry is. */
 function dateOf(parts: readonly (number | null)[] = []): string | undefined {
