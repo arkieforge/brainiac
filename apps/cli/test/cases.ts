@@ -468,6 +468,21 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  async "a save made just before the record moves the note reaches it, and leaves no second note"() {
+    const v = await vault();
+    v.write("notes/a.md", v.read("notes/a.md")!.replace("start", "saved as it moved"));
+    v.record.move(A, "filed/a.md");
+    await v.until(
+      () =>
+        (v.record.note(A)?.raw.includes("saved as it moved") ?? false) &&
+        (v.read("filed/a.md")?.includes("saved as it moved") ?? false) &&
+        v.read("notes/a.md") === undefined,
+      "the save and the move",
+    );
+    equal(v.record.liveCount(), 3, "no second note");
+    v.daemon.stop();
+  },
+
   async "renaming a note to another case keeps one note and its id"() {
     const v = await vault();
     const before = v.read("notes/a.md")!;

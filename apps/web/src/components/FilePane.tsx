@@ -342,13 +342,15 @@ export function FileFacts({ file }: { readonly file: FileItem }) {
       <span className="badge">{file.mime}</span>
       <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
       <p className="small muted">
-        {file.checks === "found"
-          ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
-          : file.checks === "unreadable"
-            ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
-            : file.confirmed
-              ? "The checks found nothing secret, and you confirmed what it is."
-              : "The checks found nothing secret. Confirm what it is to clear it."}
+        {file.shared
+          ? `${file.checks === "found" ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault` : "It stays unclassified"}: your Claude can see the photo because you let it, never its text.`
+          : file.checks === "found"
+            ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
+            : file.checks === "unreadable"
+              ? "The checks can't read this kind of file yet, so it stays unclassified: agents see only that it exists."
+              : file.confirmed
+                ? "The checks found nothing secret, and you confirmed what it is."
+                : "The checks found nothing secret. Confirm what it is to clear it."}
       </p>
     </>
   );

@@ -775,6 +775,8 @@ export type PhotoView =
 
 /** The photo a sidecar note names, if the note is a live sidecar of a stored photo that `connection` can see. */
 function photoOf(sql: Sql, connection: Connection, noteId: string) {
+  // Every upload's sidecar is sensitive; any other note naming the photo needs the same scope to reach it.
+  if (!canSee(connection, SIDECAR)) return undefined;
   const note = getNote(sql, noteId);
   if (!note || note.deletedAt !== null || !canSee(connection, note)) return undefined;
   const path = JSON.parse(note.fm)["file"];

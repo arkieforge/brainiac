@@ -575,6 +575,10 @@ kbd,
 .note-main {
   min-width: 0;
 }
+/* Only the last panel in the side column (the note's fields) runs to the bottom; the ones above it keep their size. */
+.note-side > .fields:not(:last-child) {
+  min-height: 0;
+}
 .file-facts {
   display: flex;
   flex-wrap: wrap;

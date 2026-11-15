@@ -528,13 +528,16 @@ function move(
   const raw = movedText(note.raw, note.path, path, live);
   const data = check(sql, raw, note.id);
   if (Array.isArray(data)) return { status: "invalid", issues: data };
-  const moved = write(sql, started, ctx, runId, note, { ...note, path, raw }, "move");
-  for (const referrer of namers(sql, note)) {
-    const text = renamedIn(referrer.raw, referrer.path, note.path, path);
+  const referrers = namers(sql, note)
+    .map((referrer) => ({ referrer, text: renamedIn(referrer.raw, referrer.path, note.path, path) }))
     // A relation is checked only as text, so a rewrite can't leave its note failing its type; checked anyway.
-    if (text === referrer.raw || Array.isArray(check(sql, text, referrer.id))) continue;
+    .filter(({ referrer, text }) => text !== referrer.raw && !Array.isArray(check(sql, text, referrer.id)));
+  // A connection never rewrites a note it can't see: the change, or the approval it needs, would show it.
+  if (referrers.some(({ referrer }) => !canSee(ctx.connection, referrer)))
+    return invalid("path", "Notes you can't see link to this note, so only the person can move it.");
+  const moved = write(sql, started, ctx, runId, note, { ...note, path, raw }, "move");
+  for (const { referrer, text } of referrers)
     write(sql, started, ctx, runId, referrer, { ...referrer, raw: text }, "update");
-  }
   return moved;
 }
 
@@ -618,7 +621,8 @@ function rewritten(raw: string, from: string, retarget: (target: string) => stri
     const target = resolved(from, decoded(path));
     const next = target === undefined ? undefined : retarget(target);
     if (next === undefined) return link;
-    return `${open}${decoded(path) === path ? next : encodeURI(next)}${close}`;
+    // Encoded as the link was, and always when the new path has a space a link can't hold as it is.
+    return `${open}${decoded(path) === path && !/\s/.test(next) ? next : encodeURI(next)}${close}`;
   });
   return text.slice(0, start) + body;
 }
@@ -699,8 +703,33 @@ function inverseFrom(now: State, d: Diff): Diff {
     fields,
     ...(d.body && { body: { before: now.body, after: d.body.before ?? "" } }),
     ...(d.live && { live: { before: now.live, after: d.live.before ?? false } }),
-    ...(d.path && { path: { before: now.path ?? d.path.after, after: d.path.before } }),
   };
+}
+
+/**
+ * The first move in a run that can't go back whole, if any: the note must still be live where the run put it, and
+ * its old place (and its file's) free. A move goes back with the links the run rewrote to follow it, or none of it
+ * does, so links never point at a place the note isn't.
+ */
+function movesBack(
+  sql: Sql,
+  revisions: readonly { readonly noteId: string; readonly patch: string }[],
+): { readonly before: string; readonly after: string } | undefined {
+  for (const revision of revisions) {
+    const { path } = JSON.parse(revision.patch) as Diff;
+    if (!path) continue;
+    const note = getNote(sql, revision.noteId);
+    const back =
+      note?.deletedAt === null &&
+      note.path === path.after &&
+      findClash(
+        livePaths(sql).filter((p) => pathKey(p) !== pathKey(note.path)),
+        path.before,
+      ) === undefined &&
+      fileMove(sql, note, path.before) !== "taken";
+    if (!back) return path;
+  }
+  return undefined;
 }
 
 const livePaths = (sql: Sql) =>
@@ -758,6 +787,17 @@ function undoing(
       return note !== undefined && !canSee(ctx.connection, note);
     });
     if (hidden) return { status: "forbidden", reason: "This run changed notes this connection can't see." };
+    const stuck = movesBack(sql, revisions);
+    if (stuck)
+      return {
+        status: "invalid",
+        issues: [
+          {
+            field: "run",
+            message: `Nothing was undone: this run moved a note to ${stuck.after}, and it can't go back to ${stuck.before} now (that place is taken, or the note moved or was deleted since).`,
+          },
+        ],
+      };
     const undone = new Set<string>();
     // Notes the run created or restored: undoing deletes them, so their class stays as it is (a sensitive one
     // stays so, never a normal tombstone made from it).
@@ -768,12 +808,7 @@ function undoing(
     // only move the conflict's target back; they never touch the note, so no later edit is rolled back.
     const pending = new Map<
       string,
-      {
-        fields: Record<string, Change<unknown>>;
-        body?: Change<string>;
-        live?: Change<boolean>;
-        path?: { before: string; after: string };
-      }
+      { fields: Record<string, Change<unknown>>; body?: Change<string>; live?: Change<boolean> }
     >();
     const hold = (noteId: string, d: Diff) => {
       const p = pending.get(noteId) ?? { fields: {} };
@@ -788,7 +823,6 @@ function undoing(
       }
       if (d.body) p.body = { before: (p.body ?? d.body).before ?? "", after: d.body.after ?? "" };
       if (d.live) p.live = { before: (p.live ?? d.live).before ?? false, after: d.live.after ?? false };
-      if (d.path) p.path = { before: (p.path ?? d.path).before, after: d.path.after };
       pending.set(noteId, p);
     };
 
@@ -863,26 +897,16 @@ function undoing(
         }
       }
       let raw = patch(note.raw, ops);
-      // A move goes back if the note is still where the run put it and its old place (and its file's) is free.
-      const back =
-        d.path &&
-        !held?.path &&
-        note.path === d.path.after &&
-        findClash(
-          livePaths(sql).filter((p) => pathKey(p) !== pathKey(note.path)),
-          d.path.before,
-        ) === undefined &&
-        fileMove(sql, note, d.path.before) !== "taken"
-          ? d.path.before
-          : undefined;
-      const path = back ?? note.path;
+      // A move always goes back: `movesBack` checked before anything was undone.
+      const path = d.path ? d.path.before : note.path;
       const bodyClash = d.body && (held?.body !== undefined || now.body !== d.body.after);
       if (d.body && !bodyClash) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.before ?? "");
       // Part of an undo can leave a note failing its type (a required field removed while the field that made
-      // it required stays): the whole step then waits for the person instead.
-      if (raw !== note.raw && Array.isArray(check(sql, raw, note.id))) {
+      // it required stays): the whole step's values then wait for the person instead.
+      const failing = raw !== note.raw && Array.isArray(check(sql, raw, note.id));
+      if (failing) {
         hold(note.id, inverseFrom(now, d));
-        continue;
+        raw = note.raw;
       }
       if (raw !== note.raw || path !== note.path) {
         write(
@@ -896,10 +920,9 @@ function undoing(
         );
         undone.add(note.id);
       }
+      if (failing) continue;
       const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
-      const moved = d.path && back === undefined ? { before: note.path, after: d.path.before } : undefined;
-      if (Object.keys(clash.fields).length > 0 || body || moved)
-        hold(note.id, { ...clash, ...(body && { body }), ...(moved && { path: moved }) });
+      if (Object.keys(clash.fields).length > 0 || body) hold(note.id, { ...clash, ...(body && { body }) });
     }
 
     // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
@@ -913,9 +936,8 @@ function undoing(
         fields,
         ...(p.body && !same(p.body) && { body: p.body }),
         ...(p.live && !same(p.live) && { live: p.live }),
-        ...(p.path && !same(p.path) && { path: p.path }),
       };
-      if (Object.keys(fields).length === 0 && !d.body && !d.live && !d.path) continue;
+      if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
       conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
     }
     return { status: "applied", runId: undoRunId, undone: [...undone], conflicts };

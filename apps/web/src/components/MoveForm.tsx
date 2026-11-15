@@ -1,9 +1,9 @@
+import type { PlanItem } from "@brainiac/core";
 import { useState } from "react";
 
 import { approvePlan } from "../approve.ts";
-import { api } from "../record.ts";
+import { api, refresh } from "../record.ts";
 import { ApproveButton, Plan } from "./Approval.tsx";
-import type { PlanItem } from "@brainiac/core";
 
 const folderOf = (path: string) => path.split("/").slice(0, -1).join("/");
 
@@ -38,6 +38,8 @@ export function MoveForm({
       body: JSON.stringify({ path: target, baseRev: rev, ...(approvalId !== undefined && { approvalId }) }),
     }).catch(() => undefined);
     const answer = await res?.json().catch(() => ({}));
+    // A sidecar's file moved with it: the file list says where it is now.
+    if (res?.ok) await refresh();
     return { res, answer };
   };
   const move = async () => {

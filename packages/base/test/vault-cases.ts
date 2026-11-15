@@ -24,6 +24,7 @@ import {
   restrict,
   rewrapDataKey,
   PERSON,
+  photoFor,
   saveSecret,
   sealFile,
   shareFile,
@@ -666,6 +667,84 @@ export const vaultCases: Record<string, Case> = {
       "notes.md",
     ]);
     ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../unorganized/${stem}.md#grades)`));
+
+    // Into a folder with a space, the link is still one a reader follows.
+    const spaced = mutate(
+      sql,
+      {
+        op: "move",
+        noteId: sidecar.id,
+        baseRev: getNote(sql, sidecar.id)?.rev ?? 0,
+        path: `my scans/${stem}.md`,
+      },
+      { ...human, runId: "01JD7QA1ZK8M3V5X6Y7Z8A9SPC" },
+    );
+    equal(spaced.status, "applied");
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../my%20scans/${stem}.md#grades)`));
+    // A move whose old place is taken since goes back not at all, so links never point at another note.
+    mutate(
+      sql,
+      {
+        op: "create",
+        path: `unorganized/${stem}.md`,
+        raw: "---\nid: 01JD7QA1ZK8M3V5X6Y7Z8A9TKN\ntype: Person\ntitle: Someone else\nrole: referee\n---\n",
+        class: "normal",
+      },
+      human,
+    );
+    const stuck = undoRun(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9SPC", human);
+    equal(stuck.status, "invalid");
+    equal(getNote(sql, sidecar.id)?.path, `my scans/${stem}.md`);
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BCE")?.raw.includes(`(../my%20scans/${stem}.md#grades)`));
+  },
+
+  "a connection can't move a note that notes it can't see link to": (sql, fixtures) => {
+    record(sql, fixtures);
+    const made = (id: string, path: string, body: string, cls: "normal" | "sensitive") =>
+      mutate(
+        sql,
+        {
+          op: "create",
+          path,
+          raw: `---\nid: ${id}\ntype: Person\ntitle: ${id}\nrole: referee\n---\n${body}\n`,
+          class: cls,
+        },
+        human,
+      );
+    equal(made("01JD7QA1ZK8M3V5X6Y7Z8A9AAA", "people/okafor.md", "", "normal").status, "applied");
+    // A sensitive note that links to it, with something private in it.
+    const canary = "CANARY-7Q3X";
+    equal(
+      made(
+        "01JD7QA1ZK8M3V5X6Y7Z8A9BBB",
+        "health/notes.md",
+        `[ref](../people/okafor.md) ${canary}`,
+        "sensitive",
+      ).status,
+      "applied",
+    );
+    const agent = connectionFor(sql, { level: "write" });
+    const answer = callTool(
+      sql,
+      "update",
+      { id: "01JD7QA1ZK8M3V5X6Y7Z8A9AAA", rev: 1, move: "referees/okafor.md" },
+      via(agent),
+    );
+    ok(answer.ok);
+    const seen = JSON.stringify(answer.value);
+    ok(seen.includes('"invalid"') && !seen.includes(canary), seen);
+    equal(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9AAA")?.path, "people/okafor.md");
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BBB")?.raw.includes("(../people/okafor.md)"));
+    // The person moves it, and the link follows.
+    equal(
+      mutate(
+        sql,
+        { op: "move", noteId: "01JD7QA1ZK8M3V5X6Y7Z8A9AAA", baseRev: 1, path: "referees/okafor.md" },
+        human,
+      ).status,
+      "applied",
+    );
+    ok(getNote(sql, "01JD7QA1ZK8M3V5X6Y7Z8A9BBB")?.raw.includes("(../referees/okafor.md)"));
   },
 
   "an agent's move of a photo waits for the person when its level says so, and files it once accepted": (
@@ -751,12 +830,28 @@ export const vaultCases: Record<string, Case> = {
       "file" in
         shareFile(sql, passport.sha256, true, human, { challenge: shareHash(again), signature: signed() }),
     );
-    const floor = via(connectionFor(sql));
+    const floorConnection = connectionFor(sql);
+    const floor = via(floorConnection);
     same((photosOf(sql, floor).value as { photos: unknown[] }).photos, []);
     ok(!callTool(sql, "photos", { id: passport.sidecar }, floor).ok);
     const background = { ...ctx, background: true };
     same((photosOf(sql, background).value as { photos: unknown[] }).photos, []);
     ok(!callTool(sql, "photos", { id: passport.sidecar }, background).ok);
+    // A normal note naming the photo's file doesn't reach it without the sensitive scope either.
+    const stand = mutate(
+      sql,
+      {
+        op: "create",
+        path: "notes/passport-copy.md",
+        raw: `---\nid: 01JD7QA1ZK8M3V5X6Y7Z8A9NRM\ntype: Document\ntitle: Copy\nfile: ../${getFile(sql, passport.sha256)?.path}\n---\n`,
+        class: "normal",
+      },
+      human,
+    );
+    equal(stand.status, "applied");
+    // As the record asks again after reading the bytes.
+    ok("error" in photoFor(sql, floorConnection, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
+    ok("view" in photoFor(sql, agent, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
     // Only a photo can be shared at all.
     const transcript = upload(sql, key, TRANSCRIPT, human);
     ok("error" in shareFile(sql, transcript.sha256, true, human, { challenge: "x", signature: signed() }));

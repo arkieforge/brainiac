@@ -73,12 +73,7 @@ function at(now: State, d: Diff): boolean {
     ([key, change]) =>
       has(now.data, key) === Object.hasOwn(change, "before") && deepEqual(now.data[key], change.before),
   );
-  return (
-    fields &&
-    (!d.body || now.body === (d.body.before ?? "")) &&
-    (!d.live || now.live === d.live.before) &&
-    (!d.path || now.path === d.path.before)
-  );
+  return fields && (!d.body || now.body === (d.body.before ?? "")) && (!d.live || now.live === d.live.before);
 }
 
 /** From the note as it is now to where `d` would take it: a conflict for the person to pick. */
@@ -94,7 +89,6 @@ const towards = (now: State, d: Diff): Diff => ({
   ),
   ...(d.body && { body: { before: now.body, after: d.body.after ?? "" } }),
   ...(d.live && { live: { before: now.live, after: d.live.after ?? false } }),
-  ...(d.path && { path: { before: now.path ?? d.path.before, after: d.path.after } }),
 });
 
 /**
@@ -179,10 +173,6 @@ function pick(sql: Sql, proposal: ProposalRow, ctx: Context): Decided {
       );
       if (d.body) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.after ?? "");
       result = mutate(sql, { op: "put", noteId: note.id, baseRev: note.rev, raw }, ctx);
-      // A conflict over where the note goes: it moves there once its values are in.
-      const moved = getNote(sql, note.id);
-      if (result.status === "applied" && d.path && moved)
-        result = mutate(sql, { op: "move", noteId: note.id, baseRev: moved.rev, path: d.path.after }, ctx);
     }
     if (result.status === "applied")
       sql.all("UPDATE proposals SET status = 'applied' WHERE id = ?", proposal.id);

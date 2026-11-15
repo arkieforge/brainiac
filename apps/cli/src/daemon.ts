@@ -645,6 +645,8 @@ export class Daemon {
     const known = this.#state.known(from);
     if (!known) return true;
     if (!isNote(to, this.#inICloud) || !inVault(this.#disk, to)) return false;
+    // A save there the daemon hasn't taken yet: the watcher sends it first, and the move follows its answer.
+    if (readNote(this.#disk, from) !== known.text) return false;
     const there = this.#state.known(to);
     const why = `Something else has this name, so the record's move of note ${id} isn't written here.`;
     const placed =
@@ -655,12 +657,18 @@ export class Daemon {
       return false;
     }
     this.#state.setKnown({ path: to, noteId: id, text: placed.disk });
-    const gone = remove(this.#disk, from, known.text, id);
+    let gone = remove(this.#disk, from, known.text, id);
     this.#keep(from, gone, id);
-    this.#state.forget(from);
-    this.#indexFile(to, id, placed.disk);
-    // Saved into the old file as it went: the person's change, made on what the daemon knew.
+    // Saved into the old file as it went: the person's change, made on what the daemon knew. The file it put
+    // back goes too, its text sent, so no second copy of the note stays behind to be taken for a new one.
     if (gone.unseen) this.#client.edit(id, gone.unseen, known.text);
+    if (gone.disk !== undefined) {
+      gone = remove(this.#disk, from, gone.disk, id);
+      this.#keep(from, gone, id);
+    }
+    // shortcut: saved again in the instant between: that file stays, known as the note's, beside the moved one.
+    if (gone.disk === undefined) this.#state.forget(from);
+    this.#indexFile(to, id, placed.disk);
     return true;
   }
 
