@@ -555,11 +555,11 @@ const fold = (text: string) => text.normalize("NFKC").toLowerCase().trim();
  * caller, so no argument can ask whether some id exists.
  */
 function approvedCreate(sql: Sql, approvalId: string): string | undefined {
-  const [approval] = sql.all<{ items: string }>(
+  const [signed] = sql.all<{ items: string }>(
     "SELECT items FROM approvals WHERE id = ? AND usedAt IS NULL",
     approvalId,
   );
-  const items: PlanItem[] = approval ? JSON.parse(approval.items) : [];
+  const items: PlanItem[] = signed ? JSON.parse(signed.items) : [];
   const created = items.filter((item) => item.baseRev === 0 && item.patch.live?.after === true);
   return created.length === 1 ? created[0]?.noteId : undefined;
 }
