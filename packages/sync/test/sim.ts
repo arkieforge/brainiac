@@ -23,6 +23,14 @@ export interface Device {
   actor: string;
 }
 
+// Every world starts from a copy of one migrated record: running the migrations was half of each property
+// run's time, and the property makes hundreds of worlds.
+const migrated = (() => {
+  const db = new DatabaseSync(":memory:");
+  migrate(nodeSql(db));
+  return db.serialize();
+})();
+
 export class World {
   readonly sql: Sql;
   readonly devices: Device[] = [];
@@ -30,8 +38,9 @@ export class World {
   #now = Date.UTC(2026, 10, 14);
 
   constructor() {
-    this.sql = nodeSql(new DatabaseSync(":memory:"));
-    migrate(this.sql);
+    const db = new DatabaseSync(":memory:");
+    db.deserialize(migrated);
+    this.sql = nodeSql(db);
   }
 
   /** A note made directly in the record, as the site would. */
