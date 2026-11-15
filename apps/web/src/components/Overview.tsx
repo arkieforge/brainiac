@@ -1,6 +1,7 @@
-import type { Item, Mark, Overview as Health } from "@brainiac/core";
+import type { Item, Mark, Overview as Health, Question } from "@brainiac/core";
 import { Link } from "@tanstack/react-router";
 
+import { questionsOf } from "../questions.ts";
 import { useRecord } from "../record.ts";
 import { overviewOf } from "../review.ts";
 
@@ -27,7 +28,7 @@ function healthLine({ counts }: Health): string {
   ].join(" · ");
 }
 
-function Row({ item }: { readonly item: Item }) {
+function Row({ item, asks }: { readonly item: Item; readonly asks: readonly Question[] }) {
   const mark = MARKS[item.mark];
   const flagged = item.mark === "wrong" || item.mark === "conflict";
   return (
@@ -38,7 +39,15 @@ function Row({ item }: { readonly item: Item }) {
       <Link to="/n/$noteId" params={{ noteId: item.noteId }} className="headline">
         {item.headline}
       </Link>
-      <span className={flagged ? "aside warn" : "aside muted"}>{item.aside}</span>
+      <span className={flagged ? "aside warn" : "aside muted"}>
+        {asks.length > 0 ? (
+          <Link to="/questions" className="ask" title={asks.map((q) => q.text).join("\n")}>
+            {plural(asks.length, "question", "questions")}
+          </Link>
+        ) : null}
+        {asks.length > 0 && item.aside ? " · " : ""}
+        {item.aside}
+      </span>
     </li>
   );
 }
@@ -47,7 +56,10 @@ function Row({ item }: { readonly item: Item }) {
 export function Overview() {
   const { client, manifest, status, schemaLoaded } = useRecord();
   if (!client) return <p className="empty">{status === "loading" ? "Loading" : "No record yet."}</p>;
-  const health = overviewOf(client, manifest, Date.now());
+  const now = Date.now();
+  const health = overviewOf(client, manifest, now);
+  const questions = questionsOf(client, manifest, now);
+  const asks = Map.groupBy(questions, (q) => q.about ?? q.noteId);
   if (health.items.length === 0)
     return <p className="empty">Nothing in your record yet. Pick a note or add one.</p>;
   const groups = Map.groupBy(health.items, (item) => item.type);
@@ -55,7 +67,15 @@ export function Overview() {
     <section className="overview">
       <header className="pane-head health">
         <h1>Record health</h1>
-        <p>{healthLine(health)}</p>
+        <p>
+          {healthLine(health)}
+          {questions.length > 0 && (
+            <>
+              {" · "}
+              <Link to="/questions">{plural(questions.length, "question", "questions")}</Link>
+            </>
+          )}
+        </p>
         {(status !== "live" || !schemaLoaded) && (
           <p className="warn small">
             This device's copy: the checks and your sensitive notes come in when you're online.
@@ -70,7 +90,7 @@ export function Overview() {
           <h2>{type}</h2>
           <ul>
             {items.map((item) => (
-              <Row key={item.noteId} item={item} />
+              <Row key={item.noteId} item={item} asks={asks.get(item.noteId) ?? []} />
             ))}
           </ul>
         </section>

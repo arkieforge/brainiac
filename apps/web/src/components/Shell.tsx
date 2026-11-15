@@ -50,6 +50,9 @@ export function Shell({
         <Link to="/review" className="small">
           Review
         </Link>
+        <Link to="/questions" className="small">
+          Questions
+        </Link>
         <span className="status" data-status={status}>
           {STATUS[status]}
         </span>

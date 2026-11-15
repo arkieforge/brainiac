@@ -1,4 +1,5 @@
-// The site's own routes beside `/sync`: who is signed in, the record's manifest, and its files. Each one finds the
+// The site's own routes beside `/sync`: who is signed in, the record's manifest, its files, and whether the weekly
+// questions email goes out. Each one finds the
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import type { FileToken } from "@brainiac/base";
@@ -81,6 +82,13 @@ async function serveApi(
 
   if (pathname === "/api/session" && !post) return json({ user: person.userId });
   if (pathname === "/api/schema" && !post) return json({ manifest: await record.manifest() });
+  // The weekly email of questions: on unless the person turns it off.
+  if (pathname === "/api/questions/email") {
+    if (!post) return json({ on: await record.questionEmails() });
+    const on = typeof body === "object" && body !== null && "on" in body ? body.on : undefined;
+    if (typeof on !== "boolean") return failed(400, "Say whether the weekly email is on.");
+    return json({ on: await record.questionEmails(on) });
+  }
   const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
   if (note !== undefined && post) return saveNote(body, record, note);
   if (pathname === "/api/review" && post) {

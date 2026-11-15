@@ -21,6 +21,7 @@ import {
   unseal,
   viewFile,
   type Classified,
+  type Digest,
   type FileToken,
   type Extracted,
   type FileView,
@@ -28,6 +29,7 @@ import {
   connect,
   connectionOf,
   decide,
+  digest,
   disconnect,
   getConnection,
   grant,
@@ -37,9 +39,11 @@ import {
   oauthConnection,
   PERSON,
   principalOf,
+  questionEmails,
   releaseDue,
   restrict,
   search,
+  setQuestionEmails,
   withdraw,
   lastCounter,
   openReview,
@@ -226,6 +230,20 @@ export class Base extends DurableObject<Env> {
   /** The record's manifest (its types and their fields), for the site's forms; null until it has one. */
   manifest(): Manifest | null {
     return manifestOf(this.sql) ?? null;
+  }
+
+  /**
+   * This week's email of questions (packages/base/src/questions.ts), for the Worker's weekly cron to send to the
+   * record's owner; `undefined` when there is nothing to send. A sensitive question is only counted.
+   */
+  questionDigest(): Digest | undefined {
+    return digest(this.sql, Date.now());
+  }
+
+  /** Whether the weekly email of questions goes out; only the site's session route changes it. */
+  questionEmails(on?: boolean): boolean {
+    if (on !== undefined) setQuestionEmails(this.sql, on);
+    return questionEmails(this.sql);
   }
 
   /** Keyword search over the families the caller may see: note ids, and `<sha256>#p<page>` for a file's page. */

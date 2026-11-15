@@ -76,6 +76,11 @@ export class World {
     mutate(this.sql, { op: "create", path, raw, class: cls }, { actor: "site", now: this.#now });
   }
 
+  /** A note made directly in the record from its whole text. */
+  seedRaw(path: string, raw: string): void {
+    mutate(this.sql, { op: "create", path, raw, class: "normal" }, { actor: "site", now: this.#now });
+  }
+
   /** Time passes: `ms` later, the record runs its purge, as its alarm would. */
   later(ms: number): void {
     this.#now += ms;

@@ -42,6 +42,19 @@ export {
   type Manifest,
 } from "./schema.ts";
 export {
+  answerEdits,
+  askNow,
+  findQuestions,
+  QUESTION_CAP,
+  questionLine,
+  valueAt,
+  type Edit,
+  type Input,
+  type Question,
+  type QuestionNote,
+  type Reply,
+} from "./questions.ts";
+export {
   detect,
   overview,
   reviewFields,

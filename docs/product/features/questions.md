@@ -2,16 +2,20 @@
 
 Gaps get found before an application finds them. Each gap becomes one short, typed question, asked where you are, and the answer is written back with its source. Finding gaps is deterministic; no model is needed.
 
-| Gap                        | Example                                                                   | Answer input                   |
-| -------------------------- | ------------------------------------------------------------------------- | ------------------------------ |
-| Required field empty       | "When did your internship at Acme end?"                                   | Month picker, or "still there" |
-| Requirement check failing  | "TUM needs an APS certificate. Do you have one?"                          | Upload / "applied" / "not yet" |
-| Claim without proof        | "Where does '1,800 daily users' come from?"                               | Upload, link, or "estimate"    |
-| A form needs something new | "The Schengen form asks for your father's full name."                     | Text, stored sensitive         |
-| Extraction unsure          | "Your transcript shows 3.71 and 3.74 on different pages. Which is final?" | Choice, both pages shown       |
-| Stale                      | "Are you still a TA at Northvale?"                                        | Yes / no + end date            |
+| Gap                        | Example                                                                   | Answer input                                            | Status               |
+| -------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------- |
+| A field its type asks for  | "When did your role at Acme Robotics end?"                                | The field's own input, or "still there" for an end date | Shipped              |
+| An agent's question        | "Which day did the Acme internship end?" (`request_info`)                 | The field's input, or text                              | Shipped              |
+| Requirement check failing  | "TUM needs an APS certificate. Do you have one?"                          | Upload / "applied" / "not yet"                          | M2, with the tracker |
+| Claim without proof        | "Where does '1,800 daily users' come from?"                               | Upload, link, or "estimate"                             | Later                |
+| A form needs something new | "The Schengen form asks for your father's full name."                     | Text, stored sensitive                                  | M3, with form fill   |
+| Extraction unsure          | "Your transcript shows 3.71 and 3.74 on different pages. Which is final?" | Choice, both pages shown                                | Later                |
+| Stale                      | "Are you still a TA at Northvale?"                                        | Yes / no + end date                                     | Later                |
 
-- **Smallest input** that fits; suggested answers pre-filled when Brainiac can infer them, applied only on your tap. Each question says why ("TUM needs this by 31 May").
-- **Where**: the overview, inline on the affected line, phone cards, `brainiac questions`, your Claude (it lists them with `query` and records your replies with `update`), and a weekly email of links (answered on the site, never by email reply).
-- **Not a nag**: at most 5 a day by default, ranked by deadline (anything due within 7 days may exceed it); similar gaps batched; "not applicable" remembered; sensitive questions never in email or notification previews.
-- A question closes itself when the gap disappears some other way.
+- **Found from the schema** (`packages/core/src/questions.ts`): a field whose manifest spec has `ask: "When did your role at {org} end?"` (or `required: true`) and is empty is one question in those words. A type that declares `current` offers "still there" for its `end`, which sets `current: true`. A superseded note isn't asked about.
+- **Asked by agents**: `request_info` writes a `Question` note in `questions/` (`about`, `field`, `was`, `suggested`, `why`, `status`). Asking about a field that already has an open question returns that one. It closes when answered or marked not applicable, or once its field changes from `was`, the value it held when asked.
+- **Smallest input** that fits; suggested answers pre-filled, applied only on your tap. Each question says why: `For TUM MSc Informatics, Winter 2027, due 2027-05-31` when an open application relies on the note.
+- **Answers are edits.** Answering sets the field on its note through the same path as the note form (the sync queue, or online only for a sensitive note), so it spreads like any edit and the question is gone on every device once the edit arrives. An asked question also records `answer` and `status: answered`, after the value lands.
+- **Where**: the overview (a count in the health line, and a link on each item with one), `/questions` on the site and phone, `brainiac questions`, your Claude (it lists them with `query {"type": "Question"}` and records your replies with `update`), and a weekly email of links (answered on the site, never by email reply).
+- **Not a nag**: at most 5 asked at a time, soonest deadline first, plus anything due within 7 days; the rest wait for those, or "Show all". "Not applicable" is remembered on the note (`not_applicable: [field]`). The weekly email goes out Mondays only while questions wait, holds the same 5, and can be turned off on `/questions`. Sensitive questions are only counted in it, and its subject says only how many.
+- A question closes itself when the gap disappears some other way: nothing stores whether a found question is open.

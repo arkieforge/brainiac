@@ -10,6 +10,8 @@ const FieldSpec = type({
   "values?": "string[] > 0",
   "required?": "boolean",
   "example?": "string | number | boolean",
+  /** Ask the person for it while it's empty, in these words: `When did your role at {org} end?` (questions.ts). */
+  "ask?": "string",
 });
 type FieldSpec = typeof FieldSpec.infer;
 
@@ -68,7 +70,8 @@ const EXAMPLES = {
 
 /**
  * Types every record has, whatever its manifest says: what `add` captures into `inbox/` waits there as one of
- * these until an agent files it. A manifest type of the same name wins.
+ * these until an agent files it, and what an agent asks with `request_info` waits in `questions/`. A manifest
+ * type of the same name wins.
  */
 export const BUILT_IN_TYPES: Manifest["types"] = {
   InboxItem: {
@@ -77,6 +80,18 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
     fields: {
       url: { kind: "text", example: "https://example.org/award" },
       attached_to: { kind: "relation" },
+    },
+  },
+  // What `request_info` asks the person (questions.ts). `suggested`, `was` and `answer` hold a value of the asked
+  // field's own kind, so they aren't declared here.
+  Question: {
+    version: 1,
+    folder: "questions",
+    fields: {
+      about: { kind: "relation" },
+      field: { kind: "text" },
+      why: { kind: "text" },
+      status: { values: ["open", "answered", "not-applicable"], required: true },
     },
   },
 };

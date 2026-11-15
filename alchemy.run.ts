@@ -139,6 +139,8 @@ export default Alchemy.Stack(
         // Strictly public fetch: a fetch to one of our own hostnames goes through Cloudflare's front door, not
         // straight to an origin. The MCP client metadata fetch relies on it (apps/worker/src/auth/cimd-fetch.ts).
         compatibility: { flags: ["nodejs_compat", "global_fetch_strictly_public"] },
+        // The weekly questions email (apps/worker/src/digest.ts, DIGEST_CRON).
+        crons: ["0 8 * * 1"],
         env: {
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),
@@ -151,6 +153,8 @@ export default Alchemy.Stack(
           BETTER_AUTH_SECRET: authSecret,
           STAGE: stage,
           ...(usercontentOrigin && { USERCONTENT_ORIGIN: usercontentOrigin }),
+          // Links in the weekly questions email (apps/worker/src/digest.ts); a stage without a domain sends none.
+          ...(domain && { SITE_ORIGIN: `https://${domain}` }),
           // Dev sign-in as the fixture student (apps/worker/src/dev.ts); prod never gets it.
           ...(prod ? {} : yield* secretIf("DEV_SIGN_IN_TOKEN")),
           TURNSTILE_SITE_KEY: turnstileSite,

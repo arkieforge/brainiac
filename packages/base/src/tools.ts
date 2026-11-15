@@ -5,6 +5,8 @@ import {
   BUILT_IN_TYPES,
   detect,
   findClash,
+  findQuestions,
+  valueAt,
   normalizePath,
   parseNote,
   patch,
@@ -266,36 +268,56 @@ function proposalRows(sql: Sql, ctx: Context): Row[] {
     });
 }
 
-interface QuestionRow {
-  readonly id: string;
-  readonly noteId: string | null;
-  readonly field: string | null;
-  readonly input: string;
-  readonly suggested: string | null;
-  readonly why: string;
-  readonly priority: number;
-  readonly status: string;
-  readonly class: NoteRow["class"];
-}
+/** The notes the caller can see as questions and checks read them: front-matter and class. */
+const readable = (notes: readonly NoteRow[]) =>
+  notes.map((note) => ({ id: note.id, path: note.path, data: fieldsOf(note), class: note.class }));
 
-function questionRows(sql: Sql, ctx: Context): Row[] {
-  return sql.all<QuestionRow>("SELECT * FROM questions").flatMap((question) => {
-    const reader = principal(ctx);
-    if (!project({ class: question.class, type: null }, { sensitive: reader.sensitive })) return [];
-    if (question.noteId !== null && !project(getNote(sql, question.noteId), reader)) return [];
-    const input: { readonly question: string } = JSON.parse(question.input);
+/**
+ * The questions for the person, as rows, over the notes the caller can see (packages/core/src/questions.ts): each
+ * open one, found or asked, then each asked one that closed, with its answer.
+ */
+function questionRows(sql: Sql, ctx: Context): Row[] | string {
+  const notes = liveVisible(sql, ctx);
+  if (typeof notes === "string") return notes;
+  const read = readable(notes);
+  const open = findQuestions(read, manifestOf(sql) ?? null, ctx.now);
+  // rank keeps the record's order (soonest deadline first) as the default sort.
+  const rows: Row[] = open.map((question, rank) => {
     const data = {
       type: "Question",
-      question: input.question,
+      rank,
+      kind: question.kind,
+      question: question.text,
       why: question.why,
-      ...(question.noteId !== null && { note: question.noteId }),
-      ...(question.field !== null && { field: question.field }),
-      ...(question.suggested !== null && { suggested: JSON.parse(question.suggested) }),
-      priority: question.priority,
-      status: question.status,
+      note: question.noteId,
+      ...(question.about !== undefined && { about: question.about }),
+      ...(question.field !== undefined && { field: question.field }),
+      input: question.input,
+      ...(question.ongoing && { ongoing: true }),
+      ...(question.suggested !== undefined && { suggested: question.suggested }),
+      ...(question.deadline !== undefined && { deadline: question.deadline }),
+      status: "open",
     };
-    return [{ id: question.id, data, text: JSON.stringify(data) }];
+    return { id: question.id, data, text: JSON.stringify(data) };
   });
+  const openIds = new Set(open.map((question) => question.id));
+  for (const note of read) {
+    if (note.data["type"] !== "Question" || openIds.has(note.id)) continue;
+    const status = note.data["status"];
+    const data = {
+      type: "Question",
+      rank: rows.length,
+      kind: "asked",
+      question: note.data["title"],
+      note: note.id,
+      ...(note.data["field"] !== undefined && { field: note.data["field"] }),
+      // Still open in its note, but its field changed since it was asked: answered some other way.
+      status: status === "open" ? "answered" : status,
+      ...(note.data["answer"] !== undefined && { answer: note.data["answer"] }),
+    };
+    rows.push({ id: note.id, data, text: JSON.stringify(data) });
+  }
+  return rows;
 }
 
 /**
@@ -305,8 +327,7 @@ function questionRows(sql: Sql, ctx: Context): Row[] {
 function checkRows(sql: Sql, ctx: Context): Row[] | string {
   const notes = liveVisible(sql, ctx);
   if (typeof notes === "string") return notes;
-  const read = notes.map((note) => ({ id: note.id, path: note.path, data: fieldsOf(note) }));
-  return detect(read, manifestOf(sql) ?? null, ctx.now).map((check, i) => {
+  return detect(readable(notes), manifestOf(sql) ?? null, ctx.now).map((check, i) => {
     const data = {
       type: "Check",
       note: check.noteId,
@@ -352,9 +373,9 @@ where: {"<field>": {<operator>: <value>}}, dotted paths for nested fields ("sect
 - A missing or null field matches only {"exists": false}.
 - eq on a list means the list contains it; has: a list contains it, or a mapping has that key.
 - Dates compare as dates in UTC; text compares ignoring case. text finds words in a field; the top-level text finds words anywhere in the note.
-sort: fields, "-" for newest or largest first (default ["-date"]). fields: which fields each row returns (default type and title).
+sort: fields, "-" for newest or largest first (default ["-date"]; questions come soonest deadline first). fields: which fields each row returns (default type and title).
 Pages hold up to limit rows (default 20, at most 100); pass next as cursor for the next page.
-type "Proposal" lists proposals (yours: true for this connection's), type "Question" the questions waiting for the person, type "Check" what Brainiac's checks flag (a value that disagrees with its document or another note, an impossible value, missing proof, a duplicate, a name spelled two ways, an expired item an application uses), each with its evidence and any fix. Show a check to the person; only they decide it.`,
+type "Proposal" lists proposals (yours: true for this connection's), type "Question" the person's questions: gaps the record found (a field its type asks for that is empty) and ones agents asked, soonest deadline first, each with the note and field its answer goes to and the input it takes. To record the person's reply, update that note's field; "still there" (ongoing) is set {current: true}, and "not applicable" is append {not_applicable: "<field>"}. An asked question also takes set {status: "answered", answer} on its own id. type "Check" what Brainiac's checks flag (a value that disagrees with its document or another note, an impossible value, missing proof, a duplicate, a name spelled two ways, an expired item an application uses), each with its evidence and any fix. Show a check to the person; only they decide it.`,
   type({
     "+": "reject",
     ...FilterArgs,
@@ -372,17 +393,22 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
     const rows: QueryRow[] | string =
       args.type === "Check"
         ? checkRows(sql, ctx)
-        : virtual
-          ? (args.type === "Proposal" ? proposalRows : questionRows)(sql, ctx)
-          : notes.map(noteRow);
+        : args.type === "Question"
+          ? questionRows(sql, ctx)
+          : args.type === "Proposal"
+            ? proposalRows(sql, ctx)
+            : notes.map(noteRow);
     if (typeof rows === "string") return fail(rows);
-    const page = paginate(rows, args);
+    const page = paginate(rows, {
+      ...args,
+      ...(args.type === "Question" && args.sort === undefined && { sort: ["rank"] }),
+    });
     if ("error" in page) return fail(page.error);
     // A proposal or question row names the notes it is about, which the caller may see (checked above).
     for (const { id, data, note } of page.rows) {
       if (note) ctx.shown.add(id);
       else
-        for (const ref of [data["note"], data["notes"]].flat())
+        for (const ref of [data["note"], data["about"], data["notes"]].flat())
           if (typeof ref === "string") ctx.shown.add(ref);
     }
     return ok({
@@ -422,7 +448,9 @@ const describe = tool(
         byType: count((note) => note.type ?? "(none)"),
         byFolder: count((note) => (note.path.includes("/") ? (note.path.split("/")[0] ?? "") : "(root)")),
       },
-      openQuestions: questionRows(sql, ctx).filter((row) => row.data["status"] === "open").length,
+      openQuestions: [questionRows(sql, ctx)]
+        .flat()
+        .filter((row) => typeof row !== "string" && row.data["status"] === "open").length,
       openProposals: {
         yours: proposals.filter((row) => row.data["yours"]).length,
         conflicts: proposals.filter((row) => row.data["kind"] === "conflict").length,
@@ -882,7 +910,7 @@ const undo = tool(
 );
 
 const requestInfo = tool(
-  `Ask the person something instead of guessing: a missing date, which of two values is right, whether a document is the final one. It waits in their review list; their answer lands in the record, not in this chat. note and field say what it's about; suggested is your best guess, if you have one.`,
+  `Ask the person something instead of guessing: a missing date, which of two values is right, whether a document is the final one. It waits with their questions on the site and phone; their answer lands in the record, not in this chat (query {"type": "Question"} shows it). note and field say what it's about, and the answer goes to that field; suggested is your best guess, if you have one. If that field already has an open question, you get that one back instead of a second. Set sensitive for grades, scores, IDs, health, family or money.`,
   type({
     "+": "reject",
     question: "string",
@@ -890,27 +918,63 @@ const requestInfo = tool(
     "note?": "string | null",
     "field?": "string | null",
     "suggested?": "unknown",
+    "sensitive?": "boolean | null",
   }),
   (sql, args, ctx) => {
     if (readOnly(ctx)) return ok(READ_ONLY);
     if (args.question.trim() === "") return fail("question is empty.");
     const note = args.note === undefined ? undefined : visible(sql, ctx, args.note);
     if (args.note !== undefined && !note) return fail(`No note with id ${args.note}.`);
+    if (args.field !== undefined && !note)
+      return fail("field goes with note: name the note it's a field of.");
     if (args.suggested !== undefined && !isYaml(args.suggested))
       return fail("suggested isn't a value front-matter can hold.");
+    if (note && args.field !== undefined) {
+      const rows = questionRows(sql, ctx);
+      const waiting =
+        typeof rows === "string"
+          ? undefined
+          : rows.find(
+              (row) =>
+                row.data["status"] === "open" &&
+                row.data["note"] === note.id &&
+                row.data["field"] === args.field,
+            );
+      if (waiting) return ok({ status: "queued", question: waiting.id, already: true });
+    }
     const id = ulid(ctx.now);
-    sql.all(
-      `INSERT INTO questions (id, noteId, field, input, suggested, why, priority, status, class)
-       VALUES (?, ?, ?, ?, ?, ?, 0, 'open', ?)`,
+    const path = `questions/${id.toLowerCase()}.md`;
+    const was = note && args.field !== undefined ? valueAt(fieldsOf(note), args.field) : undefined;
+    const fields: Record<string, YamlValue | undefined> = {
       id,
-      note?.id ?? null,
-      args.field ?? null,
-      JSON.stringify({ question: args.question }),
-      args.suggested === undefined ? null : JSON.stringify(args.suggested),
-      args.why ?? "",
-      note?.class ?? "normal",
+      type: "Question",
+      title: args.question,
+      status: "open",
+      about: note && relationTo(path, note.path),
+      field: args.field,
+      // What the field held when asked: once it changes, the question has its answer (questions.ts).
+      was: isYaml(was) && was !== null ? was : undefined,
+      suggested: args.suggested,
+      why: args.why,
+    };
+    const raw = patch(
+      "",
+      Object.entries(fields).flatMap(([key, value]): PatchOp[] =>
+        value === undefined ? [] : [{ op: "set", path: [key], value }],
+      ),
     );
-    return ok({ status: "queued", question: id });
+    // Not as the connection, like add: asking is allowed at propose level, so it never waits as a proposal.
+    const result = mutate(
+      sql,
+      {
+        op: "create",
+        path,
+        raw,
+        class: args.sensitive || note?.class === "sensitive" ? "sensitive" : "normal",
+      },
+      { actor: ctx.actor, now: ctx.now, reader: principal(ctx) },
+    );
+    return ok(result.status === "applied" ? { status: "queued", question: id } : outcome(result));
   },
 );
 

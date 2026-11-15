@@ -12,6 +12,7 @@ import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
 import { serveDev } from "./dev.ts";
+import { DIGEST_CRON, sendDigests } from "./digest.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
 import { consume } from "./jobs.ts";
 import { serveMcp, type Records } from "./mcp/handler.ts";
@@ -275,4 +276,21 @@ export default {
     return new Response("Not found", { status: 404 });
   },
   queue: consume,
+  async scheduled(controller, env, ctx) {
+    if (controller.cron !== DIGEST_CRON) return;
+    // A stage without a sending address or a public origin sends no email: there is nowhere to link to.
+    if (!env.EMAIL || !env.EMAIL_FROM || !env.SITE_ORIGIN) return;
+    const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+    try {
+      const { sent, failed } = await sendDigests(
+        pool,
+        (baseId) => env.BASE.get(env.BASE.idFromString(baseId)),
+        mailer(env),
+        env.SITE_ORIGIN,
+      );
+      console.log("weekly questions email", { sent, failed });
+    } finally {
+      ctx.waitUntil(pool.end());
+    }
+  },
 } satisfies ExportedHandler<Env, JobMessage>;

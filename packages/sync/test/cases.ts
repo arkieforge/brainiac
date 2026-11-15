@@ -3,6 +3,8 @@
 // Cases throw on failure, with node:assert, which both runtimes provide.
 import { deepStrictEqual as same, equal, ok, rejects } from "node:assert/strict";
 
+import { answerEdits, findQuestions, parseNote, patch, type Manifest } from "@brainiac/core";
+
 import { SyncClient, type Store } from "../src/index.ts";
 import { addLine, setField, World, type Device } from "./sim.ts";
 
@@ -33,6 +35,32 @@ function synced(world: World, device: Device): void {
   );
 }
 
+const ROLE = "01M6AAAAAAAAAAAAAAAAAAAAR1";
+/** A Role whose type asks for its end date, as a record's manifest says. */
+const ROLES: Manifest = {
+  schema_version: 1,
+  types: {
+    Role: {
+      version: 1,
+      fields: {
+        end: { kind: "date", ask: "When did your role at {org} end?" },
+        current: { kind: "boolean" },
+      },
+    },
+  },
+};
+/** The questions a device finds in the notes it holds. */
+const questionsOn = (device: Device) =>
+  findQuestions(
+    [...device.client.state.remote.keys()].flatMap((id) => {
+      const raw = device.client.working(id);
+      const path = device.client.state.remote.get(id)?.path;
+      return raw === undefined || path === undefined ? [] : [{ id, path, data: parseNote(raw).data }];
+    }),
+    ROLES,
+    Date.UTC(2026, 10, 15),
+  );
+
 /** How often `line` is in the note's text: once means applied once, however often it was sent. */
 const times = (world: World, noteId: string, line: string) =>
   world
@@ -41,6 +69,35 @@ const times = (world: World, noteId: string, line: string) =>
     .filter((l) => l === line).length ?? 0;
 
 export const cases: Record<string, Case> = {
+  async "an answer spreads like an edit and closes its question on every device, offline too"(open) {
+    const world = new World();
+    world.seedRaw(
+      "facts/roles/acme.md",
+      `---\nid: ${ROLE}\ntype: Role\ntitle: Intern, Acme Robotics\norg: Acme Robotics\n---\n`,
+    );
+    const laptop = world.device("laptop", undefined, open("laptop"));
+    const phone = world.device("phone");
+    world.settle();
+    const [question] = questionsOn(phone);
+    equal(question?.text, "When did your role at Acme Robotics end?");
+    same(
+      questionsOn(laptop).map((q) => q.id),
+      [`${ROLE}.end`],
+    );
+    // Answered on the phone while it's offline: closed there at once, and on the laptop once it syncs.
+    world.disconnect(phone);
+    for (const edit of answerEdits(question!, { value: "2025-09-30" })) {
+      const base = phone.client.working(edit.noteId)!;
+      phone.client.edit(edit.noteId, patch(base, edit.ops), base);
+    }
+    same(questionsOn(phone), []);
+    equal(questionsOn(laptop).length, 1);
+    world.settle();
+    same(questionsOn(laptop), []);
+    equal(parseNote(world.note(ROLE)?.raw ?? "").data["end"], "2025-09-30");
+    synced(world, laptop);
+  },
+
   async "an edit made offline survives a restart and lands once"(open) {
     const { world, laptop } = start(open);
     world.disconnect(laptop);

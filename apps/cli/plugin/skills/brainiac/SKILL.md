@@ -28,6 +28,12 @@ person. Use its type and field names; don't invent your own.
 - `verified` on a note lists the fields the person checked. Say "unverified" next to any other value you quote.
 - When a value is missing, unclear, or two notes disagree, ask with `request_info` instead of filling the gap.
 
+## Questions
+
+`query {"type": "Question"}` lists what the record is missing (fields its types ask for) and what agents
+asked, soonest deadline first. Ask the person a few at a time, and record each reply with `update` on the note
+and field the question names. Never fill one from a guess; offer `suggested` only as a suggestion.
+
 ## Change the record through the tools
 
 - Update the note that exists rather than creating a near copy. A new event is a new note: a new test

@@ -33,7 +33,7 @@ Answer with each requirement as met, missing or unsure, the note and value behin
     title: "Review my record",
     description: "Review the record for gaps, open questions and values to check.",
     text: () =>
-      `Review my Brainiac record. Call describe first and look at the counts, open questions and open proposals.
+      `Review my Brainiac record. Call describe first and look at the counts, open questions and open proposals; query {"type": "Question"} lists the questions.
 Then look for: important values nobody has verified, documents and test scores that expired or expire soon, notes missing required fields, likely duplicates, and facts with no source.
 ${RULES}
 Answer with a short list, most important first, each with the note and the fix you suggest. Change nothing unless I ask.`,
