@@ -15,6 +15,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { useState } from "react";
+import { Skeleton, SkeletonBox } from "skullet/react";
 
 import { typeIcon } from "../icons.ts";
 import { LIST, SPRING } from "../motion.ts";
@@ -34,6 +35,78 @@ const MARKS: Record<Mark, { readonly icon: Icon; readonly label: string }> = {
 };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The health tiles: which count each shows, and the colour it takes once that count is above zero. */
+const STATS = [
+  { label: "items", count: "items", icon: Stack },
+  { label: "checked", count: "checked", icon: SealCheck, tone: "ok" },
+  { label: "look wrong", count: "wrong", icon: WarningCircle, tone: "error" },
+  { label: "stale", count: "stale", icon: ArrowsClockwise, tone: "warn" },
+  { label: "conflicts", count: "conflict", icon: ArrowsLeftRight, tone: "error" },
+  { label: "unchecked", count: "unproven", icon: QuestionMark, tone: "warn" },
+] as const;
+
+/** Stand-in rows for the loading skeleton: fictional, so Skullet never measures or remembers the record itself. */
+const SAMPLE = [
+  ["Application", ["Graduate application, autumn intake"]],
+  ["Education", ["Bachelor of Science, Example University", "Higher secondary certificate"]],
+  ["TestScore", ["English test, academic module", "Graduate admissions test"]],
+] as const;
+
+/**
+ * The overview while the record loads: the heading and tile labels are already known, so only the counts and rows
+ * wait, as still bars (Skullet, DESIGN.md).
+ */
+function OverviewLoading() {
+  return (
+    <section className="overview">
+      <header className="pane-head health">
+        <h1>Your record</h1>
+        <dl className="stats">
+          {STATS.map(({ label, icon: StatIcon }) => (
+            <div key={label}>
+              <dt>
+                <StatIcon size={13} aria-hidden />
+                {label}
+              </dt>
+              <dd>
+                <SkeletonBox width="1.2em" />
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <div className="health-actions">
+          <Link to="/review" className="stamp">
+            Review, worst first
+          </Link>
+          <Pip sticker="thinking" size={44} say="Loading your record…" />
+        </div>
+      </header>
+      <Skeleton loading label="Loading your record">
+        {SAMPLE.map(([type, headlines]) => (
+          <section key={type} className="group">
+            <h2>
+              {type}
+              <span className="count">{headlines.length}</span>
+            </h2>
+            <ul>
+              {headlines.map((headline) => (
+                <li key={headline} className="item">
+                  <span className="mark">
+                    <SealCheck size={15} weight="fill" />
+                  </span>
+                  <Stack size={15} weight="duotone" className="row-type" />
+                  <span className="headline">{headline}</span>
+                  <span className="aside path">facts/sample/note.md</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </Skeleton>
+    </section>
+  );
+}
 
 /** A note's title morphs between pages under this name (styles.css, view transitions). Ids start with a digit. */
 export const titleTransition = (noteId: string) => ({ viewTransitionName: `n${noteId}` });
@@ -164,23 +237,21 @@ function nextStep(counts: ReturnType<typeof overviewOf>["counts"], questions: nu
 /** See everything: every item's headline and mark, grouped by type, with the record's health on top. */
 export function Overview() {
   const { client, manifest, status, schemaLoaded } = useRecord();
-  if (!client) return <p className="empty">{status === "loading" ? "Loading…" : "No record yet."}</p>;
+  if (!client) return status === "loading" ? <OverviewLoading /> : <p className="empty">No record yet.</p>;
   const now = Date.now();
   const health = overviewOf(client, manifest, now);
   const questions = questionsOf(client, manifest, now);
   const asks = Map.groupBy(questions, (q) => q.about ?? q.noteId);
   if (health.items.length === 0)
-    return (
+    return status === "live" ? (
       <div className="empty">
-        {status === "live" ? (
-          <Pip
-            sticker="coffee"
-            say="Nothing in your record yet. Ask your Claude to file something, or add a file."
-          />
-        ) : (
-          <Pip sticker="thinking" say="Loading your record…" />
-        )}
+        <Pip
+          sticker="coffee"
+          say="Nothing in your record yet. Ask your Claude to file something, or add a file."
+        />
       </div>
+    ) : (
+      <OverviewLoading />
     );
   const groups = Map.groupBy(health.items, (item) => item.type);
   const { counts } = health;
@@ -189,26 +260,22 @@ export function Overview() {
       <header className="pane-head health">
         <h1>Your record</h1>
         <dl className="stats">
-          {(
-            [
-              ["items", counts.items, Stack, undefined],
-              ["checked", counts.checked, SealCheck, counts.checked > 0 ? "ok" : undefined],
-              ["look wrong", counts.wrong, WarningCircle, counts.wrong > 0 ? "error" : undefined],
-              ["stale", counts.stale, ArrowsClockwise, counts.stale > 0 ? "warn" : undefined],
-              ["conflicts", counts.conflict, ArrowsLeftRight, counts.conflict > 0 ? "error" : undefined],
-              ["unchecked", counts.unproven, QuestionMark, counts.unproven > 0 ? "warn" : undefined],
-            ] as const
-          ).map(([label, value, StatIcon, tone]) => (
-            <div key={label} className={tone}>
-              <dt>
-                <StatIcon size={13} weight={tone ? "fill" : "regular"} aria-hidden />
-                {label}
-              </dt>
-              <dd>
-                <NumberFlow value={value} />
-              </dd>
-            </div>
-          ))}
+          {STATS.map((stat) => {
+            const value = counts[stat.count];
+            const tone = "tone" in stat && value > 0 ? stat.tone : undefined;
+            const StatIcon = stat.icon;
+            return (
+              <div key={stat.label} className={tone}>
+                <dt>
+                  <StatIcon size={13} weight={tone ? "fill" : "regular"} aria-hidden />
+                  {stat.label}
+                </dt>
+                <dd>
+                  <NumberFlow value={value} />
+                </dd>
+              </div>
+            );
+          })}
           {questions.length > 0 && (
             <div>
               <dt>

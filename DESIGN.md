@@ -110,6 +110,10 @@ overview's numbers. Mono for paths, labels, badges, keys and the markdown source
   another device rings the field once.
 - **Drop zone** (`DropZone.tsx`): nested dashed frames that open outward while a file is held over them.
 - **File box** (`FileBox.tsx`): Files' empty state; its folders lift when you point at it.
+- **Loading** (Skullet): a page that waits keeps what it already knows (the overview's heading and tile labels,
+  review's keys, a file's name and badges) and draws only the record's values and rows as still bars in
+  `bg-hover`. The bars are measured from fictional sample markup, never from the record, so Skullet has nothing of a
+  person's record to remember in `localStorage`. Each region is its own skeleton with a screen-reader label.
 - **Status**: a dot (green live, amber offline) that pings once when the record's copy of a note moves to a new revision; on phones the dot
   alone unless offline.
 
@@ -123,19 +127,20 @@ and file kinds to icons; add a type there, not inline.
 
 One library per job, so nothing fights over styles:
 
-| Job                                   | Library                           | Where                                       |
-| ------------------------------------- | --------------------------------- | ------------------------------------------- |
-| Styling                               | Tailwind v4 (theme + utilities)   | new components; tokens via `@theme inline`  |
-| Springs, gestures, layout, exit       | `motion` 14                       | nav pill, row hover, review deck, ⌘K button |
-| Primitives (dialogs, tooltips, menus) | Base UI (`@base-ui/react`)        | ⌘K dialog, tooltips                         |
-| Command palette                       | `cmdk`, inside the Base UI dialog | ⌘K                                          |
-| Drawer                                | `vaul`                            | the side on phones                          |
-| Toasts                                | `ding`                            | review results                              |
-| Changing numbers                      | NumberFlow                        | overview counts, review progress            |
-| Changing words                        | `torph`                           | Saving to Saved                             |
-| Icons                                 | Phosphor                          | everywhere                                  |
-| Stickers                              | `stick-it-up` (Pip, Kuro)         | Pip, empty and done states                  |
-| List add, remove, reorder from sync   | `auto-animate`                    | overview groups, files                      |
+| Job                                   | Library                           | Where                                        |
+| ------------------------------------- | --------------------------------- | -------------------------------------------- |
+| Styling                               | Tailwind v4 (theme + utilities)   | new components; tokens via `@theme inline`   |
+| Springs, gestures, layout, exit       | `motion` 14                       | nav pill, row hover, review deck, ⌘K button  |
+| Primitives (dialogs, tooltips, menus) | Base UI (`@base-ui/react`)        | ⌘K dialog, tooltips                          |
+| Command palette                       | `cmdk`, inside the Base UI dialog | ⌘K                                           |
+| Drawer                                | `vaul`                            | the side on phones                           |
+| Toasts                                | `ding`                            | review results                               |
+| Changing numbers                      | NumberFlow                        | overview counts, review progress             |
+| Changing words                        | `torph`                           | Saving to Saved                              |
+| Icons                                 | Phosphor                          | everywhere                                   |
+| Stickers                              | `stick-it-up` (Pip, Kuro)         | Pip, empty and done states                   |
+| List add, remove, reorder from sync   | `auto-animate`                    | overview groups, files                       |
+| Loading skeletons                     | Skullet (`skullet/react`)         | overview, review and file view while waiting |
 
 Tailwind runs without its preflight, so the markdown, PDF and Office renderers keep the browser defaults they
 were built on. New primitives come from Base UI; shadcn is set up (`apps/web/components.json`, `@/` alias,
@@ -158,6 +163,8 @@ project. Plain CSS covers hovers, presses and fades; reach for `motion` for spri
 - Small proofs: overview counts roll, Saving morphs into Saved, verified checks draw themselves, a field changed
   elsewhere rings once, the Live dot pings once per new revision from the record, the ⌘K button leans toward the cursor, rows stagger in
   once on load, and a note's title tightens and its path fades as you scroll (transform and opacity only).
+- Loading skeletons hold still: Skullet's shimmer and pulse are off (`--skullet-animation: none` in `styles.css`),
+  so no shimmer exception is needed. A skeleton gives way to the content at once, with no reveal.
 - Reduced motion: `MotionConfig reducedMotion="user"` keeps fades and drops movement; CSS turns transitions,
   animations and view transitions off; hand-started animations (the burst, the Live ping, the field ring)
   check `calm()` and skip.

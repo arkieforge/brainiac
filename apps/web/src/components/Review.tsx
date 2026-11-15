@@ -26,6 +26,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "@yusufceng1z/ding-react";
 import { AnimatePresence, motion, useMotionValue, useTransform } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Skeleton, SkeletonBox } from "skullet/react";
 
 import { typeIcon } from "../icons.ts";
 import { reviewBase, saveReviewed, useRecord } from "../record.ts";
@@ -57,6 +58,59 @@ const KEYS = [
   ["u", "Undo", ArrowUUpLeft, "Put the last step back"],
 ] as const satisfies readonly (readonly [string, string, Icon, string])[];
 type Key = (typeof KEYS)[number][0];
+
+/**
+ * Review while the record answers: the top card as still bars over fictional sample text (Skullet never sees the
+ * record), with the deck, the progress bar and the keys, which are already known, around it.
+ */
+function ReviewLoading() {
+  return (
+    <section className="review">
+      <div className="progress-row">
+        <span className="muted small progress">
+          <SkeletonBox width="4em" />
+        </span>
+        <span className="progress-bar" />
+      </div>
+      <div className="deck">
+        {/* Outside the skeleton: Skullet draws every bar on one layer, which would put these over the top card. */}
+        {[2, 1].map((depth) => (
+          <div key={depth} className="card ghost" data-depth={depth} />
+        ))}
+        <Skeleton loading label="Loading your review">
+          <article className="card">
+            <header>
+              <span className="badge">TestScore</span>
+              <h1>English test, academic module</h1>
+              <div className="path">facts/tests/sample.md</div>
+            </header>
+            <ul className="checks">
+              <li>
+                <strong>score</strong>: the report attached to this note shows a different overall band.
+              </li>
+            </ul>
+            <dl className="values">
+              {["overall", "date", "provider", "listening"].map((field) => (
+                <div key={field}>
+                  <dt>{field}</dt>
+                  <dd>Sample value</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        </Skeleton>
+      </div>
+      <div className="keys">
+        {KEYS.map(([key, label, KeyIcon]) => (
+          <button key={key} type="button" className={key === "y" ? "primary" : undefined} disabled>
+            <KeyIcon size={14} weight={key === "y" ? "bold" : "regular"} />
+            {label} <kbd>{key}</kbd>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 /** How far a swipe must travel to count: right is Correct, left is Skip. */
 const SWIPE_PX = 80;
@@ -267,12 +321,12 @@ export function Review() {
     return () => removeEventListener("keydown", onKey);
   }, []);
 
-  if (!client) return <p className="empty">{status === "loading" ? "Loading…" : "No record yet."}</p>;
+  if (!client) return status === "loading" ? <ReviewLoading /> : <p className="empty">No record yet.</p>;
   if (!order && !ready)
-    return (
-      <p className="empty">
-        {status === "offline" ? "Review needs the record: you're offline." : "Loading your record…"}
-      </p>
+    return status === "offline" ? (
+      <p className="empty">Review needs the record: you're offline.</p>
+    ) : (
+      <ReviewLoading />
     );
   if (!order || order.length === 0)
     return (

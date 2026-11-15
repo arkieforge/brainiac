@@ -1,5 +1,6 @@
 import { ImageViewer, MediaPlayer, SandboxedFrame, TableViewer } from "@brainiac/render";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Skeleton } from "skullet/react";
 
 import { sign } from "../approve.ts";
 import { api, refresh, useRecord, type FileItem } from "../record.ts";
@@ -66,11 +67,42 @@ async function open(sha256: string): Promise<Opened> {
   return { state: "error", message: body.error ?? "This file can't be shown." };
 }
 
+/**
+ * Stand-in for a file while it loads, in the shape its type will take: one block for pictures and video, a page of
+ * text otherwise. Fictional, so Skullet never measures or remembers the file itself.
+ */
+function FileSample({ mime }: { readonly mime: string }) {
+  if (mime.startsWith("image/") || mime.startsWith("video/"))
+    return <div className="file-sample" skullet-block="" />;
+  return (
+    <div className="file-sample page">
+      <h3>Transcript of records</h3>
+      <p>
+        This sample page holds the place of the file while it opens. It has a heading and a few lines of text,
+        about as long as the first lines of a transcript, a letter or a certificate, so the page keeps its
+        size when the real one arrives.
+      </p>
+      <p>Issued by the registrar, with grades for each term and the final result.</p>
+    </div>
+  );
+}
+
+/** The file's place while it opens, as still bars (Skullet, DESIGN.md). */
+function FileLoading({ mime }: { readonly mime: string }) {
+  return (
+    <Skeleton loading label="Opening the file">
+      <FileSample mime={mime} />
+    </Skeleton>
+  );
+}
+
 function Bytes({
   url,
+  mime,
   children,
 }: {
   readonly url: string;
+  readonly mime: string;
   readonly children: (bytes: Uint8Array) => React.ReactNode;
 }) {
   const [bytes, setBytes] = useState<Uint8Array>();
@@ -83,16 +115,16 @@ function Bytes({
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "This file can't load."));
   }, [url]);
   if (error) return <p role="alert">{error}</p>;
-  return bytes ? children(bytes) : <p className="muted">Loading</p>;
+  return bytes ? children(bytes) : <FileLoading mime={mime} />;
 }
 
 function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }) {
   const mime = file.mime;
   if (mime === "application/pdf")
     return (
-      <Bytes url={url}>
+      <Bytes url={url} mime={mime}>
         {(bytes) => (
-          <Suspense fallback={<p className="muted">Loading the PDF viewer</p>}>
+          <Suspense fallback={<FileLoading mime={mime} />}>
             <PdfViewer bytes={bytes} />
           </Suspense>
         )}
@@ -101,9 +133,9 @@ function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }
   const office = OFFICE.get(mime);
   if (office)
     return (
-      <Bytes url={url}>
+      <Bytes url={url} mime={mime}>
         {(bytes) => (
-          <Suspense fallback={<p className="muted">Loading the Office viewer</p>}>
+          <Suspense fallback={<FileLoading mime={mime} />}>
             <OfficeViewer bytes={bytes} kind={office} />
           </Suspense>
         )}
@@ -112,20 +144,24 @@ function Viewer({ file, url }: { readonly file: FileItem; readonly url: string }
   const delimiter = TABLES.get(mime);
   if (delimiter)
     return (
-      <Bytes url={url}>
+      <Bytes url={url} mime={mime}>
         {(bytes) => <TableViewer bytes={bytes} delimiter={delimiter} name={fileLabel(file)} />}
       </Bytes>
     );
   if (mime.startsWith("audio/") || mime.startsWith("video/"))
     return (
-      <Bytes url={url}>{(bytes) => <MediaPlayer bytes={bytes} mime={mime} label={fileLabel(file)} />}</Bytes>
+      <Bytes url={url} mime={mime}>
+        {(bytes) => <MediaPlayer bytes={bytes} mime={mime} label={fileLabel(file)} />}
+      </Bytes>
     );
   if (mime === "text/html" || mime === "image/svg+xml")
     return <SandboxedFrame src={url} title={fileLabel(file)} />;
   if (mime.startsWith("image/")) return <ImageViewer src={url} alt={fileLabel(file)} />;
   if (mime.startsWith("text/"))
     return (
-      <Bytes url={url}>{(bytes) => <pre className="value">{new TextDecoder().decode(bytes)}</pre>}</Bytes>
+      <Bytes url={url} mime={mime}>
+        {(bytes) => <pre className="value">{new TextDecoder().decode(bytes)}</pre>}
+      </Bytes>
     );
   return <p className="muted">There is no viewer for {mime} files yet.</p>;
 }
@@ -221,7 +257,7 @@ export function FileView({ file }: { readonly file: FileItem }) {
   };
   return (
     <div className="file-view">
-      {opened.state === "loading" && <p className="muted">Loading</p>}
+      {opened.state === "loading" && <FileLoading mime={file.mime} />}
       {opened.state === "error" && <p role="alert">{opened.message}</p>}
       {opened.state === "locked" && (
         <div className="locked">
@@ -264,7 +300,22 @@ export function FileFacts({ file }: { readonly file: FileItem }) {
 export function FilePane({ fileId }: { readonly fileId: string }) {
   const { files } = useRecord();
   const file = files.find((f) => f.sha256 === fileId);
-  if (!file) return <p className="empty">Loading</p>;
+  // The file list comes with the record; until then the whole pane is a sample.
+  if (!file)
+    return (
+      <Skeleton loading label="Opening the file">
+        <article>
+          <header className="pane-head">
+            <div className="path">{"0".repeat(64)}</div>
+            <h1>transcript-of-records.pdf</h1>
+            <span className="badge">application/pdf</span>
+          </header>
+          <div className="file-view">
+            <FileSample mime="application/pdf" />
+          </div>
+        </article>
+      </Skeleton>
+    );
   return (
     <article>
       <header className="pane-head">
