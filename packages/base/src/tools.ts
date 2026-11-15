@@ -350,7 +350,9 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
     // A proposal or question row names the notes it is about, which the caller may see (checked above).
     for (const { id, data, note } of page.rows) {
       if (note) ctx.shown.add(id);
-      for (const ref of [data["note"], data["notes"]].flat()) if (typeof ref === "string") ctx.shown.add(ref);
+      else
+        for (const ref of [data["note"], data["notes"]].flat())
+          if (typeof ref === "string") ctx.shown.add(ref);
     }
     return ok({
       rows: page.rows.map(({ id, data, note }) => ({

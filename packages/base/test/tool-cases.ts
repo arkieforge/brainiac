@@ -795,6 +795,13 @@ export const toolCases: Record<string, Case> = {
       auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
       [n.role],
     );
+    // A note's own fields are never read as references: only the note itself is named.
+    call(sql, as(writer), "update", { id: n.role, rev: revOf(sql, n.role), set: { notes: [n.ielts] } });
+    call(sql, as(floor), "query", { type: "Role", fields: ["notes"] });
+    same(
+      auditOf(sql, floor.id)[0]?.notes.map((note) => note.id),
+      [n.role],
+    );
 
     // One transaction: a change whose audit row can't be written doesn't land either.
     sql.all("ALTER TABLE audit RENAME TO audit_gone");
