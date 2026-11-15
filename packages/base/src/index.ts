@@ -112,6 +112,26 @@ export {
   type Family,
   type Hit,
 } from "./search.ts";
+export {
+  dismissFill,
+  FILL_MS,
+  fillHash,
+  forgetSecret,
+  listSecrets,
+  pendingFills,
+  releaseFill,
+  requestFill,
+  saveSecret,
+  secretHash,
+  type FillField,
+  type FillView,
+  type Policy,
+  type Released,
+  type Requested,
+  type SavedSecret,
+  type SecretInput,
+  type SecretView,
+} from "./secrets.ts";
 export { changesSince, currentSeq, hello, receive, serve, type Served } from "./sync.ts";
 export { doSql, type DurableObjectSql, type Sql, type SqlValue } from "./sql.ts";
 export {

@@ -915,10 +915,16 @@ export const toolCases: Record<string, Case> = {
   "no tool answer carries a secret, a hidden note's values or another record's": (sql, fixtures) => {
     const n = record(sql, fixtures);
     sql.all(
-      "INSERT INTO secrets (name, ciphertext, policy) VALUES ('portal.tum', 'CANARY-SECRET-9137', 'ask')",
+      "INSERT INTO secrets (name, ciphertext, policy, domain) VALUES ('portal.tum', 'CANARY-SECRET-9137', 'allow', 'campus.tum.de')",
     );
     const agent = as(connection(sql, { level: "write", holdDays: 0 }));
     const answers = [
+      callTool(
+        sql,
+        "fill_form",
+        { url: "https://campus.tum.de/apply", fields: [{ field: "Password", secret: "portal.tum" }] },
+        agent,
+      ),
       callTool(sql, "describe", {}, agent),
       callTool(sql, "query", { text: "26GB001234KARN001A" }, agent),
       callTool(sql, "query", { where: { trf_number: { exists: true } } }, agent),

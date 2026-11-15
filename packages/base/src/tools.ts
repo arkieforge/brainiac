@@ -41,6 +41,7 @@ import {
 import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
 import { withdraw, type Decided } from "./proposals.ts";
+import { requestFill, type FillField } from "./secrets.ts";
 import type { Sql } from "./sql.ts";
 import { currentSeq } from "./sync.ts";
 
@@ -1168,8 +1169,50 @@ File each item with create and update, then send its id in done, which deletes i
   },
 );
 
+const FormField = type({
+  "+": "reject",
+  field: "string",
+  "value?": "string | null",
+  "secret?": "string | null",
+});
+
+const fillForm = tool(
+  `Fill a form on a portal through the person's browser extension. List each field by the label, name or id the page shows, with either a value you know or a secret by its name (a note's secret:portal.tum is the secret portal.tum). You never see a secret's value: the fill waits until the person opens the page and presses Fill in the extension, and secrets go only into a page on the domain saved with them; a page that imitates that domain is refused as likely phishing. Nothing is submitted. Needs a write connection.`,
+  type({ "+": "reject", url: "string", fields: FormField.array() }),
+  (sql, args, ctx) => {
+    if (readOnly(ctx)) return ok(READ_ONLY);
+    const fields: FillField[] = [];
+    for (const { field, value, secret } of args.fields) {
+      if (typeof secret === "string" && typeof value !== "string") fields.push({ field, secret });
+      else if (typeof value === "string" && typeof secret !== "string") fields.push({ field, value });
+      else return fail(`Give ${field} either a value or a secret, not both or neither.`);
+    }
+    const result = requestFill(sql, { url: args.url, fields }, ctx);
+    if ("error" in result) return fail(result.error);
+    if (result.status === "forbidden") return ok({ status: "forbidden", message: result.reason });
+    if (result.status === "refused") return ok(result);
+    return ok({
+      status: "waiting",
+      fill: result.fill,
+      expires_at: iso(result.expiresAt),
+      next: `Ask the person to open ${result.url} and press Fill in the Brainiac extension. Secret fields are filled there and never shown to you; nothing is submitted.`,
+    });
+  },
+);
+
 /** Every tool, by the name agents call it. */
-export const TOOLS = { describe, query, get, add, create, update, undo, request_info: requestInfo, inbox };
+export const TOOLS = {
+  describe,
+  query,
+  get,
+  add,
+  create,
+  update,
+  undo,
+  request_info: requestInfo,
+  inbox,
+  fill_form: fillForm,
+};
 
 export type ToolName = keyof typeof TOOLS;
 

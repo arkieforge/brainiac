@@ -2,7 +2,7 @@
 // key and starts unclassified, which agents see only as a one-line summary. A file is cleared only when the
 // server's checks read all of it and found nothing, and the person confirmed what it is; anything the checks
 // find stays in the vault whatever kind anyone chose. Nothing here returns a secret's value or a vault file's
-// bytes, text or URL: secrets leave only by the fill path (#37), originals only to the person, through a
+// bytes, text or URL: secrets leave only by the fill path (secrets.ts), originals only to the person, through a
 // single-use file token for the usercontent origin (`mintFileToken`).
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
@@ -21,7 +21,8 @@ import type { Sql } from "./sql.ts";
 const IV = 12;
 const TAG = 16;
 
-function seal(key: Uint8Array, plaintext: Uint8Array, context: string): Uint8Array {
+/** `plaintext` sealed under `key`, opening only as `context` (a secret's name, a file's hash). */
+export function seal(key: Uint8Array, plaintext: Uint8Array, context: string): Uint8Array {
   const iv = randomBytes(IV);
   const cipher = createCipheriv("aes-256-gcm", key, iv).setAAD(Buffer.from(context));
   const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);

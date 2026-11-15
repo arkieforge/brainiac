@@ -29,6 +29,17 @@ import {
   unseal,
   viewFile,
   type Classified,
+  dismissFill,
+  forgetSecret,
+  listSecrets,
+  pendingFills,
+  releaseFill,
+  saveSecret,
+  type FillView,
+  type Released,
+  type SavedSecret,
+  type SecretInput,
+  type SecretView,
   type Digest,
   type FileToken,
   type Extracted,
@@ -582,6 +593,87 @@ export class Base extends DurableObject<Env> {
     if (!object) throw new Error(`The record's file ${file.sha256} is missing from R2.`);
     const bytes = unseal(key, new Uint8Array(await object.arrayBuffer()), `file:${file.sha256}`);
     return { bytes, mime: file.mime, origin };
+  }
+
+  // Secrets and the fill path (secrets.ts). Only the site's session routes call these, for the person; an agent asks
+  // for a fill with the `fill_form` tool and never gets a value back.
+
+  secrets(caller: Caller): SecretView[] | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : listSecrets(this.sql, ctx);
+  }
+
+  /**
+   * The person saves a secret or changes its domain or policy. Letting it fill without asking where it didn't
+   * before needs their passkey over the `challenge` a first call returns.
+   */
+  async saveSecret(
+    input: SecretInput,
+    caller: Caller,
+    signed?: { readonly response: AuthenticationResponseJSON; readonly approver: Approver },
+  ): Promise<SavedSecret> {
+    const key = await this.dataKey();
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const first = saveSecret(this.sql, key, input, ctx);
+    if (!signed || !("challenge" in first)) return first;
+    const signature = await this.check(signed.response, first.challenge, signed.approver);
+    if ("error" in signature) return signature;
+    // The check awaited: a save meanwhile bumped the secret's rev, which the challenge names.
+    return saveSecret(
+      this.sql,
+      key,
+      input,
+      { ...ctx, now: Date.now() },
+      { challenge: first.challenge, signature },
+    );
+  }
+
+  forgetSecret(name: string, caller: Caller): { forgot: boolean } | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : forgetSecret(this.sql, name, ctx);
+  }
+
+  /** The fills waiting for the page the person's extension is on. */
+  fills(url: string, caller: Caller): FillView[] | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : pendingFills(this.sql, url, ctx);
+  }
+
+  /**
+   * The person presses Fill on the page at `url`: the fields' values, once, if the page is on every secret's saved
+   * domain. An `ask` secret needs their passkey over the `challenge` a first call returns.
+   */
+  async fill(
+    fillId: string,
+    url: string,
+    caller: Caller,
+    signed?: { readonly response: AuthenticationResponseJSON; readonly approver: Approver },
+  ): Promise<Released> {
+    const key = await this.dataKey();
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const first = releaseFill(this.sql, key, fillId, url, ctx);
+    if (!signed || !("challenge" in first)) return first;
+    const signature = await this.check(signed.response, first.challenge, signed.approver);
+    if ("error" in signature) return signature;
+    // The check awaited: the fill or a secret may have changed meanwhile, which the challenge names.
+    return releaseFill(
+      this.sql,
+      key,
+      fillId,
+      url,
+      { ...ctx, now: Date.now() },
+      {
+        challenge: first.challenge,
+        signature,
+      },
+    );
+  }
+
+  dismissFill(fillId: string, caller: Caller): { dismissed: boolean } | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : dismissFill(this.sql, fillId, ctx);
   }
 
   private dataKey(): Promise<Uint8Array> {
