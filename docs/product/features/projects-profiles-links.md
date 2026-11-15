@@ -49,4 +49,17 @@ synced: {repo_id: R_kgDOJx..., repo: nadia-karim/library-seat-finder, url: "http
   `type: "Check"` (each with `paste`) and can add profiles, but never start a paid re-check; the laptop shows the
   same checks from its copy; the extension has no part in it.
 - **Ownership is verified** before a profile counts (OAuth, a code in your bio, or a `rel="me"` link), and private-repo projects default to private. For LinkedIn and X it is a code (`brainiac-` and the end of the note's id) anywhere in the profile's text: until it shows up, nothing the profile says is kept, since it may be someone else's. Once shown at a link, the profile stays yours there, so the code can come out. Google Scholar needs none: it is searched for your own papers, not for a person.
-- **Links**: saved from the extension, the phone, the CLI or MCP `add`. Text via treg `web.extract`, a PDF snapshot via Browser Rendering, a weekly health check, and a signal when an application depends on a dead link.
+- **Links** (`packages/base/src/links.ts` decides when to read; `apps/worker/src/connectors/links.ts` reads): a
+  `Link` note in `links/` names a page's `url`, and `for` the application that relies on it, if one does. An agent
+  files one from what you saved (the extension, the phone, the CLI or MCP `add`), or adds it itself. The first read
+  at an address takes the page's title and the start of its text through treg `web.extract` (never for a sensitive
+  note), and a PDF snapshot through Browser Rendering, the evidence of what the page said when you saved it. The
+  snapshot goes into the vault like any upload, with a sidecar note in `documents/` that starts sensitive and
+  unclassified until you say what it is, and the link's `synced:` block names that note. After that the page is only
+  checked for being there, weekly, which costs nothing: only a 404 or a 410 says it is gone; a refusal, a server
+  error or no answer says `unchecked` and why, so a site that turns robots away is never called dead. When an open
+  application relies on a link (its own `for`, or a requirement `check: {type: Link}`) that is gone, the link is
+  flagged "looks wrong" with the application named (`Gone (404) when checked 2026-11-22, and TUM MSc Informatics,
+  Winter 2027 relies on it`); one that couldn't be checked says so. A link nothing open relies on is only your
+  bookmark, and is never flagged. Agents see the flag through `query` with `type: "Check"`; the laptop shows it
+  from its copy; the extension has no part in the check.

@@ -174,6 +174,8 @@ export default Alchemy.Stack(
           BLOBS: blobs,
           // Document-to-text and embeddings for search, in the jobs consumer.
           AI: Cloudflare.Workers.AI(),
+          // A saved link's PDF snapshot, in the jobs consumer (apps/worker/src/connectors/links.ts).
+          BROWSER: Cloudflare.Workers.Browser(),
           VAULT_KEY: yield* vaultKey(generation),
           ...(previousKey && { VAULT_KEY_PREVIOUS: previousKey }),
           JOBS: jobs,

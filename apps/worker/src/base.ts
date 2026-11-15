@@ -9,7 +9,9 @@ import {
   getFile,
   installFile,
   installLookup,
+  installLink,
   installProfile,
+  linkWork,
   profileWork,
   requestChecks,
   kindHash,
@@ -47,6 +49,8 @@ import {
   type Extracted,
   type FileView,
   type Found,
+  type LinkSeen,
+  type LinkWork,
   type Uploaded,
   connect,
   connectionOf,
@@ -134,13 +138,15 @@ interface Socket {
 
 /**
  * What a job works on, for the jobs consumer: a note to index, a file to extract (and index once cleared), or a
- * paper's DOI to look up, or a profile to read. A lookup leaves with the DOI alone, and a profile read with its
- * link (and for Google Scholar, paper titles), never the note.
+ * paper's DOI to look up, a profile to read, or a saved link to check. A lookup leaves with the DOI alone, a
+ * profile read with its link (and for Google Scholar, paper titles), and a link check with its address, never the
+ * note.
  */
 export type JobWork =
   | { readonly kind: "index"; readonly note: NoteRow }
   | { readonly kind: "doi"; readonly doi: string }
   | { readonly kind: "drift"; readonly work: ProfileWork }
+  | { readonly kind: "link"; readonly work: LinkWork }
   | {
       readonly kind: "file";
       readonly sha256: string;
@@ -802,6 +808,21 @@ export class Base extends DurableObject<Env> {
     if ("note" in input) {
       if (input.job.kind === "doi") return { kind: "doi", doi: String(JSON.parse(input.note.fm)["doi"]) };
       if (input.job.kind === "index") return { kind: "index", note: input.note };
+      if (input.job.kind === "link") {
+        const work = linkWork(input.note);
+        if (work) return { kind: "link", work };
+        // An address we may not fetch (not http or https) is never fetched: the link says so, as a check would.
+        const before = currentSeq(this.sql);
+        installLink(
+          this.sql,
+          jobId,
+          { status: "unchecked", why: "it isn't a web address" },
+          undefined,
+          Date.now(),
+        );
+        this.changed(before);
+        return null;
+      }
       const work = profileWork(this.sql, input.note);
       if (work) return { kind: "drift", work };
       // Only a profile with a site and a link gets a job, at a revision that still has them; this can't happen.
@@ -845,6 +866,25 @@ export class Base extends DurableObject<Env> {
   installProfile(jobId: string, seen: ProfileSeen): "installed" | "dropped" {
     const before = currentSeq(this.sql);
     const result = installProfile(this.sql, jobId, seen, Date.now());
+    this.changed(before);
+    return result;
+  }
+
+  /**
+   * Writes what a link check found into its `synced:` block, as the links connector (packages/base/src/links.ts). A
+   * snapshot is sealed into R2 first, the only await, and recorded with its sidecar in the install's transaction.
+   */
+  async installLink(jobId: string, seen: LinkSeen, pdf?: Uint8Array): Promise<"installed" | "dropped"> {
+    let snapshot;
+    if (pdf) {
+      const key = await this.dataKey();
+      const { sha256, sealed } = sealFile(key, pdf);
+      const r2Key = `blobs/${this.ctx.id.toString()}/${sha256}`;
+      if (!getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
+      snapshot = { sha256, r2Key, bytes: pdf.byteLength, key };
+    }
+    const before = currentSeq(this.sql);
+    const result = installLink(this.sql, jobId, seen, snapshot, Date.now());
     this.changed(before);
     return result;
   }

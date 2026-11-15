@@ -24,6 +24,10 @@ Each person's record lives in **its own Durable Object with its own SQLite datab
 - **Profile reads are paid, so the person starts them**: the alarm enqueues a `drift` job only for a Profile never
   read at its current link; after that, only the site's Check now (`checkProfiles`) enqueues one, and not for a
   profile read less than a day ago. A failed one waits for the person to ask again.
+- **Link checks are free, so they run weekly**: the alarm enqueues a `link` job for each Link never read at its
+  current address, or checked a week ago, written as `connector:links`. Only the first read at an address pays for
+  text (treg) and takes a snapshot (Browser Rendering); a snapshot is sealed into R2 before the install, its only
+  await, and recorded with its sidecar in the install's transaction.
 - **No retrieval holes, no stale text**: until new chunks replace them, old chunks are used only to find candidate notes; what's returned (snippets, context) always comes from the note's current revision. A stale snippet is never shown.
 
 ## Caching and file delivery

@@ -28,6 +28,7 @@ import { fillCases } from "./fill-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { githubCases } from "./github-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
+import { linksCases } from "./links-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { papersCases } from "./papers-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
@@ -141,6 +142,7 @@ export const cases: Record<string, Case> = {
   ...vaultCases,
   ...fillCases,
   ...ingestCases,
+  ...linksCases,
   ...papersCases,
   ...profilesCases,
   ...toolCases,

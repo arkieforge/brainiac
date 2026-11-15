@@ -2,6 +2,7 @@ import { ulid } from "@brainiac/core";
 
 import { getNote, type NoteRow } from "./notes.ts";
 import { PIPELINE } from "./pages.ts";
+import { linksDue, nextLinkCheck } from "./links.ts";
 import { nextLookup, papersDue } from "./papers.ts";
 import { nextProfileCheck, profilesDue } from "./profiles.ts";
 import { CHUNKS, EMBED_MODEL, fileOwner } from "./search.ts";
@@ -26,9 +27,10 @@ export const CHANGES_MS = 90 * 24 * 60 * 60_000;
  * Follow-up work for one revision of a note or a file. `index` rebuilds a note's search chunks and vectors;
  * `file` extracts an upload's text, runs the vault's checks over it and, once the file is cleared, indexes its
  * pages; `doi` looks a paper's DOI up and fills its `synced:` block (papers.ts); `drift` reads one of the
- * person's profiles through treg and fills its `synced:` block (profiles.ts).
+ * person's profiles through treg and fills its `synced:` block (profiles.ts); `link` checks a saved page and
+ * fills its `synced:` block (links.ts).
  */
-export type JobKind = "index" | "file" | "doi" | "drift";
+export type JobKind = "index" | "file" | "doi" | "drift" | "link";
 
 export interface Job {
   readonly id: string;
@@ -67,6 +69,7 @@ export function dueJobs(sql: Sql, now: number): Job[] {
     sql.all(`DELETE FROM jobs WHERE NOT (${CURRENT})`);
     for (const paper of papersDue(sql, now)) enqueue(sql, "doi", paper.id, paper.rev);
     for (const profile of profilesDue(sql)) enqueue(sql, "drift", profile.id, profile.rev);
+    for (const link of linksDue(sql, now)) enqueue(sql, "link", link.id, link.rev);
     sql.all(
       "UPDATE jobs SET status = 'failed' WHERE status = 'dispatched' AND attempts >= ? AND dispatchedAt <= ?",
       MAX_ATTEMPTS,
@@ -119,13 +122,13 @@ const CURRENT = `EXISTS (SELECT 1 FROM notes
 
 /** What a job works on, as of its revision. */
 export type JobInput =
-  | { readonly job: Job & { readonly kind: "index" | "doi" | "drift" }; readonly note: NoteRow }
+  | { readonly job: Job & { readonly kind: "index" | "doi" | "drift" | "link" }; readonly note: NoteRow }
   | { readonly job: Job & { readonly kind: "file" }; readonly file: FileRow };
 
 /** The note or file a job works on, at the job's revision; a stale job is dropped and `undefined` returned. */
 export function jobInput(sql: Sql, jobId: string): JobInput | undefined {
   const [job] = sql.all<Job>(`SELECT * FROM jobs WHERE id = ? AND (${CURRENT})`, jobId);
-  if (job?.kind === "index" || job?.kind === "doi" || job?.kind === "drift") {
+  if (job?.kind === "index" || job?.kind === "doi" || job?.kind === "drift" || job?.kind === "link") {
     const note = getNote(sql, job.noteId);
     if (note) return { job: { ...job, kind: job.kind }, note };
   }
@@ -231,9 +234,13 @@ export function nextWake(sql: Sql, now: number): number | null {
   const [held] = sql.all<{ at: number | null }>(
     "SELECT min(autoApplyAt) AS at FROM proposals WHERE status = 'open' AND autoApplyAt IS NOT NULL",
   );
-  const times = [row?.at, held?.at, nextLookup(sql, now), nextProfileCheck(sql, now)].filter(
-    (at) => typeof at === "number",
-  );
+  const times = [
+    row?.at,
+    held?.at,
+    nextLookup(sql, now),
+    nextProfileCheck(sql, now),
+    nextLinkCheck(sql, now),
+  ].filter((at) => typeof at === "number");
   return times.length > 0 ? Math.min(...times) : null;
 }
 

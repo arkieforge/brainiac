@@ -78,6 +78,16 @@ export {
   type NoteInput,
   type NoteRow,
 } from "./notes.ts";
+export {
+  EXCERPT,
+  HEALTH_MS,
+  installLink,
+  linkWork,
+  LINKS_ACTOR,
+  type LinkSeen,
+  type LinkWork,
+  type Snapshot,
+} from "./links.ts";
 export { DOI_ACTOR, installLookup, LOOKUP_MS, type Found } from "./papers.ts";
 export {
   CHECK_CACHE_MS,

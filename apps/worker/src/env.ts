@@ -33,6 +33,8 @@ export interface Env {
   GITHUB_APP_WEBHOOK_SECRET?: string;
   /** treg (docs/operations/services.md), for drift checks of the person's own profiles; off until it exists. */
   TREG_TOKEN?: string;
+  /** Browser Rendering, for a saved link's PDF snapshot (connectors/links.ts); a stage without it takes none. */
+  BROWSER?: BrowserRun;
   /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */
   EMAIL?: SendEmail;
   EMAIL_FROM?: string;
