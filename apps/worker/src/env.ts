@@ -5,6 +5,8 @@ export interface Env {
   ASSETS: Fetcher;
   BASE: DurableObjectNamespace<Base>;
   BLOBS: R2Bucket;
+  /** Wraps every record's data key (packages/base/src/vault.ts). A Secrets Store secret, made once per stage. */
+  VAULT_KEY: SecretsStoreSecret;
   JOBS: Queue<JobMessage>;
   /** Postgres (this stage's Neon branch) for accounts, billing and the base registry. */
   HYPERDRIVE: Hyperdrive;

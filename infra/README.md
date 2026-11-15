@@ -33,7 +33,9 @@ when you are done with a personal stage.
 | `NEON_PROJECT_ID`       | `brainiac-dev` in `dev`, `brainiac-prod` in `prd`                                                                                                                                                                                                                             |
 
 Auth settings are optional: each feature stays off until its values exist, so a stage deploys without them.
-The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state.
+The session secret isn't here; `alchemy.run.ts` generates one per stage and keeps it in Alchemy state. So does the
+vault key (`VAULT_KEY`), which it stores in the account's Cloudflare Secrets Store as `brainiac_vault_key_<stage>`;
+it wraps every record's data key, so replacing it leaves every sealed file and secret on that stage unreadable.
 
 | Secret                                       | Turns on                                                                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

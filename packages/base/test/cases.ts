@@ -24,6 +24,7 @@ import { approvalCases } from "./approval-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
+import { vaultCases } from "./vault-cases.ts";
 
 /** A connection without the sensitive scope, as every connection starts. */
 export const AGENT: Principal = { sensitive: false };
@@ -104,6 +105,7 @@ export const cases: Record<string, Case> = {
   ...approvalCases,
   ...connectionCases,
   ...privacyCases,
+  ...vaultCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);

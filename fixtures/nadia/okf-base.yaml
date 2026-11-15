@@ -57,6 +57,20 @@ types:
       expires: {kind: date}
       file: {kind: text, example: files/transcript-bsc.pdf}
       proves: {kind: list}
+  IdDocument:
+    version: 1
+    held: true
+    folder: identity
+    fields:
+      kind: {values: [passport, national-id, visa], required: true}
+      issuer: {kind: text, required: true, example: UTO}
+      number: {kind: text, example: "secret:passport.uto.3f2a9c1b07de"}
+      surname: {kind: text}
+      given_names: {kind: text}
+      nationality: {kind: text}
+      birth_date: {kind: date}
+      sex: {values: [M, F, X]}
+      expires: {kind: date}
   Person:
     version: 1
     folder: people

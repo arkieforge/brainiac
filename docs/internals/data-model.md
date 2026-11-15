@@ -36,21 +36,22 @@ inbox_leases { itemId, agent, expiresAt }                            // one file
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }
 jobs         { id, kind, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed
-files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion }
+files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion,
+               checks: clean | found | unreadable, findings JSON, kind?, confirmedAt?, noteId?, rev }   // sha256: an HMAC of the bytes under the data key; kind counts only once the person confirms it; rev: bumped by each confirmation
 chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }
 chunks_fts_normal, chunks_fts_sensitive  USING fts5(header, text)
 vectors      { chunkId PK, model, q BLOB }                          // int8, exact cosine in memory
 edges        { fromId, toId, rel }
 schema       { version, manifest TEXT }                             // the OKF manifest, not the SQL schema
 tokens       { id, connectionId, hash, expiresAt, revokedAt? }       // CLI tokens, brn_<base id>_<secret>, stored as a hash of the whole token; OAuth tokens resolve to a connection through their consent record, so refresh rotation keeps the grant
-secrets      { name PK, ciphertext, policy, domain }
+secrets      { name PK, ciphertext, policy, domain }                // ciphertext: sealed with the data key (meta.dataKey, itself wrapped by the stage's VAULT_KEY), base64
 audit        { id, at, actor, tool, noteIds, secretName?, approvalId? }
 ```
 
 ## R2
 
 ```
-blobs/{baseId}/{sha256}                     // originals; sensitive ones envelope-encrypted
+blobs/{baseId}/{sha256}                     // originals, every one sealed with the record's data key, under the file's keyed id
 blobs/{baseId}/derived/{sha256}/{variant}   // thumbnails, page images, rendered PDFs
 ```
 

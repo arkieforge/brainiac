@@ -65,6 +65,17 @@ export default Alchemy.Stack(
         caching: { disabled: true },
       });
 
+      // Wraps every record's data key (the vault, packages/base/src/vault.ts). Made once per stage and kept in
+      // Alchemy state; replacing it (a new value or a rename) leaves every record's sealed files and secrets
+      // unreadable, which is why prod's is protected below. The account has one Secrets Store, shared with other
+      // apps' secrets, so ours carry the stage in their name.
+      const secrets = yield* Cloudflare.SecretsStore.Store("secrets");
+      const vaultKey = yield* Cloudflare.SecretsStore.Secret("vault-key", {
+        store: secrets,
+        name: `brainiac_vault_key_${stage.replaceAll(/\W/g, "_")}`,
+        value: yield* Alchemy.makeRandom("vault-key-value"),
+      });
+
       // Signs sessions and encrypts the JWT keys. Made once per stage and kept in Alchemy state; replacing
       // it ends every session.
       const authSecret = yield* Alchemy.makeRandom("auth-secret");
@@ -122,6 +133,7 @@ export default Alchemy.Stack(
           // One Base Durable Object per person's record (SQLite storage).
           BASE: Cloudflare.DurableObject("Base"),
           BLOBS: blobs,
+          VAULT_KEY: vaultKey,
           JOBS: jobs,
           HYPERDRIVE: hyperdrive,
           BETTER_AUTH_SECRET: authSecret,
