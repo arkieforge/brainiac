@@ -1105,6 +1105,30 @@ export const toolCases: Record<string, Case> = {
     same(taken(call(sql, as(connection(sql, { sensitive: true })), "inbox", {})), [a, b]);
   },
 
+  "a background call's audit row says so, and a foreground one's on the same connection doesn't": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    // The daemon's headless run and the person's own session share one device connection, interleaved.
+    const device = connection(sql, { level: "write" });
+    const me = as(device);
+    const bg: ToolContext = { ...me, background: true };
+    call(sql, me, "get", { ids: [n.role] });
+    call(sql, bg, "inbox", {});
+    call(sql, me, "describe");
+    call(sql, bg, "update", { id: n.role, rev: 1, set: { org: "Injected" } });
+    same(
+      auditOf(sql, device.id).map((c) => [c.tool, c.background]),
+      [
+        ["update", true],
+        ["describe", false],
+        ["inbox", true],
+        ["get", false],
+      ],
+    );
+  },
+
   "a question a background run can't see still keeps the next run off its item": (sql, fixtures) => {
     record(sql, fixtures);
     const item = String(call(sql, PERSON_CTX, "add", { text: "Re-marked: which test?" })["id"]);

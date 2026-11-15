@@ -210,7 +210,7 @@ ${step === "none" ? "" : `<section><p>${PROMPTS[step]}</p><button type="button" 
 ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button type="button" class="quiet" id="add">Add another passkey</button>' : ""}</section>` : ""}
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
 ${githubSection}
-${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, and when it used your approval.</p></section>` : ""}
+${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, when it used your approval, and which calls background filing made with nobody there.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `if (new URLSearchParams(location.search).has("signed-out")) {
   document.getElementById("signed-out").hidden = false;
@@ -315,7 +315,8 @@ function describeNotes(call: AuditCall): string {
   const shown = paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "");
   return (
     (shown ? `: ${escape(shown)}` : "") +
-    (call.approvalId ? ' <span class="note">with your approval</span>' : "")
+    (call.approvalId ? ' <span class="note">with your approval</span>' : "") +
+    (call.background ? ' <span class="note">by background filing</span>' : "")
   );
 }
 

@@ -1276,6 +1276,7 @@ export function callTool(sql: Sql, name: string, args: unknown, ctx: ToolContext
       tool: name,
       noteIds: [...call.shown],
       ...(approvalId !== undefined && { approvalId }),
+      ...(ctx.background && { background: true }),
       at: ctx.now,
     });
     return ctx.offline ? offlineAnswer(answer, call, ctx.offline) : answer;

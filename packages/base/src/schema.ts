@@ -348,6 +348,9 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "ALTER TABLE files ADD COLUMN name TEXT",
     "CREATE UNIQUE INDEX files_path ON files (path)",
   ],
+  // Which calls a background run made (the daemon's headless filer), since it shares the device's connection
+  // with the person's own sessions. Rows from before say foreground.
+  ["ALTER TABLE audit ADD COLUMN background INTEGER NOT NULL DEFAULT 0"],
 ];
 
 /** The SQL schema version this code writes. */
