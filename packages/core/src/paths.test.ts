@@ -2,7 +2,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vite-plus/test";
 
 import { isUlid, ulid } from "./ids.ts";
-import { findClash, normalizePath, PathError, relationTo, resolveRelation } from "./paths.ts";
+import { findClash, normalizePath, PathError, relationTo, resolveFile, resolveRelation } from "./paths.ts";
 
 describe("paths", () => {
   it("treats NFC and NFD spellings and case differences as one name", () => {
@@ -27,6 +27,15 @@ describe("paths", () => {
     expect(resolveRelation("facts/tests/ielts-2026-11.md", "../../documents/trf.md")).toBe(
       "documents/trf.md",
     );
+  });
+
+  it("resolves a sidecar's file from the note, and never outside the record", () => {
+    expect(resolveFile("documents/transcript-bsc.md", "files/transcript-bsc.pdf")).toBe(
+      "documents/files/transcript-bsc.pdf",
+    );
+    for (const bad of ["/etc/passwd", "../../x.pdf", "files\\x.pdf", "https://example.org/x.pdf"]) {
+      expect(() => resolveFile("documents/a.md", bad), bad).toThrow(PathError);
+    }
   });
 
   it("writes the relation that resolves back to the target", () => {

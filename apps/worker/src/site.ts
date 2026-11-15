@@ -135,16 +135,20 @@ async function serveApi(
     const bytes = new Uint8Array(await request.arrayBuffer());
     if (bytes.byteLength > MAX_UPLOAD_BYTES) return tooLarge();
     if (bytes.byteLength === 0) return failed(400, "That file is empty.");
+    const name = fileName(request.headers.get(FILE_NAME));
     const uploaded = await record.upload(
       bytes,
-      { mime: MIME.test(mime) ? mime : "application/octet-stream" },
+      { mime: MIME.test(mime) ? mime : "application/octet-stream", ...(name !== undefined && { name }) },
       PERSON,
     );
     if ("status" in uploaded || "error" in uploaded) return refusal(uploaded);
     // The RPC stub's mapped type drops the success arm (its MutationResult holds `unknown` values), so it's read
     // as a plain object here.
     const answer: object = uploaded;
-    return json({ file: "file" in answer ? answer.file : undefined });
+    return json({
+      file: "file" in answer ? answer.file : undefined,
+      sidecar: "sidecar" in answer ? answer.sidecar : undefined,
+    });
   }
   const sha256 = file?.[1];
   if (!post || !file || sha256 === undefined || !SHA.test(sha256)) return failed(404, "Not found");
@@ -316,6 +320,19 @@ async function saveNote(
       409,
     );
   return failed(409, "This change is waiting for you as a proposal.");
+}
+
+/** The header an upload names its file in, URI-encoded so any name fits in a header. */
+const FILE_NAME = "x-file-name";
+
+/** The uploader's filename from its header, or `undefined` for none or one that isn't URI-encoded text. */
+function fileName(header: string | null): string | undefined {
+  if (header === null) return undefined;
+  try {
+    return decodeURIComponent(header);
+  } catch {
+    return undefined;
+  }
 }
 
 const tooLarge = () => failed(413, `Files can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`);

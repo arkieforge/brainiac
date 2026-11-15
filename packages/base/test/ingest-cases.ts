@@ -143,9 +143,10 @@ export const ingestCases: Record<string, Case> = {
     const other = uploadPdf(sql, key, `Passport\n${MRZ}`, via);
     equal(installFile(sql, key, fileJob(sql, other).id, text([`Passport\n${MRZ}`]), [], T0), "installed");
     same([getFile(sql, other)?.class, getFile(sql, other)?.noteId], ["vault", null]);
+    // The upload's sidecar note waits too, and so does the passport's.
     same(
       sql.all<{ actor: string }>("SELECT actor FROM proposals WHERE status = 'open'").map((p) => p.actor),
-      [via.actor],
+      [via.actor, via.actor],
     );
 
     const sha256 = uploadPdf(sql, key, MRZ, human);
@@ -171,7 +172,8 @@ export const ingestCases: Record<string, Case> = {
     sql.all("UPDATE files SET pipelineVersion = 0 WHERE sha256 = ?", other);
     reindex(sql);
     equal(installFile(sql, key, fileJob(sql, other).id, text([`Passport\n${MRZ}`]), [], T0), "installed");
-    equal(sql.all("SELECT id FROM proposals WHERE status = 'open'").length, 1);
+    // Its sidecar's proposal and its passport's, still the only two.
+    equal(sql.all("SELECT id FROM proposals WHERE status = 'open'").length, 2);
   },
 
   "a page that needs reading keeps the whole file unclassified": (sql, fixtures) => {
@@ -263,9 +265,15 @@ export const ingestCases: Record<string, Case> = {
     // A record whose index an older version built.
     sql.all("INSERT INTO meta (key, value) VALUES ('index', 'chunks-0')");
     equal(reindex(sql), true);
-    same(sql.all<{ kind: string; noteId: string }>("SELECT kind, noteId FROM jobs ORDER BY kind"), [
+    // The file's sidecar note is a note like any other.
+    const [sidecar] = sql.all<{ id: string }>("SELECT id FROM notes WHERE type = 'Document'");
+    ok(sidecar);
+    same(sql.all<{ kind: string; noteId: string }>("SELECT kind, noteId FROM jobs ORDER BY kind, noteId"), [
       { kind: "file", noteId: fileOwner(sha256) },
-      { kind: "index", noteId: created.noteId },
+      ...[
+        { kind: "index", noteId: created.noteId },
+        { kind: "index", noteId: sidecar.id },
+      ].toSorted((a, b) => a.noteId.localeCompare(b.noteId)),
     ]);
     same(sql.all("SELECT value FROM meta WHERE key = 'index'"), [{ value: INDEX_VERSION }]);
     equal(reindex(sql), false);

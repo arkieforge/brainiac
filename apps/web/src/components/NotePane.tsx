@@ -1,13 +1,28 @@
-import { parseNote } from "@brainiac/core";
+import { parseNote, pathKey, PathError, resolveFile } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 
 import { approvePlan } from "../approve.ts";
 import { fieldsOf } from "../fields.ts";
-import { OFFLINE_SENSITIVE, useRecord } from "../record.ts";
+import { OFFLINE_SENSITIVE, useRecord, type FileItem } from "../record.ts";
 import { ApproveButton, Plan } from "./Approval.tsx";
 import { BodyEditor } from "./BodyEditor.tsx";
 import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
+import { FileFacts, FileView, KindForm } from "./FilePane.tsx";
+import { fileLabel } from "./Files.tsx";
+
+/** The stored file a note's `file:` names, resolved from the note's own folder, as the record resolves it. */
+function fileOf(files: readonly FileItem[], path: string, file: unknown): FileItem | undefined {
+  if (typeof file !== "string") return undefined;
+  let key: string;
+  try {
+    key = pathKey(resolveFile(path, file));
+  } catch (error) {
+    if (error instanceof PathError) return undefined;
+    throw error;
+  }
+  return files.find((f) => f.path !== null && pathKey(f.path) === key);
+}
 
 /** Whether this note's edits have reached the record, and what to do about one that won't. */
 function SyncState({ client, noteId }: { readonly client: SyncClient; readonly noteId: string }) {
@@ -48,9 +63,9 @@ function SyncState({ client, noteId }: { readonly client: SyncClient; readonly n
   );
 }
 
-/** One note: its type and title, its fields beside its body, editable. */
+/** One note: its type and title, its fields beside its body (and its file, for a sidecar), editable. */
 export function NotePane({ noteId }: { readonly noteId: string }) {
-  const { client, manifest, status } = useRecord();
+  const { client, manifest, status, files } = useRecord();
   const raw = client?.working(noteId);
   const remote = client?.state.remote.get(noteId);
   if (!client || raw === undefined || !remote)
@@ -66,6 +81,7 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
   const title = typeof data["title"] === "string" ? data["title"] : remote.path;
   // A sensitive note's edits save online only (fields.ts, `savesOnline`), so offline it can only be read.
   const readOnly = remote.class === "sensitive" && status !== "live";
+  const file = fileOf(files, remote.path, data["file"]);
   return (
     <article className="note">
       <header className="pane-head">
@@ -77,16 +93,27 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
         {readOnly && <p className="sync-state warn">{OFFLINE_SENSITIVE}</p>}
         {data["type"] === "Profile" && <CheckProfiles />}
         <NoteDrift client={client} manifest={manifest} noteId={noteId} />
+        {file && (
+          <div className="file-facts">
+            <span className="small">{fileLabel(file)}</span> <FileFacts file={file} />
+          </div>
+        )}
       </header>
       <div className="note-grid">
-        <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />
-        <FieldForm
-          fields={fieldsOf(data, manifest)}
-          client={client}
-          noteId={noteId}
-          manifest={manifest}
-          disabled={readOnly}
-        />
+        <div className="note-main">
+          {file && <FileView file={file} />}
+          <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />
+        </div>
+        <div className="note-side">
+          {file && <KindForm key={file.sha256} file={file} />}
+          <FieldForm
+            fields={fieldsOf(data, manifest)}
+            client={client}
+            noteId={noteId}
+            manifest={manifest}
+            disabled={readOnly}
+          />
+        </div>
       </div>
     </article>
   );

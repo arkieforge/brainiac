@@ -206,6 +206,15 @@ input[aria-invalid="true"] {
   grid-template-columns: 1fr var(--meta);
   align-items: start;
 }
+.note-main {
+  min-width: 0;
+}
+.file-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .fields {
   border-left: 1px solid var(--border);
   padding: var(--gap);
@@ -556,6 +565,9 @@ kbd {
   .fields {
     border-left: 0;
     border-bottom: 1px solid var(--border);
+    order: -1;
+  }
+  .note-side {
     order: -1;
   }
   .item {

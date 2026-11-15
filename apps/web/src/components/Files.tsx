@@ -3,11 +3,15 @@ import { useState } from "react";
 
 import { api, refresh, type FileItem } from "../record.ts";
 
-/** A file's name in lists: what the person said it is, or that nobody has yet. */
+/** A file's name: the person's own, or what they said it is, or that nobody has yet. */
 export const fileLabel = (file: FileItem) =>
+  file.name ??
   `${file.confirmed && file.kind ? file.kind : "Unclassified"} ${file.mime.split("/")[1]?.toUpperCase() ?? "file"} ${file.sha256.slice(0, 6)}`;
 
-/** The record's uploads, and a way to add one. */
+/**
+ * A way to add a file, which opens its sidecar note, and the uploads from before files had one. Uploading one of
+ * those again gives it its note.
+ */
 export function Files({
   files,
   selected,
@@ -26,25 +30,31 @@ export function Files({
     try {
       const res = await api("/api/files", {
         method: "POST",
-        headers: { "content-type": file.type || "application/octet-stream" },
+        headers: {
+          "content-type": file.type || "application/octet-stream",
+          "x-file-name": encodeURIComponent(file.name),
+        },
         body: file,
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "The upload failed.");
       await refresh();
       onOpen();
-      await navigate({ to: "/files/$fileId", params: { fileId: body.file.sha256 } });
+      await (body.sidecar
+        ? navigate({ to: "/n/$noteId", params: { noteId: body.sidecar } })
+        : navigate({ to: "/files/$fileId", params: { fileId: body.file.sha256 } }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The upload failed.");
     } finally {
       setBusy(false);
     }
   };
+  const loose = files.filter((file) => file.path === null);
   return (
     <section className="files">
-      <h2>Files</h2>
+      {loose.length > 0 && <h2>Files without a note</h2>}
       <ul>
-        {files.map((file) => (
+        {loose.map((file) => (
           <li key={file.sha256}>
             <Link
               to="/files/$fileId"

@@ -39,10 +39,25 @@ export function isRelationPath(value: string): boolean {
  */
 export function resolveRelation(from: string, relation: string): string {
   if (!isRelationPath(relation)) throw new PathError(`Not a relation: ${relation}`);
+  return resolveFrom(from, relation);
+}
+
+/**
+ * The record path of the file a sidecar note names (`file: files/transcript-bsc.pdf` in `documents/`), resolved
+ * relative to the note like a relation. The cloud finds the stored file by this path and a laptop copy writes it
+ * there, so both name the same file.
+ */
+export function resolveFile(from: string, file: string): string {
+  if (file.startsWith("/") || file.includes("\\") || file.includes("://"))
+    throw new PathError(`Not a file path: ${file}`);
+  return resolveFrom(from, file);
+}
+
+function resolveFrom(from: string, relative: string): string {
   const parts = normalizePath(from).split("/").slice(0, -1);
-  for (const segment of relation.normalize("NFC").split("/")) {
+  for (const segment of relative.normalize("NFC").split("/")) {
     if (segment === "..") {
-      if (parts.pop() === undefined) throw new PathError(`${relation} from ${from} leaves the record.`);
+      if (parts.pop() === undefined) throw new PathError(`${relative} from ${from} leaves the record.`);
     } else if (segment !== "." && segment !== "") {
       parts.push(segment);
     }

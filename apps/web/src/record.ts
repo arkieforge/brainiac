@@ -28,6 +28,10 @@ export interface FileItem {
   readonly checks: "clean" | "found" | "unreadable";
   readonly findings: readonly string[];
   readonly confirmed: boolean;
+  /** Where it sits in the record, which its sidecar note's `file:` resolves to; null for an upload from before. */
+  readonly path: string | null;
+  /** The person's own name for it. */
+  readonly name: string | null;
 }
 
 const LAST_USER = "brainiac:user";
