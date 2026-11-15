@@ -72,6 +72,11 @@ describe("scan", () => {
       expect(scan(labelled), labelled).toEqual(["iban"]);
     // One digit off fails mod 97: a reference number, not an account.
     expect(scan("Ref GB29NWBK60161331926818")).toEqual([]);
+    // Unless OCR read it: one misread digit mustn't clear a photographed bank statement.
+    expect(scan("Ref GB29NWBK60161331926818", "ocr")).toEqual(["iban"]);
+    expect(scan("IBAN: DE89 3704 0044 0532 0130 01", "ocr")).toEqual(["iban"]);
+    // The shape still has to hold: the country's length, or a course code is nothing.
+    expect(scan("Course CSE2023 Data Structures, GB29 NWBK", "ocr")).toEqual([]);
   });
 
   it("finds labelled identity and account numbers", () => {
@@ -202,6 +207,8 @@ describe("parsePassport", () => {
     expect(parsePassport([MRZ[0], `XK12345689${MRZ[1]?.slice(10)}`].join("\n"), NOW)).toBeUndefined();
     // The composite check catches a change the field checks don't cover.
     expect(parsePassport([MRZ[0], `${MRZ[1]?.slice(0, 43)}5`].join("\n"), NOW)).toBeUndefined();
+    // No check digit covers the nationality: an OCR's `0` for `O` would pass them all.
+    expect(parsePassport([MRZ[0], MRZ[1]?.replace("UTO", "UT0")].join("\n"), NOW)).toBeUndefined();
   });
 
   it("puts a two-digit birth year ahead of today in the last century, and takes an empty filler check", () => {

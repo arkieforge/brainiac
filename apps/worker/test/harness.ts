@@ -28,6 +28,7 @@ import { linkedinOutput, treg } from "./treg.ts";
 
 export class TestBase extends Base {
   readonly #waiting: ((result: "installed" | "dropped") => void)[] = [];
+  readonly #files: ((result: "installed" | "dropped") => void)[] = [];
   readonly #lookups: ((result: "installed" | "dropped") => void)[] = [];
   readonly #profiles: ((result: "installed" | "dropped") => void)[] = [];
   readonly #links: ((result: "installed" | "dropped") => void)[] = [];
@@ -213,7 +214,7 @@ export class TestBase extends Base {
 
   override async installFile(...args: Parameters<Base["installFile"]>): Promise<"installed" | "dropped"> {
     const result = await super.installFile(...args);
-    for (const resolve of this.#waiting.splice(0)) resolve(result);
+    for (const resolve of [...this.#waiting.splice(0), ...this.#files.splice(0)]) resolve(result);
     return result;
   }
 
@@ -255,6 +256,11 @@ export class TestBase extends Base {
     return this.sql
       .all<{ model: string }>("SELECT model FROM vectors ORDER BY chunkId")
       .map((row) => row.model);
+  }
+
+  /** Resolves when the queue consumer next hands a file job's result back, not a note's. Call it before dispatching. */
+  nextFileInstall(): Promise<"installed" | "dropped"> {
+    return new Promise((resolve) => this.#files.push(resolve));
   }
 
   /** Resolves when the queue consumer next hands a job's result back. Call it before dispatching. */
@@ -303,12 +309,18 @@ const fakeSiteSession =
 
 /**
  * Stands in for Workers AI. `toMarkdown` reads a test "PDF" (`%PDF-` then pages split by form feeds) as the real
- * one prints a text layer, and embeddings are a few numbers from the text, the same for the same text.
+ * one prints a text layer, and embeddings are a few numbers from the text, the same for the same text. A real PDF
+ * (fixtures/scans) it reads one page per page object: one line standing for its text if it has fonts, blank if it
+ * has none (a scan). The tests that upload one check what OCR made of its images, not its text layer.
  */
 const models = {
   async toMarkdown(file: MarkdownDocument): Promise<ConversionResponse> {
-    const text = new TextDecoder().decode(await file.blob.arrayBuffer());
-    const pages = text.slice("%PDF-".length).split("\f");
+    const bytes = await file.blob.arrayBuffer();
+    const text = new TextDecoder().decode(bytes);
+    const syntax = new TextDecoder("latin1").decode(bytes);
+    const real = syntax.match(/\/Type\s*\/Page(?![s\w])/g);
+    const layer = /\/Font\b/.test(syntax) ? "Northvale University transcript" : "";
+    const pages = real ? real.map(() => layer) : text.slice("%PDF-".length).split("\f");
     const data = `# ${file.name}\n## Contents\n${pages.map((p, i) => `### Page ${i + 1}\n${p}\n\n`).join("")}`;
     return { id: "1", name: file.name, mimeType: "application/pdf", format: "markdown", tokens: 1, data };
   },

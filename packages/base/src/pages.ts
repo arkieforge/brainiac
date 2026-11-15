@@ -1,5 +1,6 @@
-// A file's text by page, for the vault's checks and for search. Extraction is Workers AI `toMarkdown`, in the
-// jobs consumer; what it returns, and whether it can be all the file says, is judged here.
+// A file's text by page, for the vault's checks and for search. Extraction is Workers AI `toMarkdown` for a PDF's
+// text layer, in the jobs consumer, and OCR (apps/ocr) for photos and a PDF's JPEG images, whose text only the
+// checks and the MRZ parse read; what they return, and whether it can be all the file says, is judged here.
 import { inflateSync } from "node:zlib";
 
 /**
@@ -7,16 +8,30 @@ import { inflateSync } from "node:zlib";
  * when extraction reads more than it did (OCR for scans, say), so files it couldn't read get another look, and
  * when `pdfHidesText` or `needsReading` gets stricter, so files they cleared are judged again.
  */
-export const PIPELINE = 1;
+export const PIPELINE = 2;
 
 /** A MIME type without its parameters, lower case: `text/plain; charset=utf-8` is `text/plain`. */
 export const mediaType = (mime: string) => mime.split(";")[0]?.trim().toLowerCase() ?? "";
 
+/** Photos and scans OCR reads (through Cloudflare Images, which decodes each of these). */
+const IMAGES: ReadonlySet<string> = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
+]);
+
 /**
- * Whether `toMarkdown` reads a type as text: only a PDF, by its text layer. An image comes back described, not
- * transcribed, so its text is never all of it.
+ * Whether OCR reads a type: a photo or a scan. Its text goes to the checks and the MRZ parse, so what they find
+ * keeps it in the vault, but it never counts as all the image says: OCR vouches only for text it can lay out, and
+ * a tilted, faint or blurred corner beside it goes unseen. So a photo is never cleared by the checks.
  */
-export const extracts = (mime: string) => mediaType(mime) === "application/pdf";
+export const isImage = (mime: string) => IMAGES.has(mediaType(mime));
+
+/** Whether a `file` job extracts a type's text: a PDF (its text layer, and OCR of its JPEGs) or a photo. */
+export const extracts = (mime: string) => mediaType(mime) === "application/pdf" || isImage(mime);
 
 /**
  * A PDF's pages from `toMarkdown`'s output (`## Contents`, then `### Page 1`, `### Page 2`, ...), or `undefined`
@@ -132,8 +147,8 @@ const inlineImage = (text: string) => {
 interface Lexed {
   /** Literal strings, hex strings and comments blanked out, and stream data left out. */
   readonly syntax: string;
-  /** Each stream's data, as offsets into the text. */
-  readonly streams: readonly (readonly [number, number])[];
+  /** Each stream's data, as offsets into the text, and where its `stream` keyword is. */
+  readonly streams: readonly (readonly [start: number, end: number, keyword: number])[];
   /** `%%EOF` markers: one per revision (two in a linearized file). */
   readonly eofs: number;
   /**
@@ -157,7 +172,7 @@ interface Lexed {
  */
 function lex(text: string, streams: boolean): Lexed {
   const parts: string[] = [];
-  const found: [number, number][] = [];
+  const found: [number, number, number][] = [];
   let eofs = 0;
   let from = 0;
   let unclosed = false;
@@ -198,7 +213,7 @@ function lex(text: string, streams: boolean): Lexed {
       const start = i + 6 + eol;
       const end = eol === 0 ? -1 : text.indexOf("endstream", start);
       if (end === -1) return { syntax: "", streams: found, eofs, lost: true, unclosed };
-      found.push([start, end]);
+      found.push([start, end, i]);
       i = skip(i, end + "endstream".length);
     }
   }
@@ -254,7 +269,7 @@ function names(text: string): boolean {
  * PDF. A file crafted to slip past it can only hide what its maker already knew, so it stops at what writers do
  * and doesn't decode everything a reader could: a predictor (writers put one on xref streams and images) is left
  * encoded.
- * shortcut: text drawn as vector outlines, and XMP metadata, aren't read; reading what this flags is #103.
+ * shortcut: text drawn as vector outlines, and XMP metadata, aren't read.
  */
 export function pdfHidesText(bytes: Uint8Array): boolean {
   let budget = INFLATED_MAX;
@@ -293,4 +308,31 @@ export function pdfHidesText(bytes: Uint8Array): boolean {
   const first = /\d+\s+\d+\s+obj\s*<<([\s\S]*?)>>/.exec(syntax)?.[1] ?? "";
   if (eofs > (/\/Linearized\b/.test(unescaped(first)) ? 2 : 1)) return true;
   return streams.some(([start, end]) => hides(bytes.subarray(start, end), 3));
+}
+
+// A passport's page, an ID card's two sides: more than a few JPEGs would hold a batch's other jobs behind OCR (one
+// at a time, a second or more each), and only the first are read.
+const MAX_JPEGS = 4;
+
+/**
+ * The JPEG images a PDF holds (a scan's pages, a photo), for OCR to look for what the checks find: a passport's
+ * MRZ, an account number. Only finding: a PDF with any image stays unread whatever OCR makes of it
+ * (`pdfHidesText`), so this needn't account for every image, only hand over what it easily can.
+ */
+export function pdfJpegs(bytes: Uint8Array): Uint8Array[] {
+  const raw = latin1(bytes);
+  const jpegs: Uint8Array[] = [];
+  for (const [start, end, keyword] of lex(raw, true).streams) {
+    const object = raw.lastIndexOf("obj", keyword);
+    const dictionary = object === -1 ? "" : unescaped(lex(raw.slice(object + 3, keyword), false).syntax);
+    if (!/\/Filter\s*(?:\/DCTDecode|\[\s*\/DCTDecode\s*\])/.test(dictionary)) continue;
+    // Without the line break a writer puts before `endstream`.
+    let last = end;
+    if (last > start && bytes[last - 1] === 0x0a) last--;
+    if (last > start && bytes[last - 1] === 0x0d) last--;
+    // A copy, not a view (a Buffer's `slice` is one too): RPC sends a view's whole buffer, which is the whole PDF.
+    jpegs.push(new Uint8Array(bytes.subarray(start, last)));
+    if (jpegs.length === MAX_JPEGS) break;
+  }
+  return jpegs;
 }

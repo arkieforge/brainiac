@@ -23,7 +23,7 @@ import { canSee, connectionOf, type Connection } from "./connections.ts";
 import { enqueue, finishJob } from "./jobs.ts";
 import { getNote } from "./notes.ts";
 import { mutate, type Context, type Forbidden, type MutationResult } from "./mutate.ts";
-import { extracts, mediaType, needsReading, PIPELINE } from "./pages.ts";
+import { extracts, isImage, mediaType, needsReading, PIPELINE } from "./pages.ts";
 import { chunkFile, fileOwner, putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
@@ -153,8 +153,8 @@ const hexWord = (token: string) =>
  * All of a file's text, or `undefined` when the checks can't be sure they read all of it: anything but plain
  * text, markdown or CSV, and in those, bytes that aren't UTF-8 or carry a PDF header, markup, character
  * references or a long encoded run (base64 or hex can hide a whole scan).
- * A PDF reads as `undefined` here and gets its text from a `file` job (`installFile`); anything else stays
- * unclassified, which is safe and means it can't be cleared.
+ * A PDF or a photo reads as `undefined` here and gets its text from a `file` job (`installFile`); anything else
+ * stays unclassified, which is safe and means it can't be cleared.
  */
 export function readText(bytes: Uint8Array, mime: string): string | undefined {
   if (!PLAIN.has(mediaType(mime)) || bytes.includes(0)) return undefined;
@@ -539,11 +539,11 @@ function writePassport(
     "kind: passport",
     `issuer: ${JSON.stringify(passport.issuer)}`,
     `number: ${JSON.stringify(`secret:${name}`)}`,
-    `surname: ${JSON.stringify(passport.surname)}`,
-    `given_names: ${JSON.stringify(passport.givenNames)}`,
-    `nationality: ${JSON.stringify(passport.nationality)}`,
+    ...(passport.surname === "" ? [] : [`surname: ${JSON.stringify(passport.surname)}`]),
+    ...(passport.givenNames === "" ? [] : [`given_names: ${JSON.stringify(passport.givenNames)}`]),
+    ...(passport.nationality === "" ? [] : [`nationality: ${JSON.stringify(passport.nationality)}`]),
     `birth_date: ${passport.birthDate}`,
-    `sex: ${passport.sex}`,
+    ...(passport.sex === "" ? [] : [`sex: ${passport.sex}`]),
     `expires: ${passport.expires}`,
     "---",
     "",
@@ -777,6 +777,46 @@ export const mayClear = (file: FileRow): boolean =>
 export interface Extracted {
   readonly text: string | undefined;
   readonly pages: readonly string[] | undefined;
+  /**
+   * What OCR read in each of the file's images (a photo, a scan's JPEGs): for the checks and the MRZ parse only,
+   * never for search or an agent, so no page holds it. It never makes a file read: OCR can't vouch it saw all an
+   * image says.
+   */
+  readonly ocr?: readonly OcrReading[];
+}
+
+/**
+ * What OCR read in one image: all its text, and its printed zone, the lines above where the MRZ starts, which alone
+ * can confirm what the MRZ says that no check digit covers (none when the MRZ wasn't found or there may be two
+ * passports: apps/ocr's `printedZone`).
+ */
+export interface OcrReading {
+  readonly text: string;
+  readonly printed: string;
+}
+
+/**
+ * The passport in one image OCR read, keeping only what that image's printed zone says too: no check digit covers
+ * a name, a country code or the sex, and OCR can misread one (`KARIN` for `KARIM`, `AUS` for `RUS`). Names and a
+ * nationality it can't confirm, and the sex (one letter, which nothing confirms), are left for the person to fill
+ * in; an issuer it can't confirm (the note's title and path) writes no note at all, and the file stays in the vault
+ * for what its MRZ was found to be.
+ */
+function corroborated(image: OcrReading, now: number): Passport | undefined {
+  const passport = parsePassport(image.text, now);
+  if (!passport) return undefined;
+  const printed = new Set(image.printed.toUpperCase().split(/[^A-Z]+/));
+  // A one-letter value (Germany's `D`, a sex) is confirmed by any stray letter, so it never is.
+  const seen = (words: string) => words.split(" ").every((word) => word.length > 1 && printed.has(word));
+  if (!seen(passport.issuer)) return undefined;
+  const named = seen(passport.surname) && seen(passport.givenNames);
+  return {
+    ...passport,
+    surname: named ? passport.surname : "",
+    givenNames: named ? passport.givenNames : "",
+    nationality: seen(passport.nationality) ? passport.nationality : "",
+    sex: "",
+  };
 }
 
 /**
@@ -796,13 +836,17 @@ export function installFile(
   return finishJob(sql, jobId, (job) => {
     const file = getFile(sql, job.noteId.slice("file:".length));
     if (!file) return;
-    const { text, pages } = extracted;
-    const passport = text === undefined ? undefined : parsePassport(text, now);
+    const { text, pages, ocr } = extracted;
+    const passport =
+      (text === undefined ? undefined : parsePassport(text, now)) ??
+      // From OCR, each image's passport is confirmed against that image alone.
+      ocr?.reduce<Passport | undefined>((found, image) => found ?? corroborated(image, now), undefined);
     const findings = [
       ...new Set<Finding>([
         ...(JSON.parse(file.findings) as Finding[]),
         ...(passport ? (["mrz"] as const) : []),
         ...(text === undefined ? [] : scan(text)),
+        ...(ocr ?? []).flatMap((image) => scan(image.text, "ocr")),
       ]),
     ];
     // Plain text is read whole by `readText`; only an extraction's pages can come back short. Pages that aren't cut
@@ -811,7 +855,9 @@ export function installFile(
       text === undefined ||
       pages === undefined ||
       !pages.every((page) => text.includes(page)) ||
-      // A blank page among others is read; a PDF with no text at all (every page outlines, say) isn't.
+      // A photo is never all read (`isImage`). A blank page among others is read; a PDF with no text at all (every
+      // page outlines, or a scan) isn't.
+      isImage(file.mime) ||
       (extracts(file.mime) && (pages.some(needsReading) || pages.every((page) => page.trim() === "")));
     const checks: Checks =
       findings.length > 0

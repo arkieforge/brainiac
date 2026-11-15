@@ -166,6 +166,9 @@ overrides:
   miniflare>sharp: 0.35.5
   miniflare>undici: 7.30.1
 
+patchedDependencies:
+  tesseract-wasm@0.11.0: cd4a091aea0176c3bcb11d22cb8ea6733c7454660a3369c112f11e4f69d94959
+
 importers:
 
   .:
@@ -230,6 +233,22 @@ importers:
         version: 1.4.4
 
   apps/marketing: {}
+
+  apps/ocr:
+    dependencies:
+      fast-png:
+        specifier: 8.0.0
+        version: 8.0.0
+      tesseract-wasm:
+        specifier: 0.11.0
+        version: 0.11.0(patch_hash=cd4a091aea0176c3bcb11d22cb8ea6733c7454660a3369c112f11e4f69d94959)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20261114.1
+        version: 5.20261114.1
+      miniflare:
+        specifier: 4.20260730.0
+        version: 4.20260730.0(@types/node@24.19.2)
 
   apps/web:
     dependencies:
@@ -3386,6 +3405,9 @@ packages:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
+  comlink@4.4.2:
+    resolution: {integrity: sha512-OxGdvBmJuNKSCMO4NTl1L47VRp6xn2wG4F/2hYzB6tiCb709otOxtEYCSvK80PtjODfXXZu8ds+Nw5kVCjqd2g==}
+
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
 
@@ -3515,6 +3537,9 @@ packages:
     resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
     engines: {node: '>=12.17.0'}
 
+  fast-png@8.0.0:
+    resolution: {integrity: sha512-gCysNasJ8KEMgfdYIKd/wTDo6ENK1PWT0RJO7O+0pgmuHPw2O6tA1WvdxFRJoLf9V8yFYpG0FA1YgI8X97OhJA==}
+
   fd-package-json@2.0.0:
     resolution: {integrity: sha512-jKmm9YtsNXN789RS/0mSzOC1NUq9mkVd65vbSSVsKdjGvYXBuE4oWe2QOEoFeRmJg+lPuZxpmrfFclNhoRMneQ==}
 
@@ -3603,6 +3628,9 @@ packages:
 
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
+
+  iobuffer@6.0.1:
+    resolution: {integrity: sha512-SZWYkWNfjIXIBYSDpXDYIgshqtbOPsi4lviawAEceR1Kqk+sHDlcQjWrzNQsii80AyBY0q5c8HCTNjqo74ul+Q==}
 
   is-alphabetical@2.0.1:
     resolution: {integrity: sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==}
@@ -4367,6 +4395,9 @@ packages:
   tapable@2.3.4:
     resolution: {integrity: sha512-NHFiWnAbMJxNNpBwiO7jJVGDuqMxT9/oV8v57RR+fgBQShkJil5inGD8/xWy0hjLyHQyX1tu27QANhlz3KBqCg==}
     engines: {node: '>=6'}
+
+  tesseract-wasm@0.11.0:
+    resolution: {integrity: sha512-a6TTRXTRKL6/zVa7lijMWEglLipqY10n7kG9QWr7rckknHkox+5PAzLbSluk+MfpbLgeXm6uoDI9ytezmJJr7Q==}
 
   tinybench@6.2.3:
     resolution: {integrity: sha512-Al01C2JIBnO2CXCAPbpAl6sUiOZHeThGtHYNTa51JRw9PyWOCdr+9Ong05R4qg/Sk3+H645E8ov1h2c58ityNw==}
@@ -7040,6 +7071,8 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
+  comlink@4.4.2: {}
+
   comma-separated-tokens@2.0.3: {}
 
   commander@15.1.0: {}
@@ -7155,6 +7188,11 @@ snapshots:
     dependencies:
       pure-rand: 8.4.2
 
+  fast-png@8.0.0:
+    dependencies:
+      fflate: 0.8.3
+      iobuffer: 6.0.1
+
   fd-package-json@2.0.0:
     dependencies:
       walk-up-path: 4.0.0
@@ -7248,6 +7286,8 @@ snapshots:
   inherits@2.0.4: {}
 
   inline-style-parser@0.2.7: {}
+
+  iobuffer@6.0.1: {}
 
   is-alphabetical@2.0.1: {}
 
@@ -8286,6 +8326,10 @@ snapshots:
   tailwindcss@4.3.5: {}
 
   tapable@2.3.4: {}
+
+  tesseract-wasm@0.11.0(patch_hash=cd4a091aea0176c3bcb11d22cb8ea6733c7454660a3369c112f11e4f69d94959):
+    dependencies:
+      comlink: 4.4.2
 
   tinybench@6.2.3: {}
 
