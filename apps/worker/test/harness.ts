@@ -1,6 +1,19 @@
 // The real Base DO and jobs consumer, loaded into workerd by base.test.ts. TestBase adds what a test needs to
 // see and steer: reads, a crash, and running the dispatcher when the test says rather than when it fires.
-import { dataKey, getNote, search, unseal, type ChunkInput, type Job, type Principal } from "@brainiac/base";
+import {
+  dataKey,
+  getNote,
+  mutate,
+  oauthConnection,
+  recordApproval,
+  search,
+  unseal,
+  type ChunkInput,
+  type Connection,
+  type Job,
+  type NoteClass,
+  type Principal,
+} from "@brainiac/base";
 
 import { ACTOR_HEADER, Base } from "../src/base.ts";
 import type { Env } from "../src/env.ts";
@@ -59,6 +72,44 @@ export class TestBase extends Base {
 
   rev(noteId: string): number | null {
     return getNote(this.sql, noteId)?.rev ?? null;
+  }
+
+  /**
+   * Loads notes as the person made them, ids in order. A verified one is approved as if the person signed: real
+   * signatures are tested in approvals.test.ts.
+   */
+  seed(
+    notes: readonly { readonly path: string; readonly raw: string; readonly class: NoteClass }[],
+  ): string[] {
+    const ctx = { actor: "human", now: Date.now() };
+    return notes.map((note) => {
+      const mutation = { op: "create", ...note } as const;
+      let result = mutate(this.sql, mutation, ctx);
+      if (result.status === "needsApproval") {
+        const signed = { credentialId: "test-passkey", counter: 0, assertion: "{}" };
+        const approved = recordApproval(this.sql, result.items, signed, ctx.now);
+        if ("error" in approved) throw new Error(approved.error);
+        result = mutate(this.sql, mutation, { ...ctx, approvalId: approved.approvalId });
+      }
+      if (result.status !== "applied") throw new Error(JSON.stringify(result));
+      return result.noteId;
+    });
+  }
+
+  /** An MCP client's connection, if it has one. */
+  connectionFor(oauthClientId: string): Connection | null {
+    return oauthConnection(this.sql, oauthClientId) ?? null;
+  }
+
+  /** Sets a connection's grants as if the person signed them (grants are tested in connections.test.ts). */
+  setGrants(connectionId: string, grants: Pick<Connection, "level" | "sensitive" | "holdDays">): void {
+    this.sql.all(
+      "UPDATE connections SET level = ?, sensitive = ?, holdDays = ?, rev = rev + 1 WHERE id = ?",
+      grants.level,
+      grants.sensitive ? 1 : 0,
+      grants.holdDays,
+      connectionId,
+    );
   }
 
   /** Gives the record a manifest, as onboarding does. */

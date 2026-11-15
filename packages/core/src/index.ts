@@ -25,4 +25,11 @@ export {
   relationTo,
   resolveRelation,
 } from "./paths.ts";
-export { ManifestError, parseManifest, validate, type Issue, type Manifest } from "./schema.ts";
+export {
+  BUILT_IN_TYPES,
+  ManifestError,
+  parseManifest,
+  validate,
+  type Issue,
+  type Manifest,
+} from "./schema.ts";

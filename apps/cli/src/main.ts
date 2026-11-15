@@ -10,11 +10,13 @@ import { doctor, lockVault, request, restore, watchRequests } from "./commands.t
 import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
 import { Daemon } from "./daemon.ts";
 import { socketLink } from "./link.ts";
+import { serveStdio } from "./mcp.ts";
 import { service } from "./service.ts";
 
 const USAGE = `brainiac daemon run [--vault <dir>] [--server <url>] [--repair]
 brainiac daemon install [--vault <dir>] [--server <url>]
 brainiac daemon uninstall
+brainiac mcp serve [--server <url>]
 brainiac resume [--undo]
 brainiac repair
 brainiac restore <file> [<version>]
@@ -121,6 +123,22 @@ async function main(argv: readonly string[]): Promise<void> {
     for (const step of stop) spawnSync(step[0]!, step.slice(1), { stdio: "inherit" });
     rmSync(path, { force: true });
     console.log(`Removed ${path}.`);
+    return;
+  }
+  if (command === "mcp" && sub === "serve") {
+    // stdout carries the protocol, so nothing else may print there.
+    if (!config.server || !config.token)
+      fail("brainiac mcp serve needs --server <url> once and this device's token in BRAINIAC_TOKEN.");
+    try {
+      await serveStdio({
+        server: config.server,
+        token: config.token,
+        input: process.stdin,
+        write: (line) => process.stdout.write(`${line}\n`),
+      });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
     return;
   }
   if (!vault)

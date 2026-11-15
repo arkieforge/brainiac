@@ -1,5 +1,6 @@
 import {
   authenticate,
+  callTool,
   canSee,
   changesSince,
   classifyFile,
@@ -23,6 +24,7 @@ import {
   grantHash,
   listNotes,
   mintToken,
+  oauthConnection,
   PERSON,
   principalOf,
   releaseDue,
@@ -48,6 +50,7 @@ import {
   schemaVersion,
   serve,
   undoRun,
+  type Answer,
   type Approved,
   type ChunkInput,
   type Connection,
@@ -167,6 +170,34 @@ export class Base extends DurableObject<Env> {
     return listNotes(this.sql).filter((note) => canSee(ctx.connection, note));
   }
 
+  /**
+   * One MCP tool call, as the connection it comes through: an MCP client's, found by its OAuth client id (and
+   * connected at the floor on its first call), or the CLI connection whose token the Worker checked here. Which
+   * record answers is the Worker's choice from the token; nothing in the call names one.
+   */
+  tool(
+    via: { readonly oauthClientId: string } | { readonly connectionId: string },
+    name: string,
+    args: unknown,
+  ): Answer {
+    const now = Date.now();
+    const connection =
+      "oauthClientId" in via
+        ? connect(this.sql, { kind: "oauth", oauthClientId: via.oauthClientId }, now)
+        : getConnection(this.sql, via.connectionId);
+    if (!connection) return { ok: false, error: "This connection was disconnected." };
+    const before = currentSeq(this.sql);
+    const answer = callTool(this.sql, name, args, { actor: `connection:${connection.id}`, connection, now });
+    this.changed(before);
+    return answer;
+  }
+
+  /** Ends an MCP client's connection when the person disconnects the app, so it can't come back with its grants. */
+  disconnectApp(oauthClientId: string): void {
+    const connection = oauthConnection(this.sql, oauthClientId);
+    if (connection) this.disconnect(connection.id);
+  }
+
   /** Keyword search over the families the caller may see. */
   search(text: string, caller: Caller): string[] | Forbidden {
     const ctx = this.context(caller);
@@ -192,7 +223,7 @@ export class Base extends DurableObject<Env> {
 
   // Connections. Only the site's session route may call these, for the record's owner; the Worker routes a CLI
   // token to its record by the id inside it (`tokenBase`), and `authenticate` decides whether it is good.
-  // shortcut: no route calls them yet; /sync and /mcp resolve their connections with #17.
+  // shortcut: no route calls them yet but /mcp's `authenticate`; /sync and `brainiac login` arrive with #87.
 
   /** A new connection at the floor (propose, no sensitive notes, a 3-day hold), or an MCP client's existing one. */
   // Not `connect`: a Durable Object's `connect` is its TCP socket handler.

@@ -61,6 +61,14 @@ describe("validate", () => {
     }
   });
 
+  it("knows the built-in inbox type without the manifest declaring it", () => {
+    const item = { id: valid.id, type: "InboxItem", url: "https://example.org", attached_to: "../a.md" };
+    expect(validate(manifest, item)).toEqual([]);
+    expect(validate(manifest, { ...item, attached_to: "/etc/passwd" }).map((i) => i.field)).toEqual([
+      "attached_to",
+    ]);
+  });
+
   it("lists the declared types when the type is unknown", () => {
     expect(validate(manifest, { ...valid, type: "Trip" })).toEqual([
       { field: "type", message: 'type must be "Fact" or "TestScore" (was "Trip"). Example: type: TestScore' },

@@ -102,6 +102,9 @@ describe("dev sign-in", () => {
 const mint = (config: AuthConfig, authorization: string) =>
   serveDev(new Request(`${ORIGIN}/dev/token`, { method: "POST", headers: { authorization } }), config, TOKEN);
 
+// initialize calls no tool, so the record is never asked anything.
+const unused = () => Promise.reject(new Error("initialize reaches no record"));
+
 describe("dev token", () => {
   it("mints an access token that /mcp accepts, and nothing without the dev token", async () => {
     const { config, auth } = setup();
@@ -113,27 +116,33 @@ describe("dev token", () => {
     const body: unknown = await res.json();
     const accessToken =
       body && typeof body === "object" && "access_token" in body ? String(body.access_token) : "";
-    const initialize = await serveMcp(
-      auth,
-      new Request(`${ORIGIN}/mcp`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${accessToken}`,
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            clientInfo: { name: "test", version: "1" },
+    const records = { of: () => ({ tool: unused, authenticate: unused }), byId: () => undefined };
+    const initialize = (devTokens: boolean) =>
+      serveMcp(
+        auth,
+        new Request(`${ORIGIN}/mcp`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
           },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "test", version: "1" },
+            },
+          }),
         }),
-      }),
-    );
-    expect(initialize.status).toBe(200);
+        records,
+        { devTokens },
+      );
+    expect((await initialize(true)).status).toBe(200);
+    // No consent stands behind a dev token, so where dev tokens aren't taken (prod) it is refused.
+    expect((await initialize(false)).status).toBe(401);
   });
 });

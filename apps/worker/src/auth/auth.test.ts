@@ -1,9 +1,22 @@
+import { spawn } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+
+import { TOOLS } from "@brainiac/base";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Miniflare } from "miniflare";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serveMcp } from "../mcp/handler.ts";
-import { ACCESS_TOKEN_SECONDS, createAuth } from "./config.ts";
+import { bundleWorker } from "../../../../scripts/bundle-worker.ts";
+import type { TestBase } from "../../test/harness.ts";
+import { serveMcp, type Records } from "../mcp/handler.ts";
+import { createAuth } from "./config.ts";
 import { consent } from "./consent.ts";
 import { nextPasskeyStep } from "./pages.ts";
 import { type ApprovingPasskey, canApprove, RECOVERY_WAIT_MS, SIGN_UP_MS, VOUCH_MS } from "./recovery.ts";
@@ -26,7 +39,13 @@ let devices = 0;
 
 type Mail = { to: string; subject: string; text: string };
 
-function setup({ noticesFail = false } = {}) {
+function setup({
+  noticesFail = false,
+  onDisconnect,
+}: {
+  noticesFail?: boolean;
+  onDisconnect?: (userId: string, clientId: string) => Promise<void>;
+} = {}) {
   const mail: Mail[] = [];
   /** Flip `down` to make every database call fail, like Neon being unreachable. */
   const neon = { down: false };
@@ -73,6 +92,7 @@ function setup({ noticesFail = false } = {}) {
       if (noticesFail && message.subject.includes("passkey")) throw new Error("mail is down");
       mail.push(message);
     },
+    onDisconnect,
   });
 
   /** A browser: keeps cookies between calls and talks to the auth handler like the pages do. */
@@ -157,9 +177,9 @@ function setup({ noticesFail = false } = {}) {
     return tab;
   };
 
-  /** The fixture student's user id, read straight from the database. */
-  const studentId = async () => {
-    const found = await (await auth.$context).internalAdapter.findUserByEmail(EMAIL);
+  /** The fixture student's user id (or another account's), read straight from the database. */
+  const studentId = async (email = EMAIL) => {
+    const found = await (await auth.$context).internalAdapter.findUserByEmail(email);
     if (!found) throw new Error("no user");
     return found.user.id;
   };
@@ -476,6 +496,54 @@ const opaqueRedirect = () =>
 const plainRedirect = () =>
   new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } });
 
+// The real Base DO in workerd (test/harness.ts), one per user id, as /mcp reaches records in production.
+let mf: Miniflare;
+let bases: Awaited<ReturnType<Miniflare["getDurableObjectNamespace"]>>;
+beforeAll(async () => {
+  mf = new Miniflare({
+    modules: true,
+    script: await bundleWorker(join(import.meta.dirname, "../../test/harness.ts")),
+    compatibilityDate: "2026-07-30",
+    compatibilityFlags: ["nodejs_compat"],
+    durableObjects: { BASE: { className: "TestBase", useSQLite: true } },
+    queueProducers: { JOBS: { queueName: "jobs" } },
+    queueConsumers: { jobs: { maxBatchTimeout: 0 } },
+  });
+  bases = await mf.getDurableObjectNamespace("BASE");
+});
+afterAll(() => mf.dispose());
+
+// The stub's RPC methods are the DO's own; Miniflare's types describe only fetch.
+const stub = (id: DurableObjectId) => bases.get(id) as unknown as DurableObjectStub<TestBase>;
+/** A person's record, as index.ts finds it. */
+const recordOf = (userId: string) => stub(bases.idFromName(userId));
+const records: Records = {
+  of: recordOf,
+  byId: (baseId) => {
+    try {
+      return stub(bases.idFromString(baseId));
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+const FIXTURE = join(import.meta.dirname, "../../../../fixtures/nadia");
+/** The fictional student's record, as they made it (test scores sensitive). */
+async function seedFixture(userId: string) {
+  const base = recordOf(userId);
+  await base.setManifest(readFileSync(join(FIXTURE, "okf-base.yaml"), "utf8"));
+  const notes = readdirSync(FIXTURE, { recursive: true, encoding: "utf8" })
+    .filter((path) => path.endsWith(".md"))
+    .toSorted()
+    .map((path) => ({
+      path,
+      raw: readFileSync(join(FIXTURE, path), "utf8"),
+      class: path.startsWith("facts/tests/") ? ("sensitive" as const) : ("normal" as const),
+    }));
+  return base.seed(notes);
+}
+
 describe("MCP clients", () => {
   // A client the way claude.ai and Claude Code identify: client_id is the URL of its metadata document (CIMD).
   const CLIENT_ID = "https://client.example/oauth/metadata.json";
@@ -577,6 +645,8 @@ describe("MCP clients", () => {
           },
         }),
       }),
+      records,
+      { devTokens: false },
     );
 
   const initialize = (auth: ReturnType<typeof setup>["auth"], accessToken?: string) =>
@@ -590,6 +660,7 @@ describe("MCP clients", () => {
     auth: ReturnType<typeof setup>["auth"],
     browser: ReturnType<typeof setup>["browser"],
     resource = RESOURCE,
+    email = EMAIL,
   ) => {
     const { verifier, codeChallenge } = await pkce();
     const start = await authorize(auth, codeChallenge, resource);
@@ -597,7 +668,7 @@ describe("MCP clients", () => {
     const signIn = new URL(start.location, ORIGIN);
     expect(signIn.pathname).toBe("/sign-in");
     const tab = browser();
-    const consentUrl = new URL(redirectTo(await tab.signInWithCode(EMAIL, signIn.search.slice(1))), ORIGIN);
+    const consentUrl = new URL(redirectTo(await tab.signInWithCode(email, signIn.search.slice(1))), ORIGIN);
     expect(consentUrl.pathname).toBe("/consent");
     const accepted = await tab.ok("/oauth2/consent", {
       body: { accept: true, oauth_query: consentUrl.search.slice(1) },
@@ -686,9 +757,13 @@ describe("MCP clients", () => {
   });
 
   /** Exchanges a fresh grant's code for tokens, optionally bound to a DPoP key. */
-  const connect = async (setupResult: ReturnType<typeof setup>, dpop?: (htu: string) => Promise<string>) => {
+  const connect = async (
+    setupResult: ReturnType<typeof setup>,
+    dpop?: (htu: string) => Promise<string>,
+    email = EMAIL,
+  ) => {
     const { auth, browser } = setupResult;
-    const { tab, code, verifier } = await grant(auth, browser);
+    const { tab, code, verifier } = await grant(auth, browser, RESOURCE, email);
     const issued = await token(
       auth,
       { grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI, code_verifier: verifier },
@@ -696,6 +771,77 @@ describe("MCP clients", () => {
     );
     expect(issued.status).toBe(200);
     return { tab, issued: issued.body, ...tokens(issued.body) };
+  };
+
+  /** One JSON-RPC request to /mcp with a bearer token: the HTTP status and the message it answered. */
+  const rpc = async (
+    auth: ReturnType<typeof setup>["auth"],
+    bearer: string,
+    method: string,
+    params: unknown,
+    using: Records = records,
+  ) => {
+    const res = await serveMcp(
+      auth,
+      new Request(RESOURCE, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      }),
+      using,
+      { devTokens: false },
+    );
+    const text = await res.text();
+    const data = text.split("\n").find((line) => line.startsWith("data:"));
+    return { status: res.status, text, message: data ? JSON.parse(data.slice(5)) : undefined };
+  };
+
+  type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+
+  /** A tools/call, as a client sends it. */
+  const call = async (
+    auth: ReturnType<typeof setup>["auth"],
+    bearer: string,
+    name: string,
+    args: unknown,
+    using?: Records,
+  ): Promise<ToolResult> => {
+    const { status, message } = await rpc(auth, bearer, "tools/call", { name, arguments: args }, using);
+    expect(status).toBe(200);
+    return message.result;
+  };
+
+  /** A tool's answer as JSON, which must not be an error. */
+  const answer = async (
+    auth: ReturnType<typeof setup>["auth"],
+    bearer: string,
+    name: string,
+    args: unknown,
+  ) => {
+    const result = await call(auth, bearer, name, args);
+    expect(result.isError, result.content[0]?.text).toBeFalsy();
+    return JSON.parse(result.content[0]?.text ?? "null");
+  };
+
+  /** A signed-in student whose client holds an access token for /mcp, and whose record holds the fixture. */
+  const fixtureStudent = async (email = EMAIL) => {
+    const ctx = setup({ onDisconnect: (userId, clientId) => recordOf(userId).disconnectApp(clientId) });
+    network(() => Response.json(metadata));
+    const connected = await connect(ctx, undefined, email);
+    const userId = await ctx.studentId(email);
+    const ids = await seedFixture(userId);
+    return { ...ctx, ...connected, userId, ids, base: recordOf(userId) };
+  };
+
+  /** The record's connection for the test client, made by its first call. */
+  const clientConnection = async (base: DurableObjectStub<TestBase>) => {
+    const connection = await base.connectionFor(CLIENT_ID);
+    if (!connection) throw new Error("the client has no connection yet");
+    return connection;
   };
 
   it("accepts a DPoP-bound token only with a fresh proof from its own key", async () => {
@@ -762,10 +908,14 @@ describe("MCP clients", () => {
     ).toMatchObject({ error: "invalid_grant" });
   });
 
-  it("lists a connected app and disconnects it: no refresh, and its access token runs out within the hour", async () => {
-    const ctx = setup();
+  it("lists a connected app and disconnects it: no refresh, no more calls, and its record connection ends", async () => {
+    const ctx = setup({ onDisconnect: (userId, clientId) => recordOf(userId).disconnectApp(clientId) });
     network(() => Response.json(metadata));
     const { tab, access, refresh } = await connect(ctx);
+    const base = recordOf(await ctx.studentId());
+    // The person raised this client to write; Disconnect must not leave that for it to come back to.
+    expect((await answer(ctx.auth, access, "describe", {})).you.level).toBe("propose");
+    await base.setGrants((await clientConnection(base)).id, { level: "write", sensitive: true, holdDays: 0 });
     expect(await tab.ok("/connected-apps")).toMatchObject([
       { clientId: CLIENT_ID, name: "Example MCP client" },
     ]);
@@ -786,14 +936,215 @@ describe("MCP clients", () => {
     expect(
       (await token(ctx.auth, { grant_type: "refresh_token", refresh_token: refresh })).body,
     ).toMatchObject({ error: "invalid_grant" });
-    // The access token is a JWT nobody can recall; it runs out on its own.
-    expect((await initialize(ctx.auth, access)).status).toBe(200);
-    later(ACCESS_TOKEN_SECONDS * 1000);
+    // The access token is a JWT nobody can recall, but /mcp finds its consent gone on the next request.
     expect((await initialize(ctx.auth, access)).status).toBe(401);
+    expect(await base.connectionFor(CLIENT_ID)).toBeNull();
 
-    // Connecting again asks again, and works.
+    // Connecting again asks again, and starts at the floor.
     const again = await connect(ctx);
-    expect((await initialize(ctx.auth, again.access)).status).toBe(200);
+    expect((await answer(ctx.auth, again.access, "describe", {})).you).toEqual({
+      level: "propose",
+      sensitive: false,
+      holdDays: 3,
+    });
+  });
+
+  it("lists every tool with the schema it checks calls against", async () => {
+    const { auth, access } = await fixtureStudent();
+    const { message } = await rpc(auth, access, "tools/list", {});
+    const listed: { name: string; description: string; inputSchema: Record<string, unknown> }[] =
+      message.result.tools;
+    expect(listed.map((tool) => tool.name)).toEqual(Object.keys(TOOLS));
+    for (const tool of listed) {
+      const def = TOOLS[tool.name as keyof typeof TOOLS];
+      const { $schema: _, ...schema } = def.input["~standard"].jsonSchema.input({ target: "draft-2020-12" });
+      expect(tool.inputSchema).toMatchObject(schema);
+      expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
+      expect(tool.description).toBe(def.description);
+    }
+  });
+
+  it("takes arguments as declared: none undeclared, null for an optional one, never for a required one", async () => {
+    const { auth, access, base, ids } = await fixtureStudent();
+    const refusal = async (name: string, args: unknown) => {
+      const result = await call(auth, access, name, args);
+      expect(result.isError).toBe(true);
+      return result.content[0]?.text ?? "";
+    };
+    expect(await refusal("query", { type: "Role", bogus: 1 })).toMatch(/bogus/);
+    expect(await answer(auth, access, "query", { type: "Role", limit: null, cursor: null })).toEqual(
+      await answer(auth, access, "query", { type: "Role" }),
+    );
+    expect(await refusal("undo", { run: null })).toMatch(/run/);
+    // A null inside a value is data: a filter comparing with it is refused, never read as no filter.
+    expect(await refusal("query", { where: { expires: { eq: null } } })).toMatch(/exists": false/);
+    // And a set to null stores null.
+    await base.setGrants((await clientConnection(base)).id, {
+      level: "write",
+      sensitive: false,
+      holdDays: 0,
+    });
+    const [trf] = (
+      await answer(auth, access, "query", { type: "Document", where: { issuer: { text: "british" } } })
+    ).rows;
+    const set = await answer(auth, access, "update", { id: trf.id, rev: trf.rev, set: { expires: null } });
+    expect(set.status).toBe("applied");
+    const { notes } = await answer(auth, access, "get", { ids: [trf.id] });
+    expect(notes[0].fields).toHaveProperty("expires", null);
+    expect(ids).toContain(trf.id);
+  });
+
+  it("holds each connection to its level and scope, and the approval list to the passkey", async () => {
+    const { auth, access, base } = await fixtureStudent();
+    const tests = { type: "TestScore", fields: ["overall"] };
+    expect((await answer(auth, access, "query", tests)).rows).toEqual([]);
+    const connection = await clientConnection(base);
+    await base.setGrants(connection.id, { level: "read", sensitive: false, holdDays: 3 });
+    expect(
+      await answer(auth, access, "create", { type: "Person", fields: { title: "X", role: "referee" } }),
+    ).toEqual({ status: "forbidden", message: "This connection can only read." });
+    await base.setGrants(connection.id, { level: "write", sensitive: true, holdDays: 0 });
+    const scores = (await answer(auth, access, "query", { ...tests, sort: ["-overall"] })).rows;
+    expect(scores.map((row: { fields: { overall: number } }) => row.fields.overall)).toEqual([8, 7]);
+    // The November score is verified: changing it needs the person's passkey, whatever the connection's level.
+    const held = await answer(auth, access, "update", {
+      id: scores[0].id,
+      rev: scores[0].rev,
+      set: { overall: 9 },
+    });
+    expect(held.status).toBe("needsApproval");
+    expect((await answer(auth, access, "get", { ids: [scores[0].id] })).notes[0].fields.overall).toBe(8);
+  });
+
+  it("answers from the record the token names, never another one", async () => {
+    const ada = await fixtureStudent();
+    // A second student, with an empty record of their own, signed in on the same server.
+    const other = await connect(ada, undefined, "someone.else@example.edu");
+    expect((await answer(ada.auth, other.access, "describe", {})).counts.notes).toBe(0);
+    expect((await answer(ada.auth, ada.access, "describe", {})).counts.notes).toBe(6);
+
+    // A CLI token reaches its own record, and its secret under another record's id reaches nothing.
+    const cli = await ada.base.addConnection({ kind: "cli" });
+    const cliToken = await ada.base.mintToken(cli.id);
+    expect((await answer(ada.auth, cliToken, "describe", {})).counts.notes).toBe(6);
+    const otherId = bases.idFromName(await ada.studentId("someone.else@example.edu")).toString();
+    const forged = cliToken.replace(/^brn_[0-9a-f]+_/, `brn_${otherId}_`);
+    for (const bad of [forged, "brn_zz_nope", `${cliToken}x`]) {
+      const refused = await rpc(ada.auth, bad, "tools/call", { name: "describe", arguments: {} });
+      expect(refused.status).toBe(401);
+    }
+  });
+
+  it("answers over stdio exactly as over remote MCP, at the floor and with the sensitive scope", async () => {
+    const { auth, access, base } = await fixtureStudent();
+    const cli = await base.addConnection({ kind: "cli" });
+    const cliToken = await base.mintToken(cli.id);
+    // This machine's /mcp, for `brainiac mcp serve` to forward to, answering as the deployed origin would.
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers))
+        if (typeof value === "string") headers.set(key, value);
+      const response = await serveMcp(
+        auth,
+        new Request(`${ORIGIN}${req.url}`, { method: "POST", headers, body: Buffer.concat(chunks) }),
+        records,
+        { devTokens: false },
+      );
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    // Its own config folder, so the test never touches this machine's.
+    const home = mkdtempSync(join(tmpdir(), "brainiac-mcp-"));
+    const child = spawn(
+      createRequire(import.meta.url).resolve("bun/bin/bun.exe"),
+      [
+        join(import.meta.dirname, "../../../cli/src/main.ts"),
+        "mcp",
+        "serve",
+        "--server",
+        `http://127.0.0.1:${port}`,
+      ],
+      {
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, BRAINIAC_TOKEN: cliToken },
+        stdio: ["pipe", "pipe", "inherit"],
+      },
+    );
+    const waiting = new Map<number, (message: { result?: unknown }) => void>();
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      const message = JSON.parse(line);
+      waiting.get(message.id)?.(message);
+    });
+    let next = 0;
+    const stdio = (method: string, params: unknown) =>
+      new Promise<{ result?: unknown }>((resolve) => {
+        const id = ++next;
+        waiting.set(id, resolve);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      });
+    const remote = async (method: string, params: unknown) =>
+      (await rpc(auth, access, method, params)).message;
+    try {
+      const init = {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1" },
+      };
+      expect((await stdio("initialize", init)).result).toEqual((await remote("initialize", init)).result);
+      expect((await stdio("tools/list", {})).result).toEqual((await remote("tools/list", {})).result);
+      const calls = [
+        ["describe", {}],
+        ["query", { sort: ["title"], fields: ["title", "kind"] }],
+        ["query", { type: "TestScore", fields: ["overall"] }],
+        [
+          "get",
+          { paths: ["facts/tests/ielts-2026-11.md", "facts/roles/acme-intern-2025.md"], history: true },
+        ],
+        ["query", { type: "Role", bogus: true }],
+      ] as const;
+      const same = async () => {
+        for (const [name, args] of calls) {
+          const params = { name, arguments: args };
+          expect((await stdio("tools/call", params)).result, name).toEqual(
+            (await remote("tools/call", params)).result,
+          );
+        }
+      };
+      await same();
+      // Granted the sensitive scope, both see the test scores, still alike.
+      for (const id of [cli.id, (await clientConnection(base)).id])
+        await base.setGrants(id, { level: "propose", sensitive: true, holdDays: 3 });
+      const scores = await stdio("tools/call", { name: "query", arguments: { type: "TestScore" } });
+      expect(JSON.stringify(scores.result)).toContain("IELTS Academic, November 2026");
+      await same();
+    } finally {
+      child.kill();
+      server.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("never lets an outside service's error text reach the agent", async () => {
+    const { auth, access, neon } = await fixtureStudent();
+    const leaky: Records = {
+      ...records,
+      of: (userId) => ({
+        tool: () => Promise.reject(new Error("pg: password authentication failed for user brainiac_owner")),
+        authenticate: (bearer) => recordOf(userId).authenticate(bearer),
+      }),
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await call(auth, access, "describe", {}, leaky);
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/pg:|password|brainiac_owner/);
+    // Neon failing at the consent check is an outage to retry, not a bad token, and says nothing about Neon.
+    neon.down = true;
+    const down = await rpc(auth, access, "tools/call", { name: "describe", arguments: {} });
+    expect(down.status).toBe(503);
+    expect(down.text).not.toMatch(/Neon/);
   });
 
   it("issues no grant without the MCP resource, since an opaque token can't be checked against Disconnect", async () => {

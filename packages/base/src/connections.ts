@@ -55,6 +55,15 @@ export function getConnection(sql: Sql, id: string): Connection | undefined {
   return row && fromRow(row);
 }
 
+/** An MCP client's connection, if it has one: the way to end it when the person disconnects the app. */
+export function oauthConnection(sql: Sql, oauthClientId: string): Connection | undefined {
+  const [row] = sql.all<ConnectionRow>(
+    `SELECT ${COLUMNS} FROM connections WHERE oauthClientId = ?`,
+    oauthClientId,
+  );
+  return row && fromRow(row);
+}
+
 /** The connection a change's actor names (`connection:<id>`), if it still exists. */
 export const connectionOf = (sql: Sql, actor: string): Connection | undefined =>
   actor.startsWith("connection:") ? getConnection(sql, actor.slice("connection:".length)) : undefined;

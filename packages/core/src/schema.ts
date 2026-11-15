@@ -62,6 +62,21 @@ const EXAMPLES = {
   mapping: "{key: value}",
 } satisfies Record<NonNullable<FieldSpec["kind"]>, string | number | boolean>;
 
+/**
+ * Types every record has, whatever its manifest says: what `add` captures into `inbox/` waits there as one of
+ * these until an agent files it. A manifest type of the same name wins.
+ */
+export const BUILT_IN_TYPES: Manifest["types"] = {
+  InboxItem: {
+    version: 1,
+    folder: "inbox",
+    fields: {
+      url: { kind: "text", example: "https://example.org/award" },
+      attached_to: { kind: "relation" },
+    },
+  },
+};
+
 // Every note has these, whatever its type.
 const ID: FieldSpec = { kind: "text", required: true, example: "01JD7QA1ZK8M3V5X6Y7Z8A9BCD" };
 const ULID = type("string").narrow(isUlid).describe("a ULID (26 characters, 0-9 and A-Z without I, L, O, U)");
@@ -78,10 +93,8 @@ export function validate(manifest: Manifest, data: Readonly<Record<string, unkno
   const typeNames = Object.keys(manifest.types);
   const noteType = data["type"];
   // Own keys only: a note typed `constructor` must not find Object.prototype's.
-  const spec =
-    typeof noteType === "string" && Object.hasOwn(manifest.types, noteType)
-      ? manifest.types[noteType]
-      : undefined;
+  const types = { ...BUILT_IN_TYPES, ...manifest.types };
+  const spec = typeof noteType === "string" && Object.hasOwn(types, noteType) ? types[noteType] : undefined;
   if (!spec) {
     const choice: FieldSpec = {
       values: typeNames.length > 0 ? typeNames : ["(none declared)"],

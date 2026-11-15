@@ -26,17 +26,19 @@ export interface AuthConfig {
   turnstileSecret?: string | undefined;
   google?: OAuthApp | undefined;
   github?: OAuthApp | undefined;
+  /** Ends an MCP client's connection in the person's record when they disconnect the app. */
+  onDisconnect?: ((userId: string, clientId: string) => Promise<void>) | undefined;
 }
 
 /** Entry points that can create an account. Passkey sign-in can't, so it skips the challenge. */
 const SIGN_UP_PATHS = ["/email-otp/send-verification-otp", "/sign-in/social"];
 
 /**
- * How long an MCP access token lives (Better Auth's default). It's a JWT /mcp checks without Neon, so it outlives
- * a Disconnect; tools must also find the connection's consent on every call (docs/internals/security.md). Not
- * shorter: Codex doesn't refresh, it sends the person through sign-in again when its token runs out.
+ * How long an MCP access token lives (Better Auth's default). It's a JWT, so it outlives a Disconnect; /mcp also
+ * finds its consent on every request (mcp/handler.ts). Not shorter: Codex doesn't refresh, it sends the person
+ * through sign-in again when its token runs out.
  */
-export const ACCESS_TOKEN_SECONDS = 60 * 60;
+const ACCESS_TOKEN_SECONDS = 60 * 60;
 
 /** Where MCP clients connect, and the audience every access token is bound to. */
 export const mcpResource = (baseURL: string) => `${baseURL}/mcp`;
@@ -93,7 +95,7 @@ export const authOptions = (config: AuthConfig) =>
         accessTokenExpiresIn: ACCESS_TOKEN_SECONDS,
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
-      connectedApps(),
+      connectedApps(config.onDisconnect),
     ],
   }) satisfies BetterAuthOptions;
 

@@ -15,6 +15,10 @@ import type { Sql } from "./sql.ts";
 export const REVIEW_MS = 10 * 60 * 1000;
 /** Deleting more notes than this in one change always needs its own plan-hash signature (contract §4). */
 const BULK_DELETE = 5;
+/** An update that changes more notes than this needs a signature (contract §4). */
+const BULK_UPDATE = 20;
+/** A connection's deletes add up over this long: six one-note deletes in a day are a bulk delete too. */
+const DELETES_MS = 24 * 60 * 60_000;
 
 /** What one transaction did to one note: the note as it started and as it ended. */
 export interface Effect {
@@ -167,15 +171,29 @@ export const planOf = (effects: readonly Effect[]): PlanItem[] =>
 export function settle(
   sql: Sql,
   effects: readonly Effect[],
-  ctx: Grant & { readonly actor: string; readonly now: number },
+  ctx: Grant & { readonly actor: string; readonly now: number; readonly connection?: object },
   scope: "change" | "undo",
 ): NeedsApproval | "signed" | undefined {
   const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
-  // Deleting more than five notes at once needs a signature whatever they hold, and no review session covers it.
-  const bulk = deleting.length > BULK_DELETE;
+  // A connection's deletes over the last day count together, so deleting one note per call doesn't get around the
+  // limit. The count includes this transaction's own, which are written by now. Sync edits carry no connection: a
+  // folder removed on disk is judged as one change.
+  const [recent] =
+    ctx.connection && deleting.length > 0
+      ? sql.all<{ n: number }>(
+          "SELECT count(*) AS n FROM changes WHERE actor = ? AND op = 'delete' AND at > ?",
+          ctx.actor,
+          ctx.now - DELETES_MS,
+        )
+      : [];
+  // Deleting more than five notes needs a signature whatever they hold, and no review session covers it.
+  const bulk = deleting.length > 0 && Math.max(deleting.length, recent?.n ?? 0) > BULK_DELETE;
   // Loosening privacy, like a bulk delete, always needs its own signature: no review session covers it.
   const loosening = effects.some(loosens);
-  const needing = bulk || loosening ? effects : effects.filter((effect) => needsApproval(sql, effect));
+  // A change to more than 20 notes needs a signature too; a review session that showed them all covers it.
+  const wide = scope === "change" && effects.length > BULK_UPDATE;
+  const needing =
+    bulk || loosening || wide ? effects : effects.filter((effect) => needsApproval(sql, effect));
   if (needing.length === 0) return undefined;
   const items = planOf(effects);
   const hash = planHash(items);
