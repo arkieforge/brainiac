@@ -608,6 +608,63 @@ export const toolCases: Record<string, Case> = {
     ]);
   },
 
+  "a create the approval list holds completes when sent again with its id and the approval": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const writer = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+    const args = {
+      type: "TestScore",
+      fields: { title: "IELTS Academic, May 2027", test: "ielts-academic", overall: 8.5, date: "2027-05-02" },
+      link: { supersedes: n.ielts },
+      sensitive: true,
+    };
+    // Superseding the verified November score needs the person's passkey.
+    const held = call(sql, writer, "create", args);
+    equal(held["status"], "needsApproval");
+    const approved = recordApproval(sql, held["items"] as PlanItem[], signature(), T0);
+    ok("approvalId" in approved);
+    const made = call(sql, as(writer.connection ?? connection(sql), T0 + 1), "create", {
+      ...args,
+      id: held["id"],
+      approval_id: approved.approvalId,
+    });
+    same([made["status"], made["id"], made["path"]], ["applied", held["id"], held["path"]]);
+    match(refused(sql, writer, "create", { ...args, id: "not-an-id" }), /id must be/);
+  },
+
+  "link fills a list field the note doesn't have yet as a list": (sql, fixtures) => {
+    const n = record(sql, fixtures);
+    const writer = as(connection(sql, { level: "write", holdDays: 0 }));
+    const fields = { title: "Award letter, Northvale", kind: "certificate" };
+    const made = call(sql, writer, "create", { type: "Document", fields, link: { proves: n.bsc } });
+    equal(made["status"], "applied");
+    same(fieldsOf(sql, String(made["id"]))["proves"], ["../facts/education/bsc-northvale.md"]);
+    equal(
+      call(sql, writer, "update", { id: n.tum, rev: 1, link: { requirements: n.transcript } })["status"],
+      "applied",
+    );
+    same((fieldsOf(sql, n.tum)["requirements"] as unknown[]).at(-1), "../../documents/transcript-bsc.md");
+  },
+
+  "a proposal on a note made sensitive since leaves the lists of connections without the scope": (
+    sql,
+    fixtures,
+  ) => {
+    const n = record(sql, fixtures);
+    const proposer = as(connection(sql));
+    call(sql, proposer, "update", { id: n.role, rev: 1, set: { org: "Acme" } });
+    equal(rows(sql, proposer, { type: "Proposal" }).length, 1);
+    const classified = mutate(
+      sql,
+      { op: "classify", noteId: n.role, baseRev: 1, class: "sensitive" },
+      { actor: "human", now: T0 },
+    );
+    equal(classified.status, "applied");
+    same(rows(sql, proposer, { type: "Proposal" }), []);
+  },
+
   "arguments: undeclared ones are refused, null reads as omitted, a required one can't be null": (
     sql,
     fixtures,

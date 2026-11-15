@@ -4,6 +4,7 @@
 import {
   BUILT_IN_TYPES,
   findClash,
+  isUlid,
   normalizePath,
   parseNote,
   patch,
@@ -230,8 +231,13 @@ function proposalRows(sql: Sql, ctx: Context): Row[] {
       if (proposal.kind === "change") {
         const items: PlanItem[] = JSON.parse(proposal.patch);
         const seen = items.every((item) => {
-          const after = item.patch.fields["type"]?.after ?? getNote(sql, item.noteId)?.type ?? null;
-          return project({ class: item.class, type: typeof after === "string" ? after : null }, reader);
+          const note = getNote(sql, item.noteId);
+          const after = item.patch.fields["type"]?.after ?? note?.type ?? null;
+          // Seen as it was proposed and as it is now: a note made sensitive since hides its proposals too.
+          return (
+            project({ class: item.class, type: typeof after === "string" ? after : null }, reader) &&
+            (note === undefined || project(note, reader))
+          );
         });
         if (!seen) return [];
         notes = items.map((item) => item.noteId);
@@ -363,7 +369,7 @@ const describe = tool(
         ? { level: connection.level, sensitive: connection.sensitive, holdDays: connection.holdDays }
         : { level: "person" },
       me: me ? splitNote(me.raw).body : null,
-      types: { ...BUILT_IN_TYPES, ...manifestOf(sql)?.types },
+      types: typesOf(sql),
       counts: {
         notes: notes.length,
         byType: count((note) => note.type ?? "(none)"),
@@ -447,6 +453,9 @@ const get = tool(
 const readOnly = (ctx: Context) => ctx.connection?.level === "read";
 const READ_ONLY = { status: "forbidden", message: "This connection can only read." };
 
+/** Every type the record knows: the built-in ones and its manifest's. */
+const typesOf = (sql: Sql) => ({ ...BUILT_IN_TYPES, ...manifestOf(sql)?.types });
+
 /** A relation from the note at `from` to the visible live note `id`, or why there can't be one. */
 function relation(sql: Sql, ctx: Context, from: string, id: string): string | { error: string } {
   const target = visible(sql, ctx, id);
@@ -457,13 +466,14 @@ function relation(sql: Sql, ctx: Context, from: string, id: string): string | { 
 function linkOps(
   sql: Sql,
   ctx: Context,
-  note: { path: string; data: Readonly<Record<string, unknown>> },
+  note: { path: string; type: string | null; data: Readonly<Record<string, unknown>> },
   links: Readonly<Record<string, string | readonly string[]>>,
 ): PatchOp[] | { error: string } {
+  const fields = note.type === null ? undefined : typesOf(sql)[note.type]?.fields;
   const ops: PatchOp[] = [];
   for (const [field, to] of Object.entries(links)) {
     const current = note.data[field];
-    const many = Array.isArray(to) || Array.isArray(current);
+    const many = Array.isArray(to) || Array.isArray(current) || fields?.[field]?.kind === "list";
     for (const id of Array.isArray(to) ? to : [to]) {
       const rel = relation(sql, ctx, note.path, id);
       if (typeof rel !== "string") return rel;
@@ -541,7 +551,7 @@ const slug = (text: string) =>
 const fold = (text: string) => text.normalize("NFKC").toLowerCase().trim();
 
 const create = tool(
-  `Create a new note: a new event is a new note (a new test attempt, a new role), while a change to something already recorded is an update. fields are the front-matter (top-level keys; see describe for each type's fields). link sets relation fields by note id, like {"supersedes": "<id>"}. Returns duplicate, creating nothing, when a note of the same type and title exists; update that one, or pass duplicate_ok if this really is another. Run with dry_run first to see the note. sensitive: grades, scores, IDs, health or money.`,
+  `Create a new note: a new event is a new note (a new test attempt, a new role), while a change to something already recorded is an update. fields are the front-matter (top-level keys; see describe for each type's fields). link sets relation fields by note id, like {"supersedes": "<id>"}. Returns duplicate, creating nothing, when a note of the same type and title exists; update that one, or pass duplicate_ok if this really is another. Run with dry_run first to see the note. After needsApproval, send the same call again with the id it returned and approval_id. sensitive: grades, scores, IDs, health or money.`,
   type({
     "+": "reject",
     type: "string",
@@ -552,10 +562,13 @@ const create = tool(
     "sensitive?": "boolean | null",
     "duplicate_ok?": "boolean | null",
     "dry_run?": "boolean | null",
+    "id?": "string | null",
     "approval_id?": "string | null",
   }),
   (sql, args, ctx) => {
     if (readOnly(ctx)) return ok(READ_ONLY);
+    if (args.id !== undefined && !isUlid(args.id))
+      return fail("id must be the id an earlier answer gave for this note.");
     const fields = args.fields ?? {};
     const fieldOps: PatchOp[] = [];
     for (const [key, value] of Object.entries(fields)) {
@@ -563,9 +576,10 @@ const create = tool(
       if (!isYaml(value)) return fail(`fields.${key} isn't a value front-matter can hold.`);
       fieldOps.push({ op: "set", path: [key], value });
     }
-    const id = ulid(ctx.now);
+    // The same id on a retry, so the note an approval signed is the note this call makes.
+    const id = args.id ?? ulid(ctx.now);
     const title = typeof fields["title"] === "string" ? fields["title"] : undefined;
-    const spec = { ...BUILT_IN_TYPES, ...manifestOf(sql)?.types }[args.type];
+    const spec = typesOf(sql)[args.type];
     const live = sql
       .all<{ path: string }>("SELECT path FROM notes WHERE deletedAt IS NULL")
       .map((r) => r.path);
@@ -583,7 +597,7 @@ const create = tool(
       if (error instanceof PathError) return fail(error.message);
       throw error;
     }
-    const linked = linkOps(sql, ctx, { path, data: {} }, args.link ?? {});
+    const linked = linkOps(sql, ctx, { path, type: args.type, data: {} }, args.link ?? {});
     if ("error" in linked) return fail(linked.error);
     if (title !== undefined && !args.duplicate_ok) {
       const others = new Set(Object.values(args.link ?? {}).flat());
@@ -620,8 +634,8 @@ const create = tool(
         ...wouldBe(rolledBack(sql, run)),
         note: { id, path, fields: parseNote(raw).data, body: args.body ?? "" },
       });
-    const result = run();
-    return ok({ ...outcome(result), ...(result.status === "applied" && { path }) });
+    // Every answer names the note, so a retry after an approval can make exactly it.
+    return ok({ ...outcome(run()), id, path });
   },
 );
 
@@ -693,7 +707,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
       if (args.restore)
         return { mutation: { op: "put", noteId: note.id, baseRev, raw: note.raw }, raw: note.raw };
       const data = fieldsOf(note);
-      const linked = linkOps(sql, ctx, { path: note.path, data }, args.link ?? {});
+      const linked = linkOps(sql, ctx, { path: note.path, type: note.type, data }, args.link ?? {});
       if ("error" in linked) return linked;
       const unlinked = Object.entries(args.unlink ?? {}).flatMap(([field, to]): PatchOp[] => {
         const ids = Array.isArray(to) ? to : [to];
