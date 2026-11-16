@@ -1,0 +1,307 @@
+---
+// The public site's one page (#52). Structure from current references on Mobbin: a floating pill nav and a large
+// product window (The Content Architecture, Cursor), two-tone headlines with a serif accent (Giga, Rox, ReadMe),
+// numbered steps beside a changing panel (Retool, Replit), a grid-line bento of small live UIs (Vercel, ReadMe).
+// The data is the fictional fixture student's (fixtures/nadia), never a real person's.
+import "@fontsource/instrument-serif/400-italic.css";
+import "@fontsource-variable/inter/wght.css";
+import "../styles/site.css";
+
+// The app's origin, which alchemy.run.ts passes to the build; `vp run dev`'s Worker when building locally.
+const APP: string = import.meta.env.PUBLIC_APP_ORIGIN ?? "http://localhost:1337";
+const GITHUB = "https://github.com/arkieforge/brainiac";
+const title = "Brainiac: your record, checked, for the Claude you already use";
+const description =
+  "Grades, scores, roles, papers and documents as notes with their sources. Your own Claude reads them through MCP, quotes them exactly and checks every number before an application sees it.";
+
+const check = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 8.5l3 3 6-7"/></svg>`;
+const cross = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4.5 4.5l7 7m0-7l-7 7"/></svg>`;
+const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8h10m-4-4l4 4-4 4"/></svg>`;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <meta name="theme-color" content="#f5f1e8" />
+  <link rel="icon" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+</head>
+<body>
+  <nav class="nav" aria-label="Main">
+    <a class="logo" href="/"><img src="/mark-ink.svg" alt="" width="22" height="22" />Brainiac</a>
+    <div class="links"><a href="#how">How it works</a><a href="#features">Features</a><a href="#trust">Trust</a><a href={GITHUB}>GitHub</a></div>
+    <span class="grow"></span>
+    <a class="signin" href={APP}>Sign in</a>
+    <a class="btn primary sm" href={APP}>Start your record</a>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="wrap">
+        <div class="hero-top">
+          <div>
+            <span class="eyebrow"><span class="dot"></span>For admissions, scholarships and jobs</span>
+            <h1>Every fact your application needs, <span class="g">checked against its <span class="serif">source.</span></span></h1>
+            <p class="lede">Keep grades, scores, roles and papers as notes with their sources. Your own Claude reads your record through MCP and checks every claim against it.</p>
+            <div class="cta">
+              <a class="btn primary" href={APP}>Start your record <Fragment set:html={arrow} /></a>
+              <a class="btn" href="#how">See how it works</a>
+            </div>
+            <p class="note-line">Free for 300 notes</p>
+          </div>
+        </div>
+
+        <div class="stage" data-stage>
+          <div class="window" role="img" aria-label="Nadia's record: her November IELTS note with sources, TUM's requirement checks, and Claude verifying a value">
+            <div class="titlebar"><i></i><i></i><i></i><span class="t">Nadia&rsquo;s example record</span></div>
+            <div class="panes">
+              <div class="tree" aria-hidden="true">
+                <div class="d">facts/</div>
+                <div class="in">education/bsc-northvale.md</div>
+                <div class="in">roles/acme-intern-2025.md</div>
+                <div class="in">papers/swahili-ner-2026.md</div>
+                <div class="in">tests/ielts-2025-03.md</div>
+                <div class="in on">tests/ielts-2026-11.md</div>
+                <div class="d">applications/</div>
+                <div class="in">tum-msc-informatics-2027/</div>
+                <div class="d">documents/</div>
+                <div class="in">ielts-trf-2026.md</div>
+                <div class="in">transcript-bsc.md</div>
+              </div>
+              <div class="notepane">
+                <div class="path">facts/tests/ielts-2026-11.md</div>
+                <div class="nt">IELTS Academic, November 2026</div>
+                <dl class="fields">
+                  <div><dt>overall</dt><dd><span>8.0</span><span class="chip ok">verified · trf p1</span></dd></div>
+                  <div><dt>writing</dt><dd><span>7.0</span><span class="chip ok">verified · trf p1</span></dd></div>
+                  <div><dt>expires</dt><dd><span>2028-11-02</span><span class="chip warn">unverified</span></dd></div>
+                </dl>
+                <div class="excerpt"><div class="cap">IELTS test report form · page 1</div><div class="xr"><span>Overall band</span><mark>8.0</mark><span class="chip ok">→ overall</span></div><div class="xr"><span>Writing</span><mark>7.0</mark><span class="chip ok">→ writing</span></div></div>
+              </div>
+              <div class="side">
+                <div class="sideh">TUM MSc Informatics · checks</div>
+                <div class="req" style="color:var(--ok)"><Fragment set:html={check} /><span style="color:var(--fg)">Bachelor transcript<small>transcript-bsc.md</small></span></div>
+                <div class="req" style="color:var(--warn)"><Fragment set:html={cross} /><span style="color:var(--fg)">IELTS 6.5, valid on the deadline<small>8.0 meets it · expiry still unverified</small></span></div>
+                <div class="req" style="color:var(--danger)"><Fragment set:html={cross} /><span style="color:var(--fg)">Two recommendation letters<small>0 of 2 received</small></span></div>
+                <div class="req" style="color:var(--warn)"><Fragment set:html={cross} /><span style="color:var(--fg)">Motivation, question 4<small>you tick it when it's done</small></span></div>
+              </div>
+            </div>
+            <div class="term" aria-hidden="true">
+              <div class="row"><span class="who">claude</span><span><span class="call">ask</span> {"{"}mode: "context", question: "my IELTS writing score"{"}"}</span></div>
+              <div class="row"><span class="who">brainiac</span><span>writing <b style="color:var(--fg)">7.0</b> · 01M6AD…#sections.writing@1 · verified</span></div>
+              <div class="row"><span class="who">claude</span><span><span class="call">ask</span> {"{"}mode: "verify", claims: 3{"}"}</span></div>
+              <div class="row"><span class="who">brainiac</span><span><span class="ok">ok</span> every value matches the record now <span class="caret"></span></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="points">
+          <div><b><Fragment set:html={check} />Every value cites its page</b><span>A score points at the line of the report it came from.</span></div>
+          <div><b><Fragment set:html={check} />Works on your laptop, offline too</b><span>A synced folder your Claude can read and search without the cloud.</span></div>
+          <div><b><Fragment set:html={check} />Yours to take anywhere</b><span>Plain markdown notes you can export whenever you like.</span></div>
+        </div>
+
+        <div class="works reveal" aria-label="Works with"><span>Works with</span><b>Claude Code</b><b>claude.ai</b><b>T3 Code</b><b>Codex</b><b>any MCP client</b></div>
+      </div>
+    </header>
+
+    <section class="block" id="how">
+      <div class="wrap">
+        <span class="eyebrow"><b>01.</b> How it works</span>
+        <h2 class="h2 reveal">From a scanned&nbsp;transcript <span class="g">to a sent application.</span></h2>
+        <div class="how">
+          <div class="steps">
+            <button class="step" id="t-capture" aria-controls="p-capture" aria-expanded="true" data-step="capture"><span class="n">01</span><span class="t">Drop in what you have</span><p>Transcripts, test reports, a LinkedIn export, an old CV. Each upload lands with a note saying what it is, and stays private until you say so.</p></button>
+            <button class="step" id="t-file" aria-controls="p-file" aria-expanded="false" data-step="file"><span class="n">02</span><span class="t">Your Claude files it, and asks</span><p>It proposes the notes, each value citing its page. When a date is missing it asks you on your phone instead of guessing.</p></button>
+            <button class="step" id="t-check" aria-controls="p-check" aria-expanded="false" data-step="check"><span class="n">03</span><span class="t">Applications check themselves</span><p>Requirements are typed checks on your stored values, so "IELTS 6.5, valid on the deadline" is met or missing, never a guess.</p></button>
+            <button class="step" id="t-write" aria-controls="p-write" aria-expanded="false" data-step="write"><span class="n">04</span><span class="t">Write from facts, then send</span><p>CVs, SOPs and cover letters cite every claim and pass verify before you see them. The version a portal has stays frozen.</p></button>
+          </div>
+          <div class="show">
+            <div class="panel" role="region" id="p-capture" aria-labelledby="t-capture" data-panel="capture">
+              <div class="cap">upload · unorganized/</div>
+              <div class="drop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m-5 5l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><div>Drop files, paste a link, or send them to your Claude</div></div>
+              <div class="files">
+                <div class="file"><span class="grow">transcript-bsc.pdf</span><span class="chip ok">cleared · transcript</span></div>
+                <div class="file"><span class="grow">ielts-trf-2026.pdf</span><span class="chip ok">cleared · test report</span></div>
+                <div class="file"><span class="grow">passport-scan.jpg</span><span class="chip warn">private vault</span></div>
+              </div>
+            </div>
+            <div class="panel" role="region" id="p-file" aria-labelledby="t-file" data-panel="file" hidden>
+              <div class="cap">proposals · questions</div>
+              <div class="ask"><div class="q">claude proposes · facts/education/bsc-northvale.md</div>cgpa <b>3.82</b> of 4 <span class="chip">transcript p2</span></div>
+              <div class="ask"><div class="q">claude asks you</div>When did your role at Acme Robotics end?<div class="opts"><span class="pick">2025-09-30</span><span>Still there</span><span>Not sure</span></div></div>
+            </div>
+            <div class="panel" role="region" id="p-check" aria-labelledby="t-check" data-panel="check" hidden>
+              <div class="cap">applications/tum-msc-informatics-2027 · requirements</div>
+              <div class="claims">
+                <div><span>IELTS academic, overall at least 6.5, valid on the deadline</span><span class="v">8.0</span><span class="chip warn">expiry unverified</span></div>
+                <div><span>Bachelor transcript</span><span class="v">1</span><span class="chip ok">met</span></div>
+                <div><span>Two letters, received</span><span class="v">0 of 2</span><span class="chip no">missing</span></div>
+                <div><span>Motivation, question 4</span><span class="v">manual</span><span class="chip warn">to tick</span></div>
+              </div>
+            </div>
+            <div class="panel" role="region" id="p-write" aria-labelledby="t-write" data-panel="write" hidden>
+              <div class="cap">applications/tum-msc-informatics-2027/cv-v2.md · draft {"{"}verify{"}"} ok</div>
+              <div class="doc">
+                <h5>Nadia Karim</h5>
+                <div class="sub">CV · TUM MSc Informatics, Winter 2027</div>
+                <div class="sec">Education</div>
+                <div>BSc Computer Science, Northvale University · CGPA <mark>3.82</mark> of 4</div>
+                <div class="sec">Research</div>
+                <div><i>Named Entity Recognition for Low-Resource Swahili News</i>, first author</div>
+                <div class="sec">Languages</div>
+                <div>IELTS Academic <mark>8.0</mark> · writing <mark>7.0</mark></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="features">
+      <div class="wrap">
+        <span class="eyebrow"><b>02.</b> What your Claude gets</span>
+        <h2 class="h2 reveal">Every claim checked. <span class="serif">Every</span> change yours.</h2>
+        <div class="bento">
+          <span class="cross tl"></span><span class="cross tr"></span><span class="cross bl"></span><span class="cross br"></span>
+          <div class="w4 reveal">
+            <h3><Fragment set:html={check} />Verify before anything is sent</h3>
+            <p>Every number, date and name in an answer or a draft is claimed against the note it came from. A mismatch comes back with the record's own value.</p>
+            <div class="demo"><div class="claims">
+              <div><span>overall · ielts-2026-11.md</span><span class="v">8.0</span><span class="chip ok">match</span></div>
+              <div><span>cgpa · bsc-northvale.md</span><span class="v">3.9</span><span class="chip no">record says 3.82</span></div>
+              <div><span>"2025" in the second paragraph</span><span class="v">2025</span><span class="chip warn">uncited</span></div>
+            </div></div>
+          </div>
+          <div class="w2 reveal">
+            <h3><Fragment set:html={check} />Your passkey, on the exact change</h3>
+            <p>Agents propose. Changing a verified value waits for you.</p>
+            <div class="demo"><div class="sheet">
+              <div style="font-size:13px;font-weight:600">Approve 1 change</div>
+              <div class="diff">cgpa <del>3.82</del> → <ins>3.85</ins><br><span class="dim">bsc-northvale.md · from Claude</span></div>
+              <div class="key">Approve with passkey</div>
+            </div></div>
+          </div>
+          <div class="w2 reveal">
+            <h3><Fragment set:html={check} />Reminders before things expire</h3>
+            <p>An IELTS or a passport emails you at 60, 30, 7 and 0 days, with what relies on it.</p>
+            <div class="demo"><div class="timeline">
+              <span class="tick" style="left:12%"><span>60</span><i></i></span>
+              <span class="tick" style="left:42%"><span>30</span><i></i></span>
+              <span class="tick hot" style="left:64%"><span>7 days · IELTS</span><i></i></span>
+              <span class="tick" style="left:92%"><span>0</span><i></i></span>
+            </div></div>
+          </div>
+          <div class="w2 reveal">
+            <h3><Fragment set:html={check} />Secrets never reach a model</h3>
+            <p>Passport numbers and portal passwords stay in a vault. The extension fills the form; your Claude only names the field.</p>
+            <div class="demo"><div class="fill">
+              <label>name<span class="in">Nadia Karim</span></label>
+              <label>portal password<span class="in secret">••••••••••</span></label>
+            </div></div>
+          </div>
+          <div class="w2 reveal">
+            <h3><Fragment set:html={check} />The same record everywhere</h3>
+            <p>Edit anywhere and it reaches every tab, phone and laptop in under a third of a second.</p>
+            <div class="demo"><div class="ways">
+              <div><b>Site</b>desktop, phone</div>
+              <div><b>Laptop</b><code>brainiac</code> sync</div>
+              <div><b>Claude</b><code>/mcp</code></div>
+              <div><b>Extension</b>form fill</div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="trust">
+      <div class="wrap trust">
+        <div>
+          <span class="eyebrow"><b>03.</b> Yours, not ours</span>
+          <h2 class="h2 reveal">One database per person. Brainiac runs <span class="serif">no</span> model.</h2>
+          <p class="lede">The thinking happens in your own Claude, on your subscription. We keep your record, check it, and never sell a model in the middle. The code is open on GitHub.</p>
+        </div>
+        <div class="never">
+          <div class="reveal"><span>An agent changes a verified grade without your passkey</span><em>never</em></div>
+          <div class="reveal"><span>A passport number reaches a model</span><em>never</em></div>
+          <div class="reveal"><span>A value nobody checked, shown as if checked</span><em>never</em></div>
+          <div class="reveal"><span>Your record shown to another person's agent</span><em>never</em></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="close">
+      <div class="wrap">
+        <h2 class="h2 reveal">Start before the <span class="serif">next</span> deadline. <span class="g">Bring one transcript.</span></h2>
+        <div class="cta">
+          <a class="btn primary" href={APP}>Start your record <Fragment set:html={arrow} /></a>
+          <a class="btn" href={GITHUB}>Read the code</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap foot">
+      <div><a class="logo" href="/"><img src="/mark-ink.svg" alt="" width="22" height="22" />Brainiac</a><p>A record of everything you've done, with its sources, for the Claude you already use.</p></div>
+      <div><p class="fh">Product</p><a href="#how">How it works</a><a href="#features">Features</a><a href={APP}>Sign in</a></div>
+      <div><p class="fh">Trust</p><a href={`${GITHUB}/blob/main/docs/internals/contract.md`}>The contract</a><a href="#trust">Privacy</a></div>
+      <div><p class="fh">Open</p><a href={GITHUB}>GitHub</a><a href={`${GITHUB}/issues`}>Roadmap</a></div>
+    </div>
+  </footer>
+
+  <script>
+    import { animate } from "motion";
+
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // The hero window rises in once; Claude's calls inside it follow in CSS.
+    const stage = document.querySelector("[data-stage]");
+    if (stage && !still)
+      animate(stage, { opacity: [0, 1], y: [40, 0], scale: [0.98, 1] }, { duration: 0.9, ease: [0.23, 1, 0.32, 1] });
+
+    // Steps: buttons that show their evidence beside them (under them on a phone), by click or arrow keys.
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>("[data-step]")];
+    const select = (tab: HTMLButtonElement) => {
+      for (const other of tabs) {
+        const on = other === tab;
+        other.setAttribute("aria-expanded", String(on));
+        const panel = document.querySelector<HTMLElement>(`[data-panel="${other.dataset.step}"]`);
+        if (!panel) continue;
+        panel.hidden = !on;
+        if (on && !still) animate(panel, { opacity: [0, 1], y: [10, 0] }, { duration: 0.32, ease: [0.23, 1, 0.32, 1] });
+      }
+    };
+    // On a phone the evidence sits under the step it belongs to, not after all four.
+    const show = document.querySelector<HTMLElement>(".show");
+    const narrow = matchMedia("(max-width: 980px)");
+    const place = (tab: HTMLButtonElement) => {
+      if (show && narrow.matches) tab.after(show);
+      else if (show) tab.parentElement?.parentElement?.append(show);
+    };
+    const first = tabs[0];
+    if (first) place(first);
+    for (const tab of tabs) {
+      tab.addEventListener("click", () => (place(tab), select(tab)));
+      tab.addEventListener("keydown", (event) => {
+        const i = tabs.indexOf(tab);
+        const next = event.key === "ArrowDown" ? tabs[i + 1] : event.key === "ArrowUp" ? tabs[i - 1] : undefined;
+        if (next) {
+          event.preventDefault();
+          next.focus();
+          place(next);
+          select(next);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
