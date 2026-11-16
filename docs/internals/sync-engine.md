@@ -30,7 +30,7 @@ instead isn't possible: the record waits for every `clientSeq` in order.
 // client → DO (one WebSocket per client; packages/core protocol.ts, checked on arrival)
 hello    { clientId, cursor: seq | null, lastAssigned: clientSeq, ackedUpTo, schemaVersion, appVersion, attempt }
 mutate   { clientId, clientSeq, changeId, ackedUpTo, noteId, baseRev, change, approvalId? }   // changeId: random per change
-         change: create { path, raw, class } | put { raw, base } | delete { base }   // base: the text it was made on
+         change: create { path, raw, class } | put { raw, base } | delete { base } | move { path }   // base: the text it was made on; move: a file renamed on disk
 // DO → client
 welcome  { clientId, highWater, ackedUpTo, connection?, manifest? }   // answer to hello; a connection's client also gets its grants and the manifest, for offline reads
 snapshot { seq, notes, attempt }       // answers hello `attempt`: cursor missing, ahead of the record, or older than the 90-day log
@@ -52,6 +52,13 @@ that plan, so the site's Approvals page lists it whichever device sent it. Once 
 the record sends `approved` to every socket (and after every welcome until a change cites it, for a device that
 was off), and a client holding a blocked edit with that plan resends it with the `approvalId` under a new
 `clientSeq` and a new `changeId`: the record answers a `changeId` it has seen with the answer it gave.
+
+A `move` is a note's file renamed or moved on disk, which the daemon sees as its id reappearing at another path.
+The record applies it to the note as it is now (a move doesn't depend on the text) through the mutation path's
+`move`, which rewrites every link to it; an edit made with the move follows as a `put`. A move the record refuses
+(the name is taken, or a note the sender can't see links to it) is blocked with its reason, but holds no text: the
+file stays where the person put it, the record's changes still reach it there, and the next move that lands
+clears it.
 
 - **Who a socket speaks for**: `/sync` (`apps/worker/src/devices.ts`) takes WebSocket upgrades only. A laptop
   sends its CLI token in the `authorization` header (never the URL; plain `ws:` only to loopback): the Worker

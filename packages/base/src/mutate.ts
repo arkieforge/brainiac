@@ -633,8 +633,11 @@ function move(
     .map((referrer) => ({ referrer, text: renamedIn(referrer.raw, referrer.path, note.path, path) }))
     // A relation is checked only as text, so a rewrite can't leave its note failing its type; checked anyway.
     .filter(({ referrer, text }) => text !== referrer.raw && !Array.isArray(check(sql, text, referrer.id)));
-  // A connection never rewrites a note it can't see: the change, or the approval it needs, would show it.
-  if (referrers.some(({ referrer }) => !canSee(ctx.connection, referrer)))
+  // A connection never rewrites a note it can't see: the change, or the approval it needs, would show it. A sync
+  // move carries no connection, only what its sender may read.
+  const sees = (other: NoteRow) =>
+    canSee(ctx.connection, other) && project(other, ctx.reader ?? PERSON) !== undefined;
+  if (referrers.some(({ referrer }) => !sees(referrer)))
     return invalid("path", "Notes you can't see link to this note, so only the person can move it.");
   const moved = write(sql, started, ctx, runId, note, { ...note, path, raw }, "move");
   for (const { referrer, text } of referrers)
