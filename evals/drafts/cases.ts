@@ -84,7 +84,7 @@ const LACKS =
  * experience". "I know your team has experience" says it of someone else.
  */
 const HAS =
-  /\bmy (?:[\w-]+ ){0,2}(?:experience|skills?|expertise)\b|\bI(?:['\u2019]ve| have| had)? (?:\w+ ){0,2}(?:deployed|built|used|worked|managed|ran|run|maintained|operated|experience|skills?|expertise)\b|\bI(?:['\u2019]m| am) (?:\w+ )?(?:proficient|experienced|familiar|skilled|an expert)\b|\bI (?:bring|offer) (?:\w+ ){0,4}(?:experience|skills?|expertise)\b|\bhands-on\b/i;
+  /\bmy (?:[\w-]+ ){0,2}(?:experience|skills?|expertise)\b|\bI(?:['\u2019]ve| have| had)? (?:\w+ ){0,2}(?:deployed|built|used|worked|managed|ran|run|maintained|operated|experience|skills?|expertise)\b|\bI(?:['\u2019]m| am) (?:\w+ )?(?:proficient|experienced|familiar|skilled|an expert)\b|\bI (?:bring|offer) (?:\w+ ){0,4}(?:experience|skills?|expertise)\b/i;
 
 /**
  * A sentence of the draft where the person claims `term` as theirs: "I have deployed services on Kubernetes" does,
