@@ -1,17 +1,26 @@
 // The form's change -> raw -> put path, on the fixture student's notes: an edit sends the note with only its field's
 // YAML node changed, byte for byte, and input the schema refuses sends nothing.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parseManifest, parseNote, type ClientMessage, type Manifest } from "@brainiac/core";
+import {
+  parseManifest,
+  parseNote,
+  requirementsOf,
+  type ClientMessage,
+  type Manifest,
+  type ReviewNote,
+} from "@brainiac/core";
 import { emptyState, SyncClient, type Store, type Write } from "@brainiac/sync";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   bodyOf,
+  commitEdit,
   commitField as commit,
   editField,
   fieldsOf,
+  tickRequirement,
   withBody,
   type Field,
   type SaveOnline,
@@ -47,7 +56,7 @@ function tab(raw: string, cls: "normal" | "sensitive" = "normal") {
   const save: SaveOnline = async (noteId, edit) => void online.push({ noteId, raw: edit(raw) });
   const commitField = (noteId: string, schema: Manifest | null, f: Field, input: string | boolean) =>
     commit(client, noteId, schema, f, input, save);
-  return { client, sent, writes, online, commitField };
+  return { client, sent, writes, online, commitField, save };
 }
 
 const field = (raw: string, name: string, schema: Manifest | null = manifest) => {
@@ -161,5 +170,63 @@ describe("field form", () => {
     const edited = withBody(IELTS, `${body}\nAlso took the speaking test online.\n`);
     expect(edited.startsWith(IELTS.slice(0, IELTS.length - body.length))).toBe(true);
     expect(bodyOf(edited)).toBe(`${body}\nAlso took the speaking test online.\n`);
+  });
+});
+
+const TUM_PATH = "applications/tum-msc-informatics-2027/application.md";
+const TUM = fixture(TUM_PATH);
+const MOTIVATION = "Motivation for the specialization (portal question 4)";
+/** Every fixture note as the site's copy parses it, with the application's text as `tum`. */
+const notesWith = (tum: string): ReviewNote[] =>
+  readdirSync(FIXTURES, { recursive: true, encoding: "utf8" })
+    .filter((path) => path.endsWith(".md"))
+    .map((path) => {
+      const { data } = parseNote(path === TUM_PATH ? tum : fixture(path));
+      return { id: String(data["id"]), path, data };
+    });
+const judged = (tum: string) => {
+  const notes = notesWith(tum);
+  const application = notes.find((n) => n.path === TUM_PATH);
+  if (!application) throw new Error(TUM_PATH);
+  return requirementsOf(application, notes, Date.UTC(2026, 10, 16)).map((r) => [r.need, r.status]);
+};
+
+const tick = (raw: string) => tickRequirement(raw, 3, MOTIVATION, true);
+
+describe("requirements on the site", () => {
+  it("judges the fixture TUM application as the record's query does", () => {
+    expect(judged(TUM)).toEqual([
+      ["Bachelor transcript", "met"],
+      ["IELTS 6.5 or higher, valid on the deadline", "met"],
+      ["Two recommendation letters", "missing"],
+      [MOTIVATION, "missing"],
+    ]);
+  });
+
+  it("ticks a manual requirement by adding only its done line, and unticking takes it away", () => {
+    const ticked = tickRequirement(TUM, 3, MOTIVATION, true);
+    if (!("raw" in ticked)) throw new Error(ticked.issue);
+    const added = ticked.raw.split("\n").filter((line) => !TUM.split("\n").includes(line));
+    expect(added).toEqual(["    done: true"]);
+    expect(judged(ticked.raw).at(-1)).toEqual([MOTIVATION, "met"]);
+    expect(tickRequirement(ticked.raw, 3, MOTIVATION, false)).toEqual({ raw: TUM });
+  });
+
+  it("refuses to tick a typed check, or an item the list moved away from", () => {
+    expect(tickRequirement(TUM, 0, "Bachelor transcript", true)).toHaveProperty("issue");
+    expect(tickRequirement(TUM, 2, MOTIVATION, true)).toHaveProperty("issue");
+    expect(tickRequirement(TUM, 9, MOTIVATION, true)).toHaveProperty("issue");
+  });
+
+  it("sends a tick through the client as the person's edit, and an online save for a sensitive application", async () => {
+    const normal = tab(TUM, "normal");
+    expect(await commitEdit(normal.client, ID, tick, normal.save)).toBeUndefined();
+    expect(normal.writes.at(-1)?.saved.pending).toEqual([
+      expect.objectContaining({ noteId: ID, change: expect.objectContaining({ kind: "put" }) }),
+    ]);
+    const sensitive = tab(TUM, "sensitive");
+    expect(await commitEdit(sensitive.client, ID, tick, sensitive.save)).toBeUndefined();
+    expect(sensitive.sent).toEqual([]);
+    expect(sensitive.online).toEqual([{ noteId: ID, raw: expect.stringContaining("done: true") }]);
   });
 });

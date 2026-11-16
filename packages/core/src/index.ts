@@ -66,6 +66,7 @@ export {
   FieldSpec,
   ManifestError,
   parseManifest,
+  parseRequirement,
   setType,
   validate,
   type Issue,
@@ -89,6 +90,7 @@ export {
 export {
   detect,
   expiresIn,
+  headline,
   meetsEdges,
   nextStageAt,
   overview,

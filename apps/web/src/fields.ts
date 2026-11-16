@@ -167,27 +167,41 @@ export const savesOnline = (client: SyncClient, noteId: string): boolean =>
   client.state.remote.get(noteId)?.class === "sensitive";
 
 /**
- * Sends one field edit as the person's change to the note: through the sync client (the record's mutation
- * path), or online only for a sensitive note. Resolves to what is wrong with the input, or why it wasn't saved;
- * nothing is sent for input the schema refuses.
+ * The note's next raw text with its `index`th requirement ticked (`done: true`) or unticked, or why not: only a
+ * manual requirement is ticked, and only the one the person saw (`need`), so a list changed elsewhere meanwhile
+ * never ticks the wrong item. Unticking removes `done`, leaving the note as it was before the tick.
  */
-export async function commitField(
+export function tickRequirement(raw: string, index: number, need: string, done: boolean): Edited {
+  const requirements = parseNote(raw).data["requirements"];
+  const item: unknown = Array.isArray(requirements) ? requirements[index] : undefined;
+  if (typeof item !== "object" || item === null || !("need" in item) || item.need !== need)
+    return { issue: "The requirements changed meanwhile. Look again before ticking." };
+  if (!("check" in item) || item.check !== "manual")
+    return { issue: "Only a manual requirement is ticked; the others pass on your notes." };
+  const path = ["requirements", index, "done"];
+  return { raw: patch(raw, [done ? { op: "set", path, value: true } : { op: "unset", path }]) };
+}
+
+/**
+ * Sends one front-matter edit (`edit` turns the note's text into the next) as the person's change to the note:
+ * through the sync client (the record's mutation path), or online only for a sensitive note. Resolves to what is
+ * wrong with the input, or why it wasn't saved; nothing is sent for input `edit` refuses.
+ */
+export async function commitEdit(
   client: SyncClient,
   noteId: string,
-  manifest: Manifest | null,
-  field: Field,
-  input: string | boolean,
+  edit: (raw: string) => Edited,
   online: SaveOnline,
 ): Promise<string | undefined> {
   const base = client.working(noteId);
   if (base === undefined) return "This note is gone.";
-  const edited = editField(base, manifest, field, input);
+  const edited = edit(base);
   if ("issue" in edited) return edited.issue;
   // Online, whether it changes anything is judged in order against the latest text the record accepted: the
   // client's copy lags an earlier save still on its way, so typing back its old value is still a change.
   if (savesOnline(client, noteId)) {
     const saved = await online(noteId, (latest) => {
-      const again = editField(latest, manifest, field, input);
+      const again = edit(latest);
       return "raw" in again ? again.raw : latest;
     });
     return saved && "error" in saved ? saved.error : undefined;
@@ -195,6 +209,17 @@ export async function commitField(
   if (edited.raw !== base) client.edit(noteId, edited.raw, base);
   return undefined;
 }
+
+/** Sends one field edit as the person typed it (`commitEdit`), checked against the type's schema first. */
+export const commitField = (
+  client: SyncClient,
+  noteId: string,
+  manifest: Manifest | null,
+  field: Field,
+  input: string | boolean,
+  online: SaveOnline,
+): Promise<string | undefined> =>
+  commitEdit(client, noteId, (raw) => editField(raw, manifest, field, input), online);
 
 /** The note with `body` as its body: the front-matter's bytes stay exactly as they are, never re-serialized. */
 export const withBody = (raw: string, body: string): string => raw.slice(0, splitNote(raw).bodyStart) + body;
