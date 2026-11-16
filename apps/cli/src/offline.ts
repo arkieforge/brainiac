@@ -1,6 +1,7 @@
 // Answers MCP reads from the vault's local copy while the record can't be reached (`brainiac mcp serve`). The copy
 // is the sync client's remote layer in state.db: each note as the record last sent it, with its rev, so a rev
-// read offline is one `update` takes online. It runs `callTool` from packages/base as the connection the daemon
+// read offline is one `update` takes online, and a search offline finds what the record's keywords would. It is
+// not index.db, which indexes the files as they are now, edits the record hasn't taken included. It runs `callTool` from packages/base as the connection the daemon
 // last synced with, and only for that connection's token: a narrower token gets nothing from a wider copy.
 // Everything here comes from the vault folder, so it is input: none of it shows more than the files beside it.
 import { Database } from "bun:sqlite";
@@ -9,7 +10,17 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { bunSql } from "@brainiac/base/bun";
-import { callTool, migrate, putNote, type Answer, type Connection, type Sql } from "@brainiac/base";
+import {
+  callTool,
+  chunkNote,
+  getNote,
+  migrate,
+  putChunks,
+  putNote,
+  type Answer,
+  type Connection,
+  type Sql,
+} from "@brainiac/base";
 import { NoteParseError } from "@brainiac/core";
 
 import { META, refuseSymlinks, type Access } from "./state.ts";
@@ -65,6 +76,8 @@ function load(state: Database, options: LocalCopyOptions): Loaded | string {
       const hash = createHash("sha256").update(raw).digest("hex");
       try {
         putNote(sql, { id, path, raw, rev, seq: 0, hash, class: cls });
+        // Chunked from the text the record sent, as the record chunks it, so offline search ranks as its keywords do.
+        putChunks(sql, id, rev, chunkNote(getNote(sql, id)!));
       } catch (error) {
         if (!(error instanceof NoteParseError)) throw error;
       }

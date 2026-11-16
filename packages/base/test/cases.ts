@@ -326,6 +326,20 @@ export const cases: Record<string, Case> = {
     same(hitIds(search(sql, AGENT, "okafor")), []);
   },
 
+  // A laptop's copy indexes its notes in another order than the record did, and must still answer the same.
+  "equal keyword scores rank by note, whatever order the notes were indexed in": (sql, fixtures) => {
+    migrate(sql);
+    seed(sql, fixtures);
+    const [role, tum] = [ROLE, TUM].map((path) => byPath(sql, path));
+    ok(role && tum);
+    const answers = [role, tum, role].map((note) => {
+      putChunks(sql, note.id, note.rev, [{ family: "normal", header: "[Note]", text: "transit planner" }]);
+      return hitIds(search(sql, AGENT, "transit planner"));
+    });
+    same(answers[1]?.length, 2);
+    same(answers[1], answers[2]);
+  },
+
   "re-indexing a note replaces its chunks in both families": (sql, fixtures) => {
     migrate(sql);
     seed(sql, fixtures);
