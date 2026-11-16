@@ -8,8 +8,9 @@ results, the agent skill, or prompts. The planned evals and their release gates 
 [docs/operations/quality-bar.md](../docs/operations/quality-bar.md).
 
 The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md),
-[`photos`](photos/README.md), [`mcp-tool-use`](mcp-tool-use/README.md), [`drafts`](drafts/README.md) and
-[`review-detectors`](review-detectors/README.md); every eval follows this shape:
+[`photos`](photos/README.md), [`mcp-tool-use`](mcp-tool-use/README.md), [`drafts`](drafts/README.md),
+[`review-detectors`](review-detectors/README.md) and [`retrieval`](retrieval/README.md); every eval follows this shape
+(retrieval runs no model, so it takes only `--out`, `--case` and `--hybrid`):
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.
@@ -63,6 +64,7 @@ A run checks the [release gates](../docs/operations/quality-bar.md#release-gates
 | `drafts`           | Drafts: started from `draft`, verify ok, no invented value, house rules kept   | no failing sample  |
 | `review-detectors` | Recall: seeded errors flagged                                                  | >= 0.90            |
 | `review-detectors` | Precision: new flags that name a seeded error                                  | >= 0.90            |
+| `retrieval`        | Recall@8 per route (query, search, ask context), on a `--hybrid` run           | >= 0.95            |
 
 Answerability exists because over-refusal invents no number: an answer that says "not in your record" to
 every question would pass a check that only looks for wrong values. It counts a sample as answered only when its
