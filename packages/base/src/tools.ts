@@ -1854,7 +1854,8 @@ export function checkDraft(sql: Sql, ctx: Context, note: NoteRow): Answer {
       message: `claims must be a list of {note, field, value}: ${claims.summary}. Fix it with update, then verify again.`,
     });
   // A numbered list's markers ("1. Swahili NER") are layout, not values the draft claims.
-  const text = splitNote(note.raw).body.replaceAll(/^(\s*)\d+[.)](?=\s)/gm, "$1-");
+  // Per line, as typstOf reads a list: "2025." alone on its line is text, and stays a value.
+  const text = splitNote(note.raw).body.replaceAll(/^([ \t]*)\d+[.)](?=[ \t]+\S)/gm, "$1-");
   const answer = verifyDraft(sql, call, text, claims);
   if (!answer.ok || typeof answer.value !== "object" || answer.value === null) return answer;
   const checked = answer.value as { readonly status: string };

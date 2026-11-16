@@ -1293,12 +1293,12 @@ export const toolCases: Record<string, Case> = {
           kind: "cv",
           claims: [{ note: "FACTS/TESTS/IELTS-2026-11.MD", field: "overall", value: 8 }],
         },
-        body: "1. IELTS Academic 8.0\n2. Northvale University\n",
+        body: "1. IELTS Academic 8.0\n2. Northvale University\n2025.\n\nNorthvale University\n",
       });
       const loud = call(sql, writer, "draft", { verify: String(shouted["id"]) });
       equal(loud["status"], "fix");
-      // The list's own numbers are layout: only the score was a claim, and it matched.
-      same(loud["uncited"], []);
+      // The list's own numbers are layout; a year on a line of its own is still a value, and uncited.
+      same(loud["uncited"], [{ text: "2025", kind: "number" }]);
       match(String(loud["message"]), /ielts-2026-11\.md.*sensitive/);
       // A connection that can't see the score gets it as missing, never its path.
       const floor = call(sql, as(connection(sql)), "draft", { verify: String(shouted["id"]) });
@@ -1385,7 +1385,7 @@ export const toolCases: Record<string, Case> = {
       // Submitted: the CV the portal has stays as it was, for agents and the person alike, until it goes back.
       const edit = (who: Context) =>
         callTool(sql, "update", { id: cv, rev: revOf(sql, cv), set: { title: "CV for TUM, v2b" } }, who);
-      match(JSON.stringify(edit(writer)), /version sent with TUM MSc Informatics.*preparing/);
+      match(JSON.stringify(edit(writer)), /version sent with its application.*preparing/);
       match(JSON.stringify(edit(PERSON_CTX)), /stays as it was/);
       // Moving or changing the application in the same run doesn't thaw it: it's judged as the run found it.
       const moved = mutateAll(

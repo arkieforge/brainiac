@@ -269,7 +269,8 @@ function judged<T extends { readonly status: string }>(
               issues: [
                 {
                   field: "status",
-                  message: `${effect.before?.path} is the version sent with ${application.title ?? application.path}, so it stays as it was. Write a new version, or move the application back to preparing first.`,
+                  // Never the application's title: the caller may not see it (a sensitive application).
+                  message: `${effect.before?.path} is the version sent with its application, so it stays as it was. Write a new version, or move the application back to preparing first.`,
                 },
               ],
             });
