@@ -11,7 +11,7 @@ import { fileable, fileInbox, filer, filingArgs } from "../src/filing.ts";
 import { isMassChange, isNote, otherSyncTools } from "../src/guards.ts";
 import { refusal, slashed } from "../src/hook.ts";
 import { logout, startLogin, type Waiting } from "../src/login.ts";
-import { callRecord } from "../src/mcp.ts";
+import { callRecord } from "../src/record.ts";
 import { questionsReport } from "../src/questions.ts";
 import { service } from "../src/service.ts";
 

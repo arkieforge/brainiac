@@ -2,11 +2,12 @@
 // `/mcp` with this device's token, so the tools, their answers and the connection's grants are exactly the
 // record's, as over remote MCP, and a narrowed grant applies to the next call. When the record can't be reached,
 // the same MCP server answers here instead, each call from the local copy (offline.ts): reads only, marked offline.
+// Online it loads nothing of the record's code, so an agent's session starts in milliseconds; the MCP server and
+// the local copy load on the first call the record can't answer.
 import { createInterface } from "node:readline";
 
-import { BACKGROUND_HEADER, type Answer } from "@brainiac/base";
-import { serveTools } from "@brainiac/base/mcp";
-import { type } from "arktype";
+import type { Answer } from "@brainiac/base";
+import { BACKGROUND_HEADER } from "@brainiac/base/headers";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -21,7 +22,7 @@ const failure = (id: string | number | null, message: string) =>
   JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32603, message } });
 
 /** Every JSON-RPC message in a response body, which is JSON or a stream of server-sent events. */
-function messagesIn(body: string, contentType: string): string[] {
+export function messagesIn(body: string, contentType: string): string[] {
   if (!contentType.includes("text/event-stream")) return body.trim() === "" ? [] : [body.trim()];
   return body
     .split(/\r?\n\r?\n/)
@@ -36,14 +37,14 @@ function messagesIn(body: string, contentType: string): string[] {
 }
 
 /** `<server>/mcp`, refused unless the token would travel over TLS (or stay on this machine). */
-function mcpUrl(server: string): URL {
+export function mcpUrl(server: string): URL {
   const url = new URL("/mcp", server);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(url.hostname)))
     throw new Error(`${server} isn't https: the token only travels over TLS.`);
   return url;
 }
 
-const post = (url: URL, token: string, body: string, version?: string, background?: boolean) =>
+export const post = (url: URL, token: string, body: string, version?: string, background?: boolean) =>
   fetch(url, {
     method: "POST",
     headers: {
@@ -56,41 +57,6 @@ const post = (url: URL, token: string, body: string, version?: string, backgroun
     body,
   });
 
-/**
- * One tool call on the record, as this device's connection: what `brainiac questions` and the like ask. Throws
- * with words for the person when the record can't be reached or refuses, or the tool says the call was wrong.
- */
-export async function callRecord(
-  server: string,
-  token: string,
-  name: string,
-  args: unknown,
-): Promise<unknown> {
-  const url = mcpUrl(server);
-  const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } };
-  let response: Response;
-  try {
-    response = await post(url, token, JSON.stringify(request));
-  } catch {
-    // shortcut: offline, only `brainiac mcp serve` answers from the local copy; these commands wait for the record.
-    throw new Error(`Can't reach your Brainiac record at ${url.origin}. This needs it online.`);
-  }
-  if (response.status === 401 || response.status === 403)
-    throw new Error("Brainiac refused this device's token. Run brainiac login again.");
-  if (!response.ok) throw new Error(`Brainiac answered ${response.status}. Try again.`);
-  const [answer] = messagesIn(await response.text(), response.headers.get("content-type") ?? "");
-  const parsed = ToolResult(answer === undefined ? undefined : JSON.parse(answer));
-  if (parsed instanceof type.errors) throw new Error("Brainiac's answer had no result. Try again.");
-  const [{ text }] = parsed.result.content;
-  if (parsed.result.isError) throw new Error(text);
-  return JSON.parse(text);
-}
-
-/** A tools/call answer: the tool's JSON as text, or why the call was wrong. */
-const ToolResult = type({
-  result: { content: [{ text: "string" }, "...", "unknown[]"], "isError?": "boolean" },
-});
-
 export interface Bridge {
   /** The record's server, like https://brainiac.example. Plain http only on this machine. */
   readonly server: string;
@@ -100,7 +66,7 @@ export interface Bridge {
   /** Nobody is there (the daemon's headless filer): the record narrows the connection for every call. */
   readonly background?: boolean;
   /** Answers a tool call while the record can't be reached: the local copy's reads. */
-  readonly offline?: (name: string, args: unknown) => Answer;
+  readonly offline?: (name: string, args: unknown) => Answer | Promise<Answer>;
 }
 
 /** Forwards stdin's JSON-RPC lines to `<server>/mcp` one at a time, in order, and writes each answer as a line. */
@@ -141,6 +107,7 @@ export async function serveStdio({
       response = await post(url, token, line, version, background);
     } catch {
       if (offline) {
+        const { serveTools } = await import("@brainiac/base/mcp");
         const local = new Request("http://localhost/mcp", {
           method: "POST",
           headers: {

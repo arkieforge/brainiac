@@ -84,9 +84,6 @@ export const inBackground = (connection: Connection): Connection => ({
   sensitive: false,
 });
 
-/** Sent as `1` by `brainiac mcp serve --background`, the bridge the daemon's headless filer runs. */
-export const BACKGROUND_HEADER = "brainiac-background";
-
 /** Whether `connection` may see `note`: `project`, the one read check, for a connection. */
 export const canSee = (connection: Connection | undefined, note: Pick<NoteRow, "class" | "type">): boolean =>
   project(note, principalOf(connection)) !== undefined;
