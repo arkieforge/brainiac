@@ -9,7 +9,12 @@ export interface Gate {
 }
 
 /** The floors from the quality bar, so an eval quotes them rather than its own copy. */
-export const FLOORS = { answerability: 0.95, toolUse: 0.9 } as const;
+export const FLOORS = {
+  answerability: 0.95,
+  toolUse: 0.9,
+  detectorRecall: 0.9,
+  detectorPrecision: 0.9,
+} as const;
 
 /** A share of samples that must reach `floor`. Nothing measured fails: a run that skipped every sample proves nothing. */
 export const atLeast = (name: string, floor: number, passed: number, of: number): Gate => ({
