@@ -11,6 +11,7 @@ export interface Gate {
 /** The floors from the quality bar, so an eval quotes them rather than its own copy. */
 export const FLOORS = {
   answerability: 0.95,
+  recall: 0.95,
   toolUse: 0.9,
   detectorRecall: 0.9,
   detectorPrecision: 0.9,
