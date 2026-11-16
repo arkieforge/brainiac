@@ -167,7 +167,8 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
   // BM25 from two tables isn't one scale, so each family is its own ranking, of notes and pages: a note's best
   // chunk stands for it (SQLite takes the other columns from the row `min` picks). An older revision's words are no
   // match unless the current text holds them too; such rows are dropped before the fusion, the order and the
-  // limit. One query, read until a full pool of the rest: a row per matched note or page.
+  // limit. One query, read until a full pool of the rest: a row per matched note or page. Equal scores rank by note
+  // and page, not by when a chunk was written, so a laptop's copy, indexed in its own order, ranks as the record.
   const rankings = families.map((family) => {
     const kept: Candidate[] = [];
     const rows = sql.all<Candidate>(
@@ -176,7 +177,7 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
          SELECT ${CANDIDATE}, bm25(${FTS[family]}) AS bm25 FROM ${FTS[family]}
          ${visible(`${FTS[family]}.rowid`)} AND ${FTS[family]} MATCH ?)
        SELECT chunkId, owner, fileSha, page, class, type, stale FROM matches
-       GROUP BY owner, page ORDER BY min(bm25), chunkId`,
+       GROUP BY owner, page ORDER BY min(bm25), owner, page`,
       family,
       types,
       types,

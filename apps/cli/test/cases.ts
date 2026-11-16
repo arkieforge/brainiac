@@ -1291,6 +1291,11 @@ const cases: Record<string, () => Promise<void>> = {
       );
       // A manifest, which the copy must carry for describe's types and the questions: B and C now lack a title.
       record.requireTitles();
+      // Indexed as the jobs consumer would, without vectors, so online search is keyword-only like offline.
+      for (const [id] of notes) {
+        const note = record.note(id)!;
+        putChunks(record.sql, id, note.rev, chunkNote(note));
+      }
       const connection = record.asConnection(scope);
       const token = "brn_e0a1_offline";
       const v = await open(record, folder("brainiac-vault-"), {
@@ -1309,13 +1314,16 @@ const cases: Record<string, () => Promise<void>> = {
         ["query", { type: "Question" }],
         ["get", { ids: [A, B, C] }],
         ["get", { paths: ["notes/c.md"], body: false }],
+        ["search", { text: "transit" }],
+        ["search", { text: "body" }],
+        ["search", { text: "body", type: "Note", limit: 1 }],
       ] as const;
       const refused = [
         ["update", { id: A, rev: record.note(A)!.rev, set: { status: "offline edit" } }],
         ["create", { type: "Note", fields: { title: "Offline note" } }],
         ["undo", { run: "x" }],
         ["request_info", { question: "Which school?" }],
-        // A read the copy can't answer yet (#118) is refused the same way.
+        // A read the copy can't answer is refused the same way.
         ["ask", { mode: "context", question: "Which school?" }],
         // Photos stay in the cloud: a laptop copy never holds one to hand over.
         ["photos", {}],
@@ -1376,8 +1384,10 @@ const cases: Record<string, () => Promise<void>> = {
       const syncedAt = Number(new Date(JSON.parse(answers.get(2).result.content[0].text).syncedAt));
       ok(syncedAt > 0 && syncedAt <= Date.now(), "the time of the last sync");
       const ctx = { actor: `connection:${connection.id}`, connection, now };
+      // A device that doesn't keep sensitive notes searches as the record answers a reader without the scope.
+      const held = { ...ctx, connection: { ...connection, sensitive: scope && keepSensitive } };
       for (const [i, [name, args]] of calls.entries()) {
-        const online = callTool(record.sql, name, args, ctx);
+        const online = callTool(record.sql, name, args, name === "search" ? held : ctx);
         if (!online.ok || typeof online.value !== "object" || online.value === null)
           throw new Error(JSON.stringify(online));
         if ("type" in args && args.type === "Question")
@@ -1393,7 +1403,8 @@ const cases: Record<string, () => Promise<void>> = {
         if (scope && !keepSensitive) {
           expected["cloudOnly"] =
             "Sensitive notes are cloud-only on this laptop, so they aren't in this answer. They are once the record is back online.";
-          continue; // the answers differ by exactly the notes the device doesn't hold, checked below
+          // the answers differ by exactly the notes the device doesn't hold, checked below
+          if (name !== "search") continue;
         }
         same(
           JSON.parse(answers.get(i + 2).result.content[0].text),
@@ -1405,6 +1416,13 @@ const cases: Record<string, () => Promise<void>> = {
       same(got.missing, scope && keepSensitive ? [] : [C], `the sensitive note offline, ${what}`);
       equal(got.notes.find((n: { id: string }) => n.id === A)?.rev, record.note(A)!.rev, "the record's rev");
       if (scope && !keepSensitive) ok(got.cloudOnly, "says sensitive notes are cloud-only here");
+      // Not vacuous: keyword-only, and the sensitive note is a hit only on the device that holds it.
+      const found = JSON.parse(answers.get(calls.length).result.content[0].text); // search "body"
+      same(
+        [found.mode, found.hits.map((h: { id: string }) => h.id).toSorted()],
+        ["keyword", scope && keepSensitive ? [A, B, C] : [A, B]],
+        `search offline, ${what}`,
+      );
       for (const [i, [name]] of refused.entries()) {
         const answer = answers.get(calls.length + 2 + i);
         const text: string = answer.result.content[0].text;
