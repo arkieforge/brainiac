@@ -22,6 +22,7 @@ import type { Env } from "./env.ts";
 import { serveDev } from "./dev.ts";
 import { DIGEST_CRON, sendDigests } from "./digest.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
+import { remind } from "./reminders.ts";
 import { consume } from "./jobs.ts";
 import {
   githubApp,
@@ -441,7 +442,17 @@ export default {
       return env.ASSETS.fetch(new Request(new URL("/", url), request));
     return new Response("Not found", { status: 404 });
   },
-  queue: (batch, env) => consume(batch, env),
+  async queue(batch, env, ctx) {
+    // A stage without a sending address or a public origin sends no reminder email: there is nowhere to link to.
+    if (!env.EMAIL || !env.EMAIL_FROM || !env.SITE_ORIGIN) return consume(batch, env);
+    // pg connects on the first query, so a batch with no reminder in it never opens a connection.
+    const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+    try {
+      await consume(batch, env, fetch, remind(pool, mailer(env), env.SITE_ORIGIN));
+    } finally {
+      ctx.waitUntil(pool.end());
+    }
+  },
   async scheduled(controller, env, ctx) {
     if (controller.cron === VAULT_SWEEP_CRON) {
       if (!env.VAULT_KEY_PREVIOUS) return;

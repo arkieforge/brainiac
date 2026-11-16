@@ -5,6 +5,7 @@ import { PIPELINE } from "./pages.ts";
 import { linksDue, nextLinkCheck } from "./links.ts";
 import { nextLookup, papersDue } from "./papers.ts";
 import { nextProfileCheck, profilesDue } from "./profiles.ts";
+import { nextReminder, REMINDERS, remindersDue } from "./reminders.ts";
 import { CHUNKS, EMBED_MODEL, fileOwner } from "./search.ts";
 import type { Sql } from "./sql.ts";
 import { getFile, needsJob, type FileRow } from "./vault.ts";
@@ -28,14 +29,15 @@ export const CHANGES_MS = 90 * 24 * 60 * 60_000;
  * `file` extracts an upload's text, runs the vault's checks over it and, once the file is cleared, indexes its
  * pages; `doi` looks a paper's DOI up and fills its `synced:` block (papers.ts); `drift` reads one of the
  * person's profiles through treg and fills its `synced:` block (profiles.ts); `link` checks a saved page and
- * fills its `synced:` block (links.ts).
+ * fills its `synced:` block (links.ts); `remind` takes every expiry reminder waiting out in one email
+ * (reminders.ts), owned by `REMINDERS` rather than a note.
  */
-export type JobKind = "index" | "file" | "doi" | "drift" | "link";
+export type JobKind = "index" | "file" | "doi" | "drift" | "link" | "remind";
 
 export interface Job {
   readonly id: string;
   readonly kind: JobKind;
-  /** The note's id, or for a `file` job its `fileOwner` (`file:<sha256>`). */
+  /** The note's id, for a `file` job its `fileOwner` (`file:<sha256>`), for a `remind` job `REMINDERS`. */
   readonly noteId: string;
   /** The note's revision, or the file's `rev`, which every confirmation bumps. */
   readonly rev: number;
@@ -70,6 +72,7 @@ export function dueJobs(sql: Sql, now: number): Job[] {
     for (const paper of papersDue(sql, now)) enqueue(sql, "doi", paper.id, paper.rev);
     for (const profile of profilesDue(sql)) enqueue(sql, "drift", profile.id, profile.rev);
     for (const link of linksDue(sql, now)) enqueue(sql, "link", link.id, link.rev);
+    if (remindersDue(sql, now)) enqueue(sql, "remind", REMINDERS, 0);
     sql.all(
       "UPDATE jobs SET status = 'failed' WHERE status = 'dispatched' AND attempts >= ? AND dispatchedAt <= ?",
       MAX_ATTEMPTS,
@@ -114,16 +117,19 @@ export function markDispatched(sql: Sql, ids: readonly string[], now: number): v
 }
 
 // A job is current while its note (live) or file is still at the job's revision; anything else is stale, since a
-// newer revision has its own job. A file job's owner is `file:<sha256>`.
+// newer revision has its own job. A file job's owner is `file:<sha256>`. A remind job reads what waits when it
+// runs, so it is never stale.
 const CURRENT = `EXISTS (SELECT 1 FROM notes
     WHERE notes.id = jobs.noteId AND notes.rev = jobs.rev AND notes.deletedAt IS NULL)
   OR (jobs.kind = 'file' AND EXISTS (SELECT 1 FROM files
-    WHERE files.sha256 = substr(jobs.noteId, 6) AND files.rev = jobs.rev))`;
+    WHERE files.sha256 = substr(jobs.noteId, 6) AND files.rev = jobs.rev))
+  OR jobs.kind = 'remind'`;
 
 /** What a job works on, as of its revision. */
 export type JobInput =
   | { readonly job: Job & { readonly kind: "index" | "doi" | "drift" | "link" }; readonly note: NoteRow }
-  | { readonly job: Job & { readonly kind: "file" }; readonly file: FileRow };
+  | { readonly job: Job & { readonly kind: "file" }; readonly file: FileRow }
+  | { readonly job: Job & { readonly kind: "remind" } };
 
 /** The note or file a job works on, at the job's revision; a stale job is dropped and `undefined` returned. */
 export function jobInput(sql: Sql, jobId: string): JobInput | undefined {
@@ -132,6 +138,7 @@ export function jobInput(sql: Sql, jobId: string): JobInput | undefined {
     const note = getNote(sql, job.noteId);
     if (note) return { job: { ...job, kind: job.kind }, note };
   }
+  if (job?.kind === "remind") return { job: { ...job, kind: job.kind } };
   if (job?.kind === "file") {
     const file = getFile(sql, job.noteId.slice("file:".length));
     if (file) return { job: { ...job, kind: job.kind }, file };
@@ -205,7 +212,7 @@ const HISTORY_GRACE_MS = 24 * 60 * 60_000;
 
 /**
  * When the record next has background work: a job to dispatch or retry, a tombstone to purge, history
- * (revisions, the change feed) past its window, or a held change whose hold runs out.
+ * (revisions, the change feed) past its window, a held change whose hold runs out, or an expiry reminder.
  */
 export function nextWake(sql: Sql, now: number): number | null {
   const full = inFlight(sql, now) >= IN_FLIGHT;
@@ -240,6 +247,7 @@ export function nextWake(sql: Sql, now: number): number | null {
     nextLookup(sql, now),
     nextProfileCheck(sql, now),
     nextLinkCheck(sql, now),
+    nextReminder(sql, now),
   ].filter((at) => typeof at === "number");
   return times.length > 0 ? Math.min(...times) : null;
 }
@@ -259,7 +267,7 @@ export function purge(sql: Sql, now: number): void {
       `DELETE FROM vectors WHERE chunkId IN (SELECT id FROM chunks WHERE noteId IN (${expired}))`,
       before,
     );
-    for (const table of ["chunks", "revisions", "jobs", "checks", "questions", "proposals"]) {
+    for (const table of ["chunks", "revisions", "jobs", "checks", "questions", "proposals", "reminders"]) {
       sql.all(`DELETE FROM ${table} WHERE noteId IN (${expired})`, before);
     }
     sql.all(`DELETE FROM edges WHERE fromId IN (${expired}) OR toId IN (${expired})`, before, before);

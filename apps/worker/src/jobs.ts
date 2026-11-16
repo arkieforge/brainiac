@@ -23,6 +23,7 @@ import { lookupDoi, type Web } from "./connectors/doi.ts";
 import { readLink } from "./connectors/links.ts";
 import { readProfile } from "./connectors/profiles.ts";
 import type { Env } from "./env.ts";
+import type { Remind } from "./reminders.ts";
 
 /** The OCR Worker (apps/ocr): what it read in an image, for the checks and the MRZ parse only. */
 export interface Ocr {
@@ -48,6 +49,8 @@ export async function consume(
   env: Pick<Env, "BASE" | "TREG_TOKEN" | "BROWSER"> & { readonly AI: Models; readonly OCR: Ocr },
   /** The outside world, for lookups: a test answers in its place. */
   web: Web = fetch,
+  /** Sends a record's expiry reminder email; a stage that sends no email sends nothing, and counts them sent. */
+  remind: Remind = async () => {},
 ): Promise<void> {
   // A batch's jobs run side by side, so a re-index backlog doesn't hold a fresh upload behind it one at a time. Its
   // OCR calls go one at a time: each holds an image's bytes in the OCR Worker's memory while it waits its turn.
@@ -76,6 +79,9 @@ export async function consume(
           const print = BROWSER && ((url: string) => BROWSER.quickAction("pdf", { url }));
           const read = await readLink(work.work, { token: env.TREG_TOKEN, print }, web);
           await base.installLink(message.body.jobId, read.seen, read.pdf);
+        } else if (work?.kind === "remind") {
+          await remind(message.body.base, work.reminder);
+          await base.installReminders(message.body.jobId, work.reminder.covered);
         } else if (work?.kind === "file") {
           const extracted = await extract(env.AI, ocr, work);
           // Only pages that can be indexed are embedded: none, while a page needs reading.
