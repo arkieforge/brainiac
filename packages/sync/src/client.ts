@@ -146,7 +146,7 @@ export class SyncClient {
   working(noteId: string): string | undefined {
     let text = this.state.remote.get(noteId)?.raw;
     for (const { noteId: id, change } of [...this.#landed, ...this.state.pending]) {
-      if (id !== noteId) continue;
+      if (id !== noteId || change.kind === "move") continue;
       if (change.kind === "delete") text = undefined;
       else if (change.kind === "create" || text === undefined) text = change.raw;
       else {
@@ -220,6 +220,12 @@ export class SyncClient {
   delete(noteId: string, base = this.working(noteId)): void {
     if (base === undefined) throw new Error(`No note ${noteId} to delete.`);
     this.#queue(noteId, { kind: "delete", base });
+    this.#commit();
+  }
+
+  /** Queues a move of the note to `path` (its file renamed on disk); the record rewrites every link to it. */
+  move(noteId: string, path: string): void {
+    this.#queue(noteId, { kind: "move", path });
     this.#commit();
   }
 
@@ -436,14 +442,15 @@ export class SyncClient {
           for (const b of (state.blocked.get(pending.noteId) ?? []).toReversed()) {
             if (refused(b) && b.change.kind === "put" && fixed.has(b.change.raw)) fixed.add(b.change.base);
           }
-          this.#unblock(
-            pending.noteId,
-            (b) => refused(b) && b.change.kind !== "delete" && fixed.has(b.change.raw),
-          );
+          this.#unblock(pending.noteId, (b) => refused(b) && "raw" in b.change && fixed.has(b.change.raw));
         }
         // A create landed: a refused create of the same note (sent again once fixed) no longer stands.
         if (pending && message.ok && !message.conflict && pending.change.kind === "create") {
           this.#unblock(pending.noteId, (b) => !b.proposalId && b.change.kind === "create");
+        }
+        // A move landed: one refused before it no longer stands, since the note is where this one put it.
+        if (pending && message.ok && pending.change.kind === "move") {
+          this.#unblock(pending.noteId, (b) => b.change.kind === "move");
         }
         if (pending && (!message.ok || message.conflict)) {
           const blocked = state.blocked.get(pending.noteId) ?? [];

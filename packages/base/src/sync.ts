@@ -370,6 +370,13 @@ function apply(sql: Sql, message: Mutate, ctx: Context, reader: Principal): Resu
   if (ctx.readOnly) return { ...done, ok: false, error: "This connection can only read." };
   const current = project(getNote(sql, noteId), reader);
 
+  if (change.kind === "move") {
+    if (!current) return { ...done, ok: false, error: `No note with id ${noteId}.` };
+    // On the note as it is now: a move doesn't depend on its text, and it rewrites every link to the note.
+    const moved = mutate(sql, { op: "move", noteId, baseRev: current.rev, path: change.path }, ctx);
+    return moved.status === "applied" ? { ...done, ok: true, rev: moved.rev } : refused(done, moved);
+  }
+
   // Text that doesn't parse is refused here, as a result that uses up its number, never thrown: a throw
   // would roll back and leave the client resending it forever, stuck behind it.
   const unreadable = change.kind === "delete" ? undefined : parseError(change.raw);

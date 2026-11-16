@@ -477,7 +477,7 @@ const cases: Record<string, () => Promise<void>> = {
     again.daemon.stop();
   },
 
-  async "a note the record moves moves on disk too, and one the person moved stays where they put it"() {
+  async "a note the record moves moves on disk too, and one the person moves moves in the record"() {
     const v = await vault();
     v.record.move(A, "filed/a.md");
     await v.until(() => v.read("filed/a.md") !== undefined && v.read("notes/a.md") === undefined, "the move");
@@ -488,14 +488,86 @@ const cases: Record<string, () => Promise<void>> = {
     v.write("filed/a.md", v.read("filed/a.md")!.replace("start", "saved after the move"));
     await v.until(() => v.record.note(A)?.raw.includes("saved after the move") ?? false, "the save");
     equal(v.record.note(A)?.path, "filed/a.md");
-    // Moved on disk by the person (the record keeps its path): a move in the record doesn't drag it back.
+    // Moved on disk by the person: the record moves it too, so a later move in the record moves the file again.
     mkdirSync(join(v.root, "mine"));
     renameSync(join(v.root, "notes/b.md"), join(v.root, "mine/b.md"));
-    await v.until(() => v.daemon.state.known("mine/b.md") !== undefined, "the local move");
+    await v.until(() => v.daemon.client.state.remote.get(B)?.path === "mine/b.md", "the local move");
+    equal(v.record.note(B)?.path, "mine/b.md");
     v.record.move(B, "filed/b.md");
-    await v.until(() => v.daemon.client.state.remote.get(B)?.path === "filed/b.md", "the record's move");
-    ok(v.read("mine/b.md")?.includes(`id: ${B}`), "it stays where the person put it");
-    equal(v.read("filed/b.md"), undefined);
+    await v.until(
+      () => v.read("filed/b.md") !== undefined && v.read("mine/b.md") === undefined,
+      "the record's move",
+    );
+    ok(v.read("filed/b.md")!.includes(`id: ${B}`), "the same note");
+    v.daemon.stop();
+  },
+
+  async "a note renamed on disk keeps its id, history and every link to it"() {
+    const D = "01M6AAAAAAAAAAAAAAAAAAAAA4";
+    const record = new TestRecord();
+    record.seed(A, "notes/a.md");
+    record.seed(B, "notes/b.md", "see [A](a.md)\n");
+    record.seed(C, "notes/c.md");
+    record.seed(D, "other/d.md", "and [A](../notes/a.md)\n");
+    const v = await open(record, folder("brainiac-vault-"));
+    const before = revisions(v, A);
+    mkdirSync(join(v.root, "filed"));
+    renameSync(join(v.root, "notes/a.md"), join(v.root, "filed/renamed.md"));
+    await v.until(
+      () =>
+        (v.read("notes/b.md")?.includes("[A](../filed/renamed.md)") ?? false) &&
+        (v.read("other/d.md")?.includes("[A](../filed/renamed.md)") ?? false),
+      "every link rewritten on disk",
+    );
+    equal(v.record.note(A)?.path, "filed/renamed.md", "moved in the record");
+    equal(v.record.byPath("filed/renamed.md")?.id, A, "the same id");
+    equal(v.record.liveCount(), 4, "no new note");
+    same(revisions(v, A).slice(0, before.length), before, "its history goes on");
+    ok(v.record.note(B)!.raw.includes("[A](../filed/renamed.md)"), "the record's links too");
+    ok(v.record.note(D)!.raw.includes("[A](../filed/renamed.md)"));
+    equal(v.read("notes/a.md"), undefined);
+    // Renamed and edited at once, with the link rewritten by the editor too (as Obsidian does): one note, one
+    // link, and no conflict between the record's rewrite and the editor's.
+    renameSync(join(v.root, "filed/renamed.md"), join(v.root, "filed/final.md"));
+    v.write("filed/final.md", v.read("filed/final.md")!.replace("start", "edited as it moved"));
+    v.write("notes/b.md", v.read("notes/b.md")!.replace("renamed.md", "final.md"));
+    await v.until(
+      () =>
+        v.record.note(A)?.path === "filed/final.md" &&
+        (v.record.note(A)?.raw.includes("edited as it moved") ?? false) &&
+        v.daemon.client.state.pending.length === 0,
+      "the second move",
+    );
+    ok(v.record.note(B)!.raw.includes("see [A](../filed/final.md)\n"), "one link, to the new name");
+    equal(v.daemon.client.state.blocked.size, 0, "no conflict");
+    equal(v.read("filed/final.md"), v.record.note(A)!.raw);
+    v.daemon.stop();
+  },
+
+  async "a move the record refuses leaves the file where the person put it, still in sync"() {
+    const record = new TestRecord();
+    record.asConnection(); // without the sensitive scope
+    record.seed(A, "notes/a.md");
+    record.seed(B, "notes/b.md");
+    record.seed(C, "private/c.md", "about [A](../notes/a.md)\n", "sensitive");
+    const v = await open(record, folder("brainiac-vault-"));
+    renameSync(join(v.root, "notes/a.md"), join(v.root, "notes/z.md"));
+    await v.until(
+      () => v.daemon.client.state.blocked.get(A)?.some((b) => b.change.kind === "move") ?? false,
+      "the refusal",
+    );
+    // A note it can't see links to it: the move would rewrite that note, so only the person can move it.
+    equal(v.record.note(A)?.path, "notes/a.md");
+    ok(v.record.note(C)!.raw.includes("(../notes/a.md)"), "the hidden note is untouched");
+    // The refused move holds no text: the record's edits still reach the file where the person put it.
+    const site = v.record.client();
+    await v.until(() => site.working(A) !== undefined, "the site to load");
+    site.edit(A, setField(site.working(A)!, "status", "from the site"));
+    await v.until(() => v.read("notes/z.md")?.includes("from the site") ?? false, "the edit on disk");
+    equal(v.read("notes/a.md"), undefined);
+    // Put back where the record has it: the move lands as a no-op and the refusal clears.
+    renameSync(join(v.root, "notes/z.md"), join(v.root, "notes/a.md"));
+    await v.until(() => !v.daemon.client.state.blocked.has(A), "the refusal to clear");
     v.daemon.stop();
   },
 
@@ -785,7 +857,8 @@ const cases: Record<string, () => Promise<void>> = {
     const v = await vault({}, undefined, 4); // 7 notes, all in notes/
     renameSync(join(v.root, "notes"), join(v.root, "moved"));
     await v.until(() => v.daemon.state.known("moved/a.md") !== undefined, "the move");
-    equal(v.daemon.paused(), undefined, "moves change nothing in the record");
+    equal(v.daemon.paused(), undefined, "a move is one change to each note, not a delete and a create");
+    await v.until(() => v.record.note(A)?.path === "moved/a.md", "the moves in the record");
     equal(v.record.liveCount(), 7);
     v.daemon.stop();
   },

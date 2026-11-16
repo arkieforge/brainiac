@@ -120,7 +120,8 @@ export class Daemon {
   #purged = false;
   /**
    * Where the record had each note when its file was last written for it: a file still there is one the record
-   * moves (a move on the site or by an agent), while one the person moved on disk stays where they put it.
+   * moves (a move on the site or by an agent), while one the person moved on disk stays where they put it (and
+   * goes to the record as a move of its own).
    */
   readonly #recordPaths = new Map<string, string>();
 
@@ -503,7 +504,10 @@ export class Daemon {
       // A create the record refused, fixed in the file: it is sent again as a create, since the note never was.
       if (refused) this.#client.create(id, normalizePath(path), raw, "normal");
       // A refused edit undone in the file: sent anyway, so the record's no-op answer clears the block.
-      else if (raw !== this.#client.working(id) || state.blocked.get(id)?.some((b) => !b.proposalId)) {
+      else if (
+        raw !== this.#client.working(id) ||
+        state.blocked.get(id)?.some((b) => !b.proposalId && b.change.kind !== "move")
+      ) {
         this.#client.edit(id, raw, known.text);
       }
       if (this.#withheld(id)) return this.#withhold(id); // the save is sent; the file still leaves the device
@@ -547,13 +551,15 @@ export class Daemon {
       }
       text = named;
     }
-    // Moved on disk: it keeps its path in the record, since the protocol has no move yet (#38).
-    if (moved && id === moved.noteId) this.#state.forget(moved.path);
+    const isMove = moved !== undefined && id === moved.noteId;
+    if (isMove) this.#state.forget(moved.path);
     this.#state.setKnown({ path, noteId: id, text });
     if (this.#client.state.remote.has(id) || this.#client.working(id) !== undefined) {
+      // Moved on disk: the record moves it too, and rewrites every link to it; an edit made with the move follows.
+      if (isMove) this.#client.move(id, normalizePath(path));
       // Made on the moved file's text; a note seen here for the first time has no base, so every difference
       // is a conflict, never an overwrite.
-      const base = moved && id === moved.noteId ? moved.text : "";
+      const base = isMove ? moved.text : "";
       if (text !== this.#client.working(id)) this.#client.edit(id, text, base);
     } else this.#client.create(id, normalizePath(path), text, "normal");
     // A file brought back for a note this device doesn't keep (an editor saving it again, unchanged or not).
@@ -602,8 +608,9 @@ export class Daemon {
 
   #write(id: string): void {
     const { state } = this.#client;
-    // A note with an edit the record refused keeps the person's text until they resolve it.
-    if (state.blocked.has(id)) return;
+    // A note with an edit the record refused keeps the person's text until they resolve it. A refused move holds
+    // no text: the file stays where the person put it, and the record's changes still reach it there.
+    if (state.blocked.get(id)?.some((b) => b.change.kind !== "move")) return;
     const remote = state.remote.get(id);
     const created = state.pending.find((p) => p.noteId === id && p.change.kind === "create")?.change;
     const onDisk = this.#state.pathOf(id);

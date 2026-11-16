@@ -2,10 +2,14 @@ import { type } from "arktype";
 
 // The sync protocol between a client (tab, phone, daemon) and the record's DO. See docs/internals/sync-engine.md.
 
-/** A client's change to one note. Edits and deletes carry the text they started from, for the three-way merge. */
+/**
+ * A client's change to one note. Edits and deletes carry the text they started from, for the three-way merge. A
+ * move (a file renamed on disk) carries only where the note goes: the record rewrites every link to it.
+ */
 const Change = type({ kind: "'create'", path: "string", raw: "string", class: "'normal' | 'sensitive'" })
   .or({ kind: "'put'", raw: "string", base: "string" })
-  .or({ kind: "'delete'", base: "string" });
+  .or({ kind: "'delete'", base: "string" })
+  .or({ kind: "'move'", path: "string" });
 export type Change = typeof Change.infer;
 
 const seq = "number.integer >= 0";
