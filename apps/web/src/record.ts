@@ -2,7 +2,7 @@
 // in this tab's IndexedDB slot so a returning visit shows the record before the socket is up. Every edit goes
 // through the client's mutate path; nothing here names a record, the session does. The store is keyed by the
 // signed-in account, so two people sharing a browser never share a copy.
-import type { Manifest, ServerMessage } from "@brainiac/core";
+import type { Manifest, PlanItem, ServerMessage } from "@brainiac/core";
 import { SyncClient } from "@brainiac/sync";
 import { openTabStore } from "@brainiac/sync/browser";
 import { useSyncExternalStore } from "react";
@@ -36,6 +36,18 @@ export interface FileItem {
   readonly shared: boolean;
 }
 
+/** An open proposal as the record lists it for the person (`pending` in packages/base). */
+export interface ProposalItem {
+  readonly id: string;
+  readonly kind: "change" | "conflict";
+  /** Who proposed it: GitHub, an agent's host, the person's laptop. */
+  readonly by: string;
+  /** What accepting it does to each note. */
+  readonly items: readonly PlanItem[];
+  /** When a held change applies on its own; null when it waits for the person. */
+  readonly autoApplyAt: number | null;
+}
+
 const LAST_USER = "brainiac:user";
 /** IndexedDB names start with this, so signing out can clear them all (apps/worker/src/auth/pages.ts). */
 const STORE_PREFIX = "brainiac:";
@@ -51,6 +63,13 @@ let status: Status = "loading";
 let client: SyncClient | undefined;
 let manifest: Manifest | null = null;
 let files: readonly FileItem[] = [];
+/**
+ * The record's open proposals, from `/api/proposals`; `undefined` until it answers. Kept in memory only, like
+ * sensitive notes: a proposal can carry one's values, and this device may not be the person's own.
+ */
+let proposals: readonly ProposalItem[] | undefined;
+/** Counts asks for the list, so an answer overtaken by a later ask is dropped. */
+let proposalsAsked = 0;
 /** The record has answered with its manifest this visit: until then, checks that need the schema can't run. */
 let schemaLoaded = false;
 let release: (() => Promise<void>) | undefined;
@@ -123,6 +142,8 @@ function connect() {
   ws.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
     const message: ServerMessage = JSON.parse(event.data);
+    // The record's proposals changed: one came, went, or turned into a conflict.
+    if (message.type === "proposals") return void loadProposals();
     client?.receive(message);
     // Live once the client took the record's answer to its hello (what changed, or all of it): before that, this
     // tab holds only its stored copy, without the sensitive notes it never keeps. An answer it set aside (one an
@@ -131,8 +152,11 @@ function connect() {
     if (
       (message.type === "snapshot" && cursor === message.seq) ||
       (message.type === "changes" && cursor === message.to)
-    )
+    ) {
+      // Back online: proposals decided or made while this tab was away come in with the record.
+      if (status !== "live") void loadProposals();
       setStatus("live");
+    }
   });
   ws.addEventListener("close", () => {
     if (socket !== ws) return;
@@ -246,6 +270,16 @@ export async function refresh() {
   changed();
 }
 
+/** Asks the record for its open proposals; the socket says when to ask again. */
+export async function loadProposals() {
+  const asked = ++proposalsAsked;
+  const res = await api("/api/proposals").catch(() => undefined);
+  const body = res?.ok ? await res.json().catch(() => undefined) : undefined;
+  if (stopped || asked !== proposalsAsked || !Array.isArray(body?.proposals)) return;
+  proposals = body.proposals;
+  changed();
+}
+
 /** Same-origin JSON calls to the Worker's site routes (apps/worker/src/site.ts). */
 export const api = (path: string, init: RequestInit = {}) =>
   fetch(path, { ...init, credentials: "same-origin" });
@@ -259,6 +293,7 @@ async function stop() {
   client = undefined;
   accepted.clear();
   files = [];
+  proposals = undefined;
   manifest = null;
   schemaLoaded = false;
   await release?.();
@@ -325,7 +360,7 @@ export function useRecord() {
     () => version,
     () => 0,
   );
-  return { status, client, manifest, files, schemaLoaded };
+  return { status, client, manifest, files, schemaLoaded, proposals };
 }
 
 /** Every note this tab can show, as the person sees it (remote + pending). */

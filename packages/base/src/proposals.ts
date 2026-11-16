@@ -18,7 +18,7 @@ import {
 import type { NeedsApproval } from "./approvals.ts";
 import { connectionOf } from "./connections.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
-import { caughtUp } from "./github.ts";
+import { caughtUp, GITHUB_ACTOR } from "./github.ts";
 import type { Action, Proposed } from "./hold.ts";
 import {
   mutate,
@@ -32,6 +32,8 @@ import {
   type UndoResult,
 } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
+import { ORCID_ACTOR } from "./orcid.ts";
+import { project, type Principal } from "./project.ts";
 import type { Sql } from "./sql.ts";
 import { forgetProposed } from "./vault.ts";
 
@@ -204,6 +206,94 @@ export function decide(sql: Sql, proposalId: string, decision: "accept" | "rejec
   }
   if (proposal.kind === "conflict") return pick(sql, proposal, ctx);
   return refused("Schema proposals are decided in organize.");
+}
+
+/**
+ * The notes a proposal would change, if `reader` may see every one of them, as proposed and as it is now (a note
+ * made sensitive since hides its proposals too); `undefined` otherwise, and for a schema proposal.
+ */
+export function proposalNotes(
+  sql: Sql,
+  proposal: Pick<ProposalRow, "kind" | "patch" | "noteId">,
+  reader: Principal,
+): string[] | undefined {
+  if (proposal.kind === "conflict")
+    return proposal.noteId !== null && project(getNote(sql, proposal.noteId), reader)
+      ? [proposal.noteId]
+      : undefined;
+  if (proposal.kind !== "change") return undefined;
+  const items: PlanItem[] = JSON.parse(proposal.patch);
+  const seen = items.every((item) => {
+    const note = getNote(sql, item.noteId);
+    const after = item.patch.fields["type"]?.after ?? note?.type ?? null;
+    return (
+      project({ class: item.class, type: typeof after === "string" ? after : null }, reader) &&
+      (note === undefined || project(note, reader))
+    );
+  });
+  return seen ? items.map((item) => item.noteId) : undefined;
+}
+
+/** An open proposal as the person decides it on the site. */
+export interface Pending {
+  readonly id: string;
+  readonly kind: "change" | "conflict";
+  /** Who proposed it, in the person's words: GitHub, an agent's host, their laptop. */
+  readonly by: string;
+  /**
+   * What accepting it does to each note, before and after. A conflict's is its kept-out side over the note as it is
+   * now, at the note's current revision.
+   */
+  readonly items: readonly PlanItem[];
+  /** When a held change applies on its own; null when it waits for the person. */
+  readonly autoApplyAt: number | null;
+}
+
+/** Who made a proposal, from its actor, for the person to recognise. */
+function proposer(sql: Sql, actor: string): string {
+  if (actor === GITHUB_ACTOR) return "GitHub";
+  if (actor === ORCID_ACTOR) return "ORCID";
+  if (!actor.startsWith("connection:")) return "You";
+  const connection = connectionOf(sql, actor);
+  if (!connection) return "A connection you removed";
+  if (connection.oauthClientId === null) return "brainiac on your laptop";
+  try {
+    return new URL(connection.oauthClientId).host;
+  } catch {
+    return "An agent";
+  }
+}
+
+/** Every open proposal `reader` may see, oldest first, with what it would change. Schema proposals are organize's. */
+export function pending(sql: Sql, reader: Principal): Pending[] {
+  return sql
+    .all<ProposalRow>("SELECT * FROM proposals WHERE status = 'open' ORDER BY id")
+    .flatMap((proposal): Pending[] => {
+      if (proposal.kind === "schema" || !proposalNotes(sql, proposal, reader)) return [];
+      let items: PlanItem[];
+      if (proposal.kind === "change") items = JSON.parse(proposal.patch);
+      else {
+        const note = proposal.noteId === null ? undefined : getNote(sql, proposal.noteId);
+        if (!note) return [];
+        const kept: Diff = JSON.parse(proposal.patch);
+        items = [{ noteId: note.id, baseRev: note.rev, path: note.path, class: note.class, patch: kept }];
+      }
+      return [
+        {
+          id: proposal.id,
+          kind: proposal.kind,
+          by: proposer(sql, proposal.actor),
+          items,
+          autoApplyAt: proposal.autoApplyAt,
+        },
+      ];
+    });
+}
+
+/** Counts every change to any proposal (a trigger keeps it): when it moves, the person's open lists are stale. */
+export function proposalsRev(sql: Sql): number {
+  const [row] = sql.all<{ value: string }>("SELECT value FROM meta WHERE key = 'proposals'");
+  return Number(row?.value ?? 0);
 }
 
 /** Withdraws one of the caller's own open proposals; nothing more is in an agent's hands. */

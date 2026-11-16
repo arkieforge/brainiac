@@ -103,7 +103,15 @@ export {
   type ProfileSeen,
   type ProfileWork,
 } from "./profiles.ts";
-export { decide, releaseDue, withdraw, type Decided } from "./proposals.ts";
+export {
+  decide,
+  pending,
+  proposalsRev,
+  releaseDue,
+  withdraw,
+  type Decided,
+  type Pending,
+} from "./proposals.ts";
 export { digest, questionEmails, setQuestionEmails, type Digest } from "./questions.ts";
 export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";

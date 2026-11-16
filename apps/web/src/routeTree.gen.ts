@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProposalsRouteImport } from './routes/proposals'
 import { Route as QuestionsRouteImport } from './routes/questions'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as FilesFileIdRouteImport } from './routes/files.$fileId'
@@ -18,6 +19,11 @@ import { Route as NNoteIdRouteImport } from './routes/n.$noteId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProposalsRoute = ProposalsRouteImport.update({
+  id: '/proposals',
+  path: '/proposals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const QuestionsRoute = QuestionsRouteImport.update({
@@ -43,6 +49,7 @@ const NNoteIdRoute = NNoteIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
   '/files/$fileId': typeof FilesFileIdRoute
@@ -65,12 +74,25 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/questions' | '/review' | '/files/$fileId' | '/n/$noteId'
+  fullPaths:
+    | '/'
+    | '/proposals'
+    | '/questions'
+    | '/review'
+    | '/files/$fileId'
+    | '/n/$noteId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/questions' | '/review' | '/files/$fileId' | '/n/$noteId'
+  to:
+    | '/'
+    | '/proposals'
+    | '/questions'
+    | '/review'
+    | '/files/$fileId'
+    | '/n/$noteId'
   id:
     | '__root__'
     | '/'
+    | '/proposals'
     | '/questions'
     | '/review'
     | '/files/$fileId'
@@ -79,6 +101,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ProposalsRoute: typeof ProposalsRoute
   QuestionsRoute: typeof QuestionsRoute
   ReviewRoute: typeof ReviewRoute
   FilesFileIdRoute: typeof FilesFileIdRoute
@@ -92,6 +115,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/proposals': {
+      id: '/proposals'
+      path: '/proposals'
+      fullPath: '/proposals'
+      preLoaderRoute: typeof ProposalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/questions': {
@@ -127,6 +157,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ProposalsRoute: ProposalsRoute,
   QuestionsRoute: QuestionsRoute,
   ReviewRoute: ReviewRoute,
   FilesFileIdRoute: FilesFileIdRoute,

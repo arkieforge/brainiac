@@ -18,7 +18,7 @@ brainiac ask "what is my current role and since when?"
 
 `brainiac scan` reads files on the laptop and prints what each becomes; nothing is sent, and `brainiac import`
 alone sends what the last scan read (`apps/cli/src/imports.ts`, mapping in `packages/core/src/imports.ts`). Every
-note arrives as a proposal for you to accept or reject (the site's list of proposals is #115), even from a
+note arrives as a proposal for you to accept or reject on the site's Proposals page, even from a
 write-level connection.
 What the record already has (the same type key, like a role's org, title and start, or the same title) is left
 out, so importing twice changes nothing.

@@ -43,7 +43,7 @@ import {
 import { importInto } from "./imports.ts";
 import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
-import { withdraw, type Decided } from "./proposals.ts";
+import { proposalNotes, withdraw, type Decided } from "./proposals.ts";
 import { requestFill, type FillField } from "./secrets.ts";
 import { fileOwner, neighbors, search } from "./search.ts";
 import type { Sql } from "./sql.ts";
@@ -277,7 +277,7 @@ interface ProposalRow {
   readonly actor: string;
   readonly autoApplyAt: number | null;
   readonly status: string;
-  readonly kind: string;
+  readonly kind: "change" | "conflict" | "schema";
 }
 
 /** Proposals as rows, each only if the caller may see every note it would change. */
@@ -286,24 +286,8 @@ function proposalRows(sql: Sql, ctx: Context): Row[] {
   return sql
     .all<ProposalRow>("SELECT id, noteId, patch, actor, autoApplyAt, status, kind FROM proposals")
     .flatMap((proposal) => {
-      let notes: string[];
-      if (proposal.kind === "change") {
-        const items: PlanItem[] = JSON.parse(proposal.patch);
-        const seen = items.every((item) => {
-          const note = getNote(sql, item.noteId);
-          const after = item.patch.fields["type"]?.after ?? note?.type ?? null;
-          // Seen as it was proposed and as it is now: a note made sensitive since hides its proposals too.
-          return (
-            project({ class: item.class, type: typeof after === "string" ? after : null }, reader) &&
-            (note === undefined || project(note, reader))
-          );
-        });
-        if (!seen) return [];
-        notes = items.map((item) => item.noteId);
-      } else if (proposal.kind === "conflict" && proposal.noteId !== null) {
-        if (!project(getNote(sql, proposal.noteId), reader)) return [];
-        notes = [proposal.noteId];
-      } else return [];
+      const notes = proposalNotes(sql, proposal, reader);
+      if (!notes) return [];
       const data = {
         type: "Proposal",
         kind: proposal.kind,

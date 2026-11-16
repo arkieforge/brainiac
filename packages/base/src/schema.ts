@@ -377,6 +377,15 @@ const MIGRATIONS: readonly (readonly string[])[] = [
       sent INTEGER NOT NULL DEFAULT 0
     ) WITHOUT ROWID`,
   ],
+  // A counter every change to a proposal bumps, so the record tells the person's open tabs their list of proposals
+  // changed without reading the proposals on each write.
+  [
+    "INSERT OR IGNORE INTO meta (key, value) VALUES ('proposals', '0')",
+    `CREATE TRIGGER proposals_added AFTER INSERT ON proposals
+     BEGIN UPDATE meta SET value = value + 1 WHERE key = 'proposals'; END`,
+    `CREATE TRIGGER proposals_changed AFTER UPDATE ON proposals
+     BEGIN UPDATE meta SET value = value + 1 WHERE key = 'proposals'; END`,
+  ],
 ];
 
 /** The SQL schema version this code writes. */
