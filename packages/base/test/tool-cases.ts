@@ -12,7 +12,9 @@ import {
   connect,
   digest,
   draftRendering,
+  mutateAll,
   getNote,
+  PACKET_BYTES,
   packetOf,
   grant,
   migrate,
@@ -1282,6 +1284,26 @@ export const toolCases: Record<string, Case> = {
       // The draft's own text is escaped: "#set" prints, it doesn't run.
       ok(rendering.source.includes("= Nadia Karim") && rendering.source.includes("C\\# and \\#set."));
       match(refused(sql, writer, "draft", { verify: n.tum }), /verify takes a Draft/);
+      // A claim names its note however verify reads it: by path in any case, or by id.
+      const shouted = call(sql, writer, "create", {
+        type: "Draft",
+        path: "applications/tum-msc-informatics-2027/cv-v3.md",
+        fields: {
+          title: "CV for TUM, shouted",
+          kind: "cv",
+          claims: [{ note: "FACTS/TESTS/IELTS-2026-11.MD", field: "overall", value: 8 }],
+        },
+        body: "1. IELTS Academic 8.0\n2. Northvale University\n",
+      });
+      const loud = call(sql, writer, "draft", { verify: String(shouted["id"]) });
+      equal(loud["status"], "fix");
+      // The list's own numbers are layout: only the score was a claim, and it matched.
+      same(loud["uncited"], []);
+      match(String(loud["message"]), /ielts-2026-11\.md.*sensitive/);
+      // A connection that can't see the score gets it as missing, never its path.
+      const floor = call(sql, as(connection(sql)), "draft", { verify: String(shouted["id"]) });
+      equal(floor["status"], "fix");
+      ok(!JSON.stringify(floor).includes("ielts-2026-11"), JSON.stringify(floor));
       match(refused(sql, writer, "draft", { verify: cv, kind: "cv" }), /alone/);
 
       // The packet: the CV rendered under the portal's name; a document with no stored file is left for the person.
@@ -1314,6 +1336,47 @@ export const toolCases: Record<string, Case> = {
         packet.parts.map((part) => [part.kind, part.name]),
         [["draft", "Karim_Nadia_CV.pdf"]],
       );
+      // A file past what one zip carries is left for the person, however cleared.
+      const big = mutate(
+        sql,
+        {
+          op: "create",
+          path: "documents/big-scan.md",
+          raw: "---\nid: 01M6AM78G0STS7TB29G7A10B1G\ntype: Document\ntitle: Big scan\nfile: files/big-scan.pdf\n---\n",
+          class: "sensitive",
+        },
+        PERSON_CTX,
+      );
+      equal(big.status, "applied", JSON.stringify(big));
+      sql.all(
+        "INSERT INTO files (sha256, r2Key, mime, bytes, class, encrypted, path) VALUES ('b1', 'r2/b1', 'application/pdf', ?, 'sensitive', 1, 'documents/files/big-scan.pdf')",
+        PACKET_BYTES + 1,
+      );
+      const withBig = mutate(
+        sql,
+        {
+          op: "patch",
+          noteId: n.tum,
+          baseRev: revOf(sql, n.tum),
+          ops: [
+            {
+              op: "set",
+              path: ["packet"],
+              value: [{ item: "../../documents/big-scan.md", name: "Scan.pdf" }],
+            },
+          ],
+        },
+        PERSON_CTX,
+      );
+      equal(withBig.status, "applied");
+      const tooBig = packetOf(sql, n.tum, T0);
+      ok("missing" in tooBig);
+      same(tooBig.missing, [
+        {
+          name: "Scan.pdf",
+          why: "documents/big-scan.md doesn't fit in one zip with the rest: download it from the site",
+        },
+      ]);
       same(packet.missing, [
         { name: "Karim_Nadia_Transcript.pdf", why: "documents/transcript-bsc.md has no stored file" },
         { name: "Karim_Nadia_CV.pdf", why: "needs a file name of its own, like Karim_Nadia_CV.pdf" },
@@ -1324,6 +1387,39 @@ export const toolCases: Record<string, Case> = {
         callTool(sql, "update", { id: cv, rev: revOf(sql, cv), set: { title: "CV for TUM, v2b" } }, who);
       match(JSON.stringify(edit(writer)), /version sent with TUM MSc Informatics.*preparing/);
       match(JSON.stringify(edit(PERSON_CTX)), /stays as it was/);
+      // Moving or changing the application in the same run doesn't thaw it: it's judged as the run found it.
+      const moved = mutateAll(
+        sql,
+        [
+          {
+            op: "move",
+            noteId: n.tum,
+            baseRev: revOf(sql, n.tum),
+            path: "applications/tum-2027/application.md",
+          },
+          // The move rewrites the CV's `for` first, a revision of its own.
+          {
+            op: "patch",
+            noteId: cv,
+            baseRev: revOf(sql, cv) + 1,
+            ops: [{ op: "set", path: ["title"], value: "CV for TUM, v2c" }],
+          },
+        ],
+        PERSON_CTX,
+      );
+      match(JSON.stringify(moved), /stays as it was/);
+      // The move alone goes through: following it, the frozen CV's `for` says what it said.
+      const alone = mutate(
+        sql,
+        {
+          op: "move",
+          noteId: n.tum,
+          baseRev: revOf(sql, n.tum),
+          path: "applications/tum-2027/application.md",
+        },
+        PERSON_CTX,
+      );
+      equal(alone.status, "applied", JSON.stringify(alone));
       equal(status("preparing"), "applied");
       match(JSON.stringify(edit(writer)), /"status":"applied"/);
     },

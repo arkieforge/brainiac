@@ -1853,13 +1853,18 @@ export function checkDraft(sql: Sql, ctx: Context, note: NoteRow): Answer {
       status: "fix",
       message: `claims must be a list of {note, field, value}: ${claims.summary}. Fix it with update, then verify again.`,
     });
-  const answer = verifyDraft(sql, call, splitNote(note.raw).body, claims);
+  // A numbered list's markers ("1. Swahili NER") are layout, not values the draft claims.
+  const text = splitNote(note.raw).body.replaceAll(/^(\s*)\d+[.)](?=\s)/gm, "$1-");
+  const answer = verifyDraft(sql, call, text, claims);
   if (!answer.ok || typeof answer.value !== "object" || answer.value === null) return answer;
   const checked = answer.value as { readonly status: string };
+  // Claims resolve as verify resolves them, as the caller sees them: a note it can't see stays missing, unnamed.
+  let live: readonly string[] | undefined;
   const leaks =
     note.class === "normal"
       ? claims.flatMap((claim) => {
-          const cited = getNote(sql, claim.note) ?? getNoteByPath(sql, claim.note);
+          const cited =
+            visible(sql, call, claim.note) ?? atPath(sql, call, (live ??= livePaths(sql)), claim.note);
           return cited?.class === "sensitive" ? [cited.path] : [];
         })
       : [];

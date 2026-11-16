@@ -53,6 +53,13 @@ export interface Packet {
   readonly missing: readonly { readonly name: string; readonly why: string }[];
 }
 
+/**
+ * The most stored file bytes one packet carries: the zip is built in memory, and the record and the Worker each
+ * hold a copy, inside an isolate's 128 MB. Past it, a file is left for the person to add.
+ * shortcut: a portal that wants more than this in one upload needs the zip streamed.
+ */
+export const PACKET_BYTES = 30 * 1024 * 1024;
+
 const isMapping = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -71,6 +78,7 @@ export function packetOf(sql: Sql, id: string, now: number): Packet | { readonly
   const parts: PacketPart[] = [];
   const missing: { name: string; why: string }[] = [];
   const names = new Set<string>();
+  let bytes = 0;
   for (const item of items) {
     const name = isMapping(item) && typeof item["name"] === "string" ? item["name"].trim() : "";
     const label = name || "(no name)";
@@ -91,7 +99,15 @@ export function packetOf(sql: Sql, id: string, now: number): Packet | { readonly
           name,
           why: `${note.path} opens only with your passkey: download it from the site and add it`,
         });
-      else parts.push({ kind: "file", name, file });
+      else if (bytes + file.bytes > PACKET_BYTES)
+        missing.push({
+          name,
+          why: `${note.path} doesn't fit in one zip with the rest: download it from the site`,
+        });
+      else {
+        bytes += file.bytes;
+        parts.push({ kind: "file", name, file });
+      }
     }
     names.add(name.toLowerCase());
   }

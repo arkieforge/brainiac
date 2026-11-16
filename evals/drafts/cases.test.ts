@@ -27,6 +27,12 @@ const check = (id: string, said: string, calls: readonly Call[] = [DRAFT, verifi
   return found.check({ said, calls, ...RECORD });
 };
 
+const savedVerify = (status: string): Call => ({
+  tool: "mcp__brainiac__draft",
+  input: { verify: "01M6AM78G0STS7TB29G7A10CV2" },
+  result: { status },
+});
+
 const LETTER =
   "Dear hiring team, as a Software Engineering Intern at Acme Robotics from July to September 2025, I built the fleet telemetry dashboard.";
 
@@ -133,11 +139,6 @@ describe("drafts eval", () => {
       input: { type: "Draft" },
       result: { status: "applied" },
     };
-    const savedVerify = (status: string): Call => ({
-      tool: "mcp__brainiac__draft",
-      input: { verify: "01M6AM78G0STS7TB29G7A10CV2" },
-      result: { status },
-    });
     const CV = "Nadia Karim. BSc Computer Science, Northvale University, CGPA 3.82.";
     expect(check("cv-tum", CV, [DRAFT, create, savedVerify("ok")])).toBeUndefined();
     expect(check("cv-tum", CV, [DRAFT, savedVerify("ok")])).toBe("never saved a Draft");

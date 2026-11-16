@@ -178,8 +178,9 @@ const SENT = new Set(["submitted", "interview", "decision"]);
 /**
  * The application a change to a Draft would alter after it was sent (docs/product/features/applications.md):
  * submitted versions are frozen. A new version is a new Draft; moving the application back to preparing thaws it.
+ * The application is read as the run found it, so moving, changing or deleting it in the same run freezes as well.
  */
-function frozenBy(sql: Sql, { before, after }: Effect): NoteRow | undefined {
+function frozenBy(sql: Sql, { before, after }: Effect, started: Started): NoteRow | undefined {
   if (!before || before.deletedAt !== null || before.type !== "Draft") return undefined;
   if (
     after.raw === before.raw &&
@@ -188,10 +189,34 @@ function frozenBy(sql: Sql, { before, after }: Effect): NoteRow | undefined {
     after.deletedAt === null
   )
     return undefined;
-  const application = relationTarget(sql, before, JSON.parse(before.fm)["for"]);
-  return application?.type === "Application" && SENT.has(String(JSON.parse(application.fm)["status"]))
-    ? application
-    : undefined;
+  const relation: unknown = JSON.parse(before.fm)["for"];
+  if (typeof relation !== "string") return undefined;
+  let key: string | undefined;
+  try {
+    key = isUlid(relation) ? undefined : pathKey(resolveRelation(before.path, relation));
+  } catch (error) {
+    if (!(error instanceof PathError)) throw error;
+  }
+  const found = [...started.values()].find(
+    (note) =>
+      note !== undefined &&
+      note.deletedAt === null &&
+      (isUlid(relation) ? note.id === relation : key !== undefined && pathKey(note.path) === key),
+  );
+  const application = found ?? relationTarget(sql, before, relation);
+  if (application?.type !== "Application" || !SENT.has(String(JSON.parse(application.fm)["status"])))
+    return undefined;
+  // A move of the application rewrites `for` to follow it: the draft still says what it said.
+  const { for: was, ...rest } = JSON.parse(before.fm);
+  const { for: is, ...now } = JSON.parse(after.fm);
+  const followed =
+    was !== is &&
+    after.deletedAt === null &&
+    after.path === before.path &&
+    deepEqual(rest, now) &&
+    splitNote(after.raw).body === splitNote(before.raw).body &&
+    relationTarget(sql, after, is)?.id === application.id;
+  return followed ? undefined : application;
 }
 
 /**
@@ -237,7 +262,7 @@ function judged<T extends { readonly status: string }>(
             ],
           });
         for (const effect of effects) {
-          const application = frozenBy(sql, effect);
+          const application = frozenBy(sql, effect, started);
           if (application)
             throw new Held({
               status: "invalid",

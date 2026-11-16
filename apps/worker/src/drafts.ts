@@ -46,14 +46,17 @@ export async function draftDownload(
   return typeof pdf === "string" ? failed(500, pdf) : attachment(pdf, "application/pdf", rendering.name);
 }
 
-/** What the record hands over for a packet: drafts as Typst source, stored files as their bytes. */
+/** A packet's files as the record hands them over: drafts as Typst source, stored files as their bytes. */
+export type PacketParts = (
+  | { readonly name: string; readonly source: string }
+  | { readonly name: string; readonly bytes: Uint8Array }
+)[];
+
+/** What the record hands over for a packet, and what the person adds by hand. */
 export type PacketFiles =
   | {
       readonly name: string;
-      readonly parts: readonly (
-        | { readonly name: string; readonly source: string }
-        | { readonly name: string; readonly bytes: Uint8Array }
-      )[];
+      readonly parts: PacketParts;
       readonly missing: readonly { readonly name: string; readonly why: string }[];
     }
   | { readonly error: string };

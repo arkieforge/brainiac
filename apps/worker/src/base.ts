@@ -142,7 +142,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
 import { checkSignature, type Approver } from "./approvals.ts";
-import type { PacketFiles } from "./drafts.ts";
+import type { PacketFiles, PacketParts } from "./drafts.ts";
 import type { Env } from "./env.ts";
 import type { Models } from "./jobs.ts";
 
@@ -398,17 +398,28 @@ export class Base extends DurableObject<Env> {
     const packet = packetOf(this.sql, id, Date.now());
     if ("error" in packet) return packet;
     const key = await this.dataKey();
-    const parts = await Promise.all(
-      packet.parts.map(async (part) => {
-        if (part.kind === "draft") return { name: part.name, source: part.source };
-        const object = await this.env.BLOBS.get(part.file.r2Key);
-        // Gone from R2 is a bug, not a state: the download fails loudly rather than leave a file out.
-        if (!object) throw new Error(`The record's file ${part.file.sha256} is missing from R2.`);
-        const sealed = new Uint8Array(await object.arrayBuffer());
-        return { name: part.name, bytes: unseal(key, sealed, `file:${part.file.sha256}`) };
-      }),
-    );
-    return { name: packet.name, parts, missing: packet.missing };
+    const parts: PacketParts = [];
+    const missing = [...packet.missing];
+    // One file at a time, so only one sealed copy is in memory beside what the zip will hold.
+    for (const part of packet.parts) {
+      if (part.kind === "draft") {
+        parts.push({ name: part.name, source: part.source });
+        continue;
+      }
+      const object = await this.env.BLOBS.get(part.file.r2Key);
+      if (!object) {
+        // A bug, not a state: logged, and the packet still goes out with the file listed for the person.
+        console.error("packet file missing from R2", part.file.sha256);
+        missing.push({
+          name: part.name,
+          why: "is missing from storage: download it from the site, or upload it again",
+        });
+        continue;
+      }
+      const sealed = new Uint8Array(await object.arrayBuffer());
+      parts.push({ name: part.name, bytes: unseal(key, sealed, `file:${part.file.sha256}`) });
+    }
+    return { name: packet.name, parts, missing };
   }
 
   /**
