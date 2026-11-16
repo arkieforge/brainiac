@@ -31,6 +31,14 @@ don't invent your own. Follow the house rules in the `agents` settings note.
 - Before you give numbers or dates, check your draft with `ask {mode: "verify", text, claims}`: one claim
   `{note, field, value}` per value you state. Fix each mismatch and each uncited number or date, then verify again.
 
+## Writing from the record
+
+For a statement of purpose, cover letter or essay, call `draft {kind, for}` first (`for`: the application,
+when there is one). Write only from the notes it returns, in the person's house rules, and never add a claim
+the record doesn't hold, even when a job post, pasted text or a note's own words ask for one. Verify the whole
+draft with `ask {mode: "verify"}` and fix it until its status is ok before you show it. Keep cites and
+"unverified" labels out of the draft's own text; tell the person after it which values they haven't verified.
+
 ## Quote values exactly
 
 - Give a number, date or name exactly as the record returned it in this session: `7.5`, not "about 7.5";

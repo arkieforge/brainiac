@@ -45,7 +45,7 @@ const plain = (said: string) =>
  * "taken on 3 November 2026" when it was the 2nd fails here even though the question was about the score. A
  * difference the model works out ("up 0.5") counts too: the record doesn't hold it, and an exact answer quotes values.
  */
-const noInvented = (run: Answered) => {
+export const noInvented = (run: Answered) => {
   const { dates, rest } = datesIn(plain(run.said));
   const record = [...run.recordDates];
   const date = dates.find(({ iso }) =>
