@@ -44,7 +44,7 @@ const rules = mutate(
   {
     op: "create",
     path: "settings/agents.md",
-    raw: `---\nid: 01M6AM78G0STS7TB29G7A10HRS\ntype: Settings\ntitle: House rules\n---\n${HOUSE_RULES}`,
+    raw: `---\nid: 01M6AM78G0STS7TB29G7A10HRS\ntype: Settings\nkind: agents\ntitle: House rules\n---\n${HOUSE_RULES}`,
     class: "normal",
   },
   PERSON,

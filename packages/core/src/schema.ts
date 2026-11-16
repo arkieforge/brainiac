@@ -205,13 +205,6 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       from: { values: ["filer"] },
     },
   },
-  // The person's preferences for agents and outputs (docs/product/features/customization.md), in the body:
-  // settings/agents.md holds the house rules `draft` hands over. Preferences only, never a grant.
-  Settings: {
-    version: 1,
-    folder: "settings",
-    fields: {},
-  },
   // What the GitHub connector proposes for a repo (packages/base/src/github.ts). `synced` is the connector's own
   // block, which it refreshes directly; every other field is the person's.
   Project: {

@@ -1800,7 +1800,7 @@ function supersededAmong(sql: Sql, notes: readonly NoteRow[]) {
 }
 
 const draft = tool(
-  `What you need to write the person a statement of purpose (sop), cover letter or essay from their record: their facts (each value with its cite, as ask gives them), the application it is for when you name one with for (an id or path), an outline for the kind, and how to write it: the record's rules and the person's own house rules (settings/agents.md, a Settings note). You write the draft; then check it with ask {mode: "verify"} and fix it until it is ok. Nothing is saved.`,
+  `What you need to write the person a statement of purpose (sop), cover letter or essay from their record: their facts (each value with its cite, as ask gives them), the application it is for when you name one with for (an id or path), an outline for the kind, and how to write it: the record's rules and the person's own house rules (their Settings note of kind agents, settings/agents.md). You write the draft; then check it with ask {mode: "verify"} and fix it until it is ok. Nothing is saved.`,
   type({
     "+": "reject",
     kind: "'sop' | 'cover-letter' | 'essay'",
@@ -1817,7 +1817,7 @@ const draft = tool(
     const seen = listNotes(sql).flatMap((note) => project(note, reader) ?? []);
     const old = supersededAmong(sql, seen);
     const facts = seen.filter((note) => note.path.startsWith("facts/") && !old.has(note.id));
-    const rules = seen.filter((note) => note.path === "settings/agents.md");
+    const rules = seen.filter((note) => note.type === "Settings" && fieldsOf(note)["kind"] === "agents");
     const me = seen.find((note) => note.path === "me.md");
     const notes: Record<string, unknown>[] = [];
     let chars = 0;
@@ -1847,7 +1847,7 @@ const draft = tool(
       message:
         rules.length > 0
           ? "Write the draft from these notes, in the person's house rules, then verify it."
-          : "Write the draft from these notes, then verify it. The person has no house rules yet: they go in settings/agents.md, a Settings note.",
+          : "Write the draft from these notes, then verify it. The person has no house rules yet: they go in a Settings note of kind agents (settings/agents.md).",
     });
   },
 );
