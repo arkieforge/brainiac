@@ -372,3 +372,85 @@ describe("not a nag", () => {
     expect(askNow(ask(record), NOW - 3 * 24 * 60 * 60_000)).toHaveLength(5);
   });
 });
+
+describe("letters", () => {
+  const OKAFOR = "people/dr-okafor.md";
+  /** A fictional letter from Dr Okafor for TUM, at `status`. */
+  function letter(record: Record_, status: string, cls?: "sensitive") {
+    const id = ulid();
+    const raw = patch(
+      "",
+      Object.entries({
+        id,
+        type: "Letter",
+        title: "Dr Okafor's letter for TUM",
+        referee: "../people/dr-okafor.md",
+        for: "../applications/tum-msc-informatics-2027/application.md",
+        status,
+      }).map(([key, value]) => ({ op: "set" as const, path: [key], value })),
+    );
+    record.set("letters/okafor-tum.md", { raw, ...(cls && { class: cls }) });
+    return id;
+  }
+
+  it("a letter an open application waits on is asked about at each step, the next one suggested, until received", () => {
+    const record = fixture();
+    const id = letter(record, "to-ask");
+    const question = one(record, `${id}.status`);
+    expect(question).toEqual({
+      id: `${id}.status`,
+      kind: "found",
+      noteId: id,
+      field: "status",
+      text: "Have you asked Dr Amara Okafor for your letter for TUM MSc Informatics, Winter 2027?",
+      why: "For TUM MSc Informatics, Winter 2027, due 2027-05-31",
+      input: { kind: "choice", values: ["to-ask", "requested", "sent", "received"] },
+      suggested: "requested",
+      deadline: "2027-05-31",
+      sensitive: false,
+    });
+    answer(record, question, { value: "requested" });
+    expect(one(record, `${id}.status`).text).toBe(
+      "Has Dr Amara Okafor sent your letter for TUM MSc Informatics, Winter 2027?",
+    );
+    answer(record, one(record, `${id}.status`), { value: "sent" });
+    expect(one(record, `${id}.status`)).toMatchObject({
+      text: "Does TUM MSc Informatics, Winter 2027 show Dr Amara Okafor's letter as received?",
+      suggested: "received",
+    });
+    answer(record, one(record, `${id}.status`), { value: "received" });
+    expect(ask(record)).toEqual([]);
+    // Back to sent (the portal lost it): asked again.
+    edit(record, "letters/okafor-tum.md", [{ op: "set", path: ["status"], value: "sent" }]);
+    expect(ids(record)).toEqual([`${id}.status`]);
+  });
+
+  it("is not asked once the application is decided, or once the person says not applicable", () => {
+    const decided = fixture();
+    letter(decided, "requested");
+    edit(decided, TUM, [{ op: "set", path: ["status"], value: "decision" }]);
+    expect(ask(decided)).toEqual([]);
+
+    const record = fixture();
+    const id = letter(record, "requested");
+    answer(record, one(record, `${id}.status`), { notApplicable: true });
+    expect(ask(record)).toEqual([]);
+  });
+
+  it("names the referee only from a note the reader can see, and is as private as the letter or its referee", () => {
+    const hidden = fixture();
+    hidden.delete(OKAFOR);
+    const id = letter(hidden, "requested");
+    expect(one(hidden, `${id}.status`).text).toBe(
+      "Has your referee sent your letter for TUM MSc Informatics, Winter 2027?",
+    );
+
+    const record = fixture();
+    const okafor = record.get(OKAFOR);
+    if (!okafor) throw new Error(OKAFOR);
+    record.set(OKAFOR, { ...okafor, class: "sensitive" });
+    expect(one(record, `${letter(record, "requested")}.status`).sensitive).toBe(true);
+    const own = fixture();
+    expect(one(own, `${letter(own, "requested", "sensitive")}.status`).sensitive).toBe(true);
+  });
+});
