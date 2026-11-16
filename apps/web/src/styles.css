@@ -1108,6 +1108,108 @@ a.button:active {
   padding: 0 var(--gap);
 }
 
+/* Secrets: one card each, where it fills and when, never a value; then the form to save one. */
+.secrets {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.secrets > ul {
+  list-style: none;
+  margin: var(--gap);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.secret {
+  padding: var(--gap);
+}
+.secret + .secret {
+  border-top: 1px solid var(--border);
+}
+.secret form,
+.new-secret {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 8px;
+}
+.secret .name {
+  grid-column: 1 / -1;
+  font: 500 var(--small) var(--mono);
+}
+.secret label,
+.new-secret label {
+  font-size: var(--small);
+  color: var(--fg-faint);
+}
+.secrets .actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.secrets .approval,
+.secrets [role="alert"] {
+  margin: 8px 0 0;
+}
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.new-secret {
+  margin: var(--gap);
+  padding: var(--gap);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+}
+.new-secret h2 {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+  font: 500 11px / 1.4 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-faint);
+}
+.new-secret > .approval,
+.new-secret > [role="alert"] {
+  grid-column: 1 / -1;
+}
+
+/* The extension's passkey step for a fill: a small window of its own, no shell. */
+.fill-passkey {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.fill-passkey h1 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.fill-passkey .plan {
+  list-style: none;
+  margin: var(--gap) 0;
+  padding: var(--gap);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+.fill-passkey .plan li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 3px 0;
+}
+.fill-passkey .plan li span:last-child {
+  font-family: var(--mono);
+  font-size: var(--small);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 /* Proposals: one card each, like questions: who, what, the plan field by field, then Accept or Reject. */
 .proposals {
   max-width: 760px;

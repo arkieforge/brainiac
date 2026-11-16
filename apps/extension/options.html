@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Brainiac extension</title>
+    <link rel="stylesheet" href="./src/extension.css" />
+  </head>
+  <body class="options">
+    <h1>Brainiac</h1>
+    <p class="muted">
+      Where your record lives. The extension asks Chrome for this one site, and uses your session there to
+      fill forms your agent asked for. It never sees a value until you press Fill.
+    </p>
+    <form id="site">
+      <label for="address">Your Brainiac address</label>
+      <input id="address" placeholder="brainiac.example" autocomplete="url" required />
+      <button type="submit" class="primary">Connect</button>
+    </form>
+    <p id="status" class="muted" role="status"></p>
+    <script type="module" src="./src/options.ts"></script>
+  </body>
+</html>

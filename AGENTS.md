@@ -214,6 +214,8 @@ files. Details: [Architecture](docs/internals/architecture.md), [Sync engine](do
 - `apps/worker`: the one Worker and the `Base` Durable Object.
 - `apps/ocr`: OCR of photos and scans for the vault's checks, a Worker of its own with no URL, called over RPC.
 - `apps/typst`: Typst for drafts' PDFs, a Worker of its own with no URL, called over RPC by the site's downloads.
+- `apps/extension`: the Chrome extension. Its id is pinned by the manifest's `key`; the site trusts that one
+  origin (`EXTENSION_ORIGIN`) for the fill routes only.
 - `packages/*`: shared code, added by the issues that need it.
 - `oxlint-plugin-brainiac/`: repo lint rules, each with tests. `scripts/`: doctor, setup, repo sync.
 - `.repos/`: read-only library source for reference (`vp run repos:sync`). Never import from it.

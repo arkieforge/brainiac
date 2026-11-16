@@ -40,6 +40,7 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 | `apps/web`               | The site (TanStack Start, SPA mode); the Worker serves its build                 |
 | `apps/cli`               | The `brainiac` CLI, daemon and stdio MCP (Bun)                                   |
 | `apps/marketing`         | The public Astro site; a placeholder for now                                     |
+| `apps/extension`         | The Chrome extension (MV3); `vp build` there, then load `dist/` unpacked         |
 | `packages/*`             | Shared code (`core`, `base`, `sync`, `render`), added by the issues that need it |
 | `oxlint-plugin-brainiac` | Repo-specific lint rules, each with tests                                        |
 | `evals/`                 | Model-behaviour evals ([README](../../evals/README.md))                          |

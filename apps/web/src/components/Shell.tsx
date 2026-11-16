@@ -1,6 +1,7 @@
 import {
   Fingerprint,
   House,
+  Key,
   List,
   MagnifyingGlass,
   Question,
@@ -40,7 +41,7 @@ const STATUS: Record<Status, string> = {
 };
 
 const NAV: readonly {
-  readonly to: "/" | "/review" | "/questions" | "/proposals" | "/approvals";
+  readonly to: "/" | "/review" | "/questions" | "/proposals" | "/approvals" | "/secrets";
   readonly label: string;
   readonly icon: Icon;
 }[] = [
@@ -49,6 +50,7 @@ const NAV: readonly {
   { to: "/questions", label: "Questions", icon: Question },
   { to: "/proposals", label: "Proposals", icon: Tray },
   { to: "/approvals", label: "Approvals", icon: Fingerprint },
+  { to: "/secrets", label: "Secrets", icon: Key },
 ];
 
 // Matches the phone breakpoint in styles.css. The prerendered shell has no window, so it renders the desktop side.

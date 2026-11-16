@@ -1,0 +1,15 @@
+{
+  "name": "@brainiac/extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  },
+  "devDependencies": {
+    "@brainiac/core": "workspace:*",
+    "@types/chrome": "0.3.7",
+    "happy-dom": "21.0.4"
+  }
+}

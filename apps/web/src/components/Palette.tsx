@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { parseNote } from "@brainiac/core";
-import { House, Question, SealCheck, type Icon } from "@phosphor-icons/react";
+import { House, Key, Question, SealCheck, type Icon } from "@phosphor-icons/react";
 import { useNavigate } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
@@ -14,6 +14,7 @@ const PAGES = [
   { to: "/", label: "Overview", icon: House },
   { to: "/review", label: "Review", icon: SealCheck },
   { to: "/questions", label: "Questions", icon: Question },
+  { to: "/secrets", label: "Secrets", icon: Key },
 ] as const satisfies readonly { to: string; label: string; icon: Icon }[];
 
 /** A note's title and type, from its front-matter; the path stands in when it can't be read. */

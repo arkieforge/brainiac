@@ -1,0 +1,145 @@
+/* DESIGN.md's tokens, by value: the extension is its own app and can't load the site's stylesheet. */
+:root {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-raised: #0a0a0b;
+  --bg-input: #111113;
+  --bg-hover: #18181b;
+  --border: #1f1f23;
+  --border-strong: #2a2a30;
+  --fg: #fafafa;
+  --fg-muted: #a1a1aa;
+  --fg-faint: #71717a;
+  --accent: #6ea8ff;
+  --accent-ink: #000000;
+  --ok: #4ade80;
+  --danger: #f87171;
+  --gap: 12px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    13px/1.45 -apple-system,
+    BlinkMacSystemFont,
+    Inter,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+.popup {
+  width: 340px;
+}
+.popup header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 10px var(--gap);
+  border-bottom: 1px solid var(--border);
+}
+.popup main {
+  padding: var(--gap);
+}
+.options {
+  max-width: 520px;
+  margin: 48px auto;
+  padding: 0 16px;
+}
+h1 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+p {
+  margin: 0 0 var(--gap);
+}
+.muted {
+  color: var(--fg-muted);
+}
+.faint {
+  color: var(--fg-faint);
+  font: 11px var(--mono);
+}
+.error {
+  color: var(--danger);
+}
+.ok {
+  color: var(--ok);
+}
+.fill {
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  padding: var(--gap);
+  margin-bottom: var(--gap);
+}
+.fill ul {
+  list-style: none;
+  margin: 0 0 var(--gap);
+  padding: 0;
+}
+.fill li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 3px 0;
+}
+.fill li span:last-child {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.vault {
+  font: 11px var(--mono);
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+}
+input {
+  width: 100%;
+  margin-bottom: var(--gap);
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--fg);
+  font: inherit;
+}
+button {
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+a {
+  color: var(--accent);
+}
