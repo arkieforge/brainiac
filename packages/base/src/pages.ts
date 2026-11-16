@@ -319,7 +319,7 @@ const MAX_JPEGS = 4;
  * MRZ, an account number. Only finding: a PDF with any image stays unread whatever OCR makes of it
  * (`pdfHidesText`), so this needn't account for every image, only hand over what it easily can.
  */
-export function pdfJpegs(bytes: Uint8Array): Uint8Array[] {
+export function pdfJpegs(bytes: Uint8Array, max = MAX_JPEGS): Uint8Array[] {
   const raw = latin1(bytes);
   const jpegs: Uint8Array[] = [];
   for (const [start, end, keyword] of lex(raw, true).streams) {
@@ -332,7 +332,7 @@ export function pdfJpegs(bytes: Uint8Array): Uint8Array[] {
     if (last > start && bytes[last - 1] === 0x0d) last--;
     // A copy, not a view (a Buffer's `slice` is one too): RPC sends a view's whole buffer, which is the whole PDF.
     jpegs.push(new Uint8Array(bytes.subarray(start, last)));
-    if (jpegs.length === MAX_JPEGS) break;
+    if (jpegs.length === max) break;
   }
   return jpegs;
 }

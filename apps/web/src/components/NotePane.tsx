@@ -9,7 +9,7 @@ import { ApproveButton, Plan } from "./Approval.tsx";
 import { BodyEditor } from "./BodyEditor.tsx";
 import { CheckProfiles, NoteDrift } from "./Drift.tsx";
 import { FieldForm } from "./FieldForm.tsx";
-import { FileFacts, FileView, KindForm, ShareForm } from "./FilePane.tsx";
+import { FileFacts, FileView, KindForm, ShareForm, showable } from "./FilePane.tsx";
 import { fileLabel } from "./Files.tsx";
 import { MoveForm } from "./MoveForm.tsx";
 import { titleTransition } from "./Overview.tsx";
@@ -126,7 +126,7 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
             online={status === "live"}
           />
           {file && <KindForm key={file.sha256} file={file} />}
-          {file?.mime.startsWith("image/") && <ShareForm file={file} />}
+          {file && showable(file) && <ShareForm file={file} />}
           <FieldForm
             fields={fieldsOf(data, manifest)}
             client={client}

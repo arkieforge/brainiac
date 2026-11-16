@@ -18,6 +18,7 @@ import {
   migrate,
   mintToken,
   mutate,
+  photoImages,
   putChunks,
   recordApproval,
   type Answer,
@@ -138,7 +139,8 @@ export async function serve(sql: Sql, photos: Photos = new Map()) {
       const photo = photos.get(attach.sha256);
       if (!photo) return { ok: false, error: "That photo is gone." };
       handed.push(attach.sha256);
-      return { ...rest, image: { data: photo.bytes.toString("base64"), mimeType: photo.mime } };
+      const shown = photoImages(photo.mime, photo.bytes);
+      return "error" in shown ? { ok: false, error: shown.error } : { ...rest, images: shown.images };
     });
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));

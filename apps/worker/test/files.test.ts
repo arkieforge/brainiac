@@ -1,6 +1,9 @@
 // Sensitive note edits and files through the real site and usercontent routes (site.ts, usercontent.ts) and the real Base DO in workerd, with
 // a real R2 bucket. harness.ts fakes only the session. An upload can be HTML or SVG someone else wrote, so its bytes
 // must never come from the site's origin, and the usercontent origin must never let them run.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -272,10 +275,9 @@ describe("files", () => {
     // The photo itself, opened from R2, beside what the record knows about it.
     // The RPC stub's mapped type drops the success arm (its value is `unknown`), so it's read as a plain object.
     const answer: object = await ask();
-    expect(answer).toMatchObject({ ok: true, image: { mimeType: "image/jpeg" } });
-    const image = "image" in answer && typeof answer.image === "object" ? answer.image : null;
-    const data = image && "data" in image && typeof image.data === "string" ? image.data : "";
-    expect(Uint8Array.from(Buffer.from(data, "base64"))).toEqual(photo);
+    expect(answer).toMatchObject({ ok: true, images: [{ mimeType: "image/jpeg" }] });
+    const images = "images" in answer && Array.isArray(answer.images) ? answer.images : [];
+    expect(images.map((image) => Uint8Array.from(Buffer.from(image.data, "base64")))).toEqual([photo]);
     expect(answer).not.toHaveProperty("attach");
 
     // Turned off, it is gone from the agent again; no passkey is needed to turn it off.
@@ -296,6 +298,52 @@ describe("files", () => {
       files: { path: string }[];
     };
     expect(files[0]?.path).toMatch(/^documents\/files\/upload-/);
+  });
+
+  it("hands a shared scanned transcript to the person's agent as its page images, read from R2", async () => {
+    const scan = readFileSync(join(import.meta.dirname, "../../../fixtures/scans/transcript-scan.pdf"));
+    const res = await mf.dispatchFetch(`${SITE}/api/files`, {
+      method: "POST",
+      headers: { ...tab("scans"), "content-type": "application/pdf" },
+      body: scan,
+    });
+    const { file, sidecar } = (await res.json()) as { file: { sha256: string }; sidecar: string };
+    const base = await record("scans");
+    const agent = await base.addConnection({ kind: "cli" });
+    await base.setGrants(agent.id, { level: "write", sensitive: true, holdDays: 0 });
+    const ask = () => base.tool({ connectionId: agent.id }, "photos", { id: sidecar });
+    expect(await ask()).toMatchObject({ ok: false });
+
+    const passkey = createAuthenticator(SITE);
+    const neon = {
+      credentialId: passkey.id,
+      publicKey: passkey.publicKey,
+      counter: 0,
+      approvesAt: new Date(0).toISOString(),
+      origin: SITE,
+    };
+    const share = (body: object) =>
+      mf.dispatchFetch(`${SITE}/api/files/${file.sha256}/share`, {
+        method: "POST",
+        headers: {
+          ...tab("scans"),
+          "content-type": "application/json",
+          "x-test-passkey": JSON.stringify(neon),
+        },
+        body: JSON.stringify(body),
+      });
+    const { challenge } = (await (await share({ on: true })).json()) as { challenge: string };
+    expect((await share({ on: true, response: passkey.authenticate({ challenge }) })).status).toBe(200);
+
+    // The scan's page, the JPEG the PDF holds, opened from R2: never the PDF itself.
+    const answer: object = await ask();
+    expect(answer).toMatchObject({ ok: true, value: { photo: { mime: "application/pdf", shared: true } } });
+    const images = "images" in answer && Array.isArray(answer.images) ? answer.images : [];
+    expect(images.map((image) => Buffer.from(image.data, "base64").subarray(0, 3))).toEqual([
+      Buffer.from([0xff, 0xd8, 0xff]),
+    ]);
+    expect(images.map((image) => image.mimeType)).toEqual(["image/jpeg"]);
+    expect(answer).not.toHaveProperty("left");
   });
 
   it("refuses changes from another origin's pages", async () => {

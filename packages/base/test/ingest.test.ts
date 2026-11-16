@@ -14,6 +14,7 @@ import {
   needsReading,
   pdfHidesText,
   pdfJpegs,
+  photoImages,
   quantize,
   splitPages,
 } from "../src/index.ts";
@@ -279,6 +280,39 @@ describe("pdfJpegs", () => {
       pdfJpegs(readFileSync(join(scans, "transcript-scan.pdf"))).map((bytes) => [...bytes.subarray(0, 3)]),
     ).toEqual([[0xff, 0xd8, 0xff]]);
     expect(pdfJpegs(readFileSync(join(scans, "transcript-logo.pdf")))).toEqual([]);
+  });
+});
+
+describe("photoImages", () => {
+  const scans = join(import.meta.dirname, "../../../fixtures/scans");
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]);
+  const page = ["<< /Type /XObject /Subtype /Image /Filter /DCTDecode >>", jpeg] as const;
+
+  it("hands the agent a photo as itself, and a scanned transcript as its page images", () => {
+    const photo = readFileSync(join(scans, "passport-photo.jpg"));
+    expect(photoImages("image/jpeg", photo)).toEqual({
+      images: [{ data: photo.toString("base64"), mimeType: "image/jpeg" }],
+    });
+    const scan = readFileSync(join(scans, "transcript-scan.pdf"));
+    const shown = photoImages("application/pdf", scan);
+    expect(shown).toEqual({
+      images: pdfJpegs(scan).map((bytes) => ({
+        data: Buffer.from(bytes).toString("base64"),
+        mimeType: "image/jpeg",
+      })),
+    });
+    expect("images" in shown && shown.images.length).toBe(1);
+  });
+
+  it("refuses a PDF with no page images, and says when a scan has more pages than it hands over", () => {
+    expect(photoImages("application/pdf", readFileSync(join(scans, "transcript-logo.pdf")))).toHaveProperty(
+      "error",
+    );
+    const eight = photoImages("application/pdf", pdf(PAGE, ...Array.from({ length: 8 }, () => page)));
+    expect(eight).not.toHaveProperty("left");
+    const nine = photoImages("application/pdf", pdf(PAGE, ...Array.from({ length: 9 }, () => page)));
+    expect("images" in nine && nine.images.length).toBe(8);
+    expect(nine).toHaveProperty("left");
   });
 });
 

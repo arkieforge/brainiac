@@ -30,6 +30,7 @@ import {
   mintFileToken,
   mayClear,
   photoFor,
+  photoImages,
   readText,
   recordUpload,
   refuseUpload,
@@ -293,7 +294,7 @@ export class Base extends DurableObject<Env> {
   }
 
   /**
-   * A `photos` answer with the photo it names, read from R2 and opened. The bytes are read after the call decided
+   * A `photos` answer with the photo or scan it names, read from R2 and opened, as images. The bytes are read after the call decided
    * it may have them, so it is decided again by the connection's row as it is now: a share the person turned off,
    * or a grant narrowed, while R2 answered holds.
    */
@@ -315,7 +316,14 @@ export class Base extends DurableObject<Env> {
       connection && photoFor(this.sql, via.background ? inBackground(connection) : connection, attach.noteId);
     if (!still || "error" in still || still.file.sha256 !== file.sha256)
       return { ok: false, error: still && "error" in still ? still.error : "That photo is gone." };
-    return { ...rest, image: { data: Buffer.from(bytes).toString("base64"), mimeType: still.view.mime } };
+    const shown = photoImages(still.view.mime, bytes);
+    if ("error" in shown) return { ok: false, error: shown.error };
+    const { value } = rest;
+    const said =
+      shown.left !== undefined && typeof value === "object" && value !== null
+        ? { ...value, left: shown.left }
+        : value;
+    return { ...rest, value: said, images: shown.images };
   }
 
   /** Ends an MCP client's connection when the person disconnects the app, so it can't come back with its grants. */
