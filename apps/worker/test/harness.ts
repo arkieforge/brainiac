@@ -112,11 +112,16 @@ export class TestBase extends Base {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
   }
 
-  /** Back to how the deploy before expiry reminders left a record: no reminders table, no jobs, no alarm. */
+  /**
+   * Back to how the deploy before expiry reminders left a record: no reminders table, no proposals counter (which
+   * came after), no jobs, no alarm.
+   */
   async beforeReminders(): Promise<void> {
     this.sql.all("DROP TABLE reminders");
+    this.sql.all("DROP TRIGGER proposals_added");
+    this.sql.all("DROP TRIGGER proposals_changed");
     this.sql.all("DELETE FROM jobs");
-    this.sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 1));
+    this.sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 2));
     await this.ctx.storage.deleteAlarm();
   }
 
