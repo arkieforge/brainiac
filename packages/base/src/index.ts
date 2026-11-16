@@ -61,6 +61,7 @@ export { installReminders, nextReminder, reminderWork, type Reminder, type Waiti
 export {
   mutate,
   mutateAll,
+  organizeRun,
   propose,
   undoRun,
   type BatchApplied,
@@ -69,6 +70,8 @@ export {
   type Forbidden,
   type Mutation,
   type MutationResult,
+  type Organized,
+  type Placement,
   type UndoConflict,
   type UndoResult,
 } from "./mutate.ts";
@@ -103,6 +106,7 @@ export {
   type ProfileSeen,
   type ProfileWork,
 } from "./profiles.ts";
+export { MANIFEST, selfTest, type SelfTest, type TypeChange } from "./organize.ts";
 export {
   decide,
   pending,

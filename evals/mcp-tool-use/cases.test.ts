@@ -220,6 +220,35 @@ describe("mcp-tool-use grader", () => {
       ],
       ["ielts-writing-canary", [[], "Writing: 6.5."], [[], "Writing: 7.0."]],
       [
+        "new-kind-through-organize",
+        [[call("create", { type: "Talk", fields: { title: "ACL 2024" } })], ""],
+        // The plan waits for the person's passkey: the call is what's graded.
+        [
+          [
+            call("describe"),
+            {
+              ...call("organize", { types: [{ name: "Trip", base: 0, catalog: "trip@2" }] }),
+              result: { status: "needsApproval" },
+            },
+          ],
+          "",
+        ],
+      ],
+      // A Trip of its own fields is refused for the catalog's: nothing changed.
+      [
+        "new-kind-through-organize",
+        [
+          [
+            {
+              ...call("organize", { types: [{ name: "Trip", catalog: "trip@2" }] }),
+              result: { status: "invalid" },
+            },
+          ],
+          "",
+        ],
+        [[call("organize", { types: [{ name: "Trip", base: 0, catalog: "trip@2" }] })], ""],
+      ],
+      [
         "supervisor-control",
         [[], "Your supervisor isn't in your record."],
         [[], "Dr Amara Okafor supervised it."],

@@ -113,15 +113,17 @@ export class TestBase extends Base {
   }
 
   /**
-   * Back to how the deploy before expiry reminders left a record: no reminders table, no proposals counter (which
-   * came after), no jobs, no alarm.
+   * Back to how the deploy before expiry reminders left a record: no reminders table, no proposals counter or
+   * manifest runs (which came after), no jobs, no alarm.
    */
   async beforeReminders(): Promise<void> {
     this.sql.all("DROP TABLE reminders");
     this.sql.all("DROP TRIGGER proposals_added");
     this.sql.all("DROP TRIGGER proposals_changed");
+    this.sql.all("DROP INDEX schema_run");
+    for (const column of ["runId", "actor", "at"]) this.sql.all(`ALTER TABLE schema DROP COLUMN ${column}`);
     this.sql.all("DELETE FROM jobs");
-    this.sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 2));
+    this.sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 3));
     await this.ctx.storage.deleteAlarm();
   }
 

@@ -290,12 +290,13 @@ export const privacyCases: Record<string, Case> = {
     equal(undoRun(sql, made.runId, person).status, "needsApproval");
     equal(getNote(sql, role)?.class, "sensitive");
 
-    // Signed: it lands, and leaves the sensitive index in the same transaction.
+    // Signed: it lands, leaves the sensitive index and is keyword-indexed as normal in the same transaction.
     const approved = recordApproval(sql, verdict.items, signature(++signatures), T0);
     ok("approvalId" in approved, JSON.stringify(approved));
     equal(mutate(sql, loosen, { ...person, approvalId: approved.approvalId }).status, "applied");
     equal(getNote(sql, role)?.class, "normal");
-    same(hitIds(search(sql, PERSON, "telemetry")), []);
+    same(sql.all("SELECT rowid FROM chunks_fts_sensitive WHERE chunks_fts_sensitive MATCH 'telemetry'"), []);
+    same(hitIds(search(sql, AGENT, "telemetry")), [role]);
     install(sql);
     same(hitIds(search(sql, AGENT, "telemetry")), [role]);
   },

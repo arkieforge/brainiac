@@ -2,7 +2,7 @@ import { fieldsText, splitNote } from "@brainiac/core";
 
 import { meetsRelations } from "./applications.ts";
 import { relationResolver } from "./approvals.ts";
-import { getNote, type NoteRow } from "./notes.ts";
+import { getNote, listNotes, type NoteRow } from "./notes.ts";
 import { project, type Principal } from "./project.ts";
 import type { Sql } from "./sql.ts";
 
@@ -160,8 +160,15 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
   // A whole number from 0 to POOL, whatever a caller passes.
   const limit = Math.min(Math.max(Math.trunc(query.limit ?? 20) || 0, 0), POOL);
   const words = fold(text).split(/\s+/).filter(Boolean);
-  if (words.length === 0) return { mode: "keyword", hits: [], neighbors: [] };
-  const match = words.map((word) => `"${word.replaceAll('"', '""')}"`).join(query.anyWord ? " OR " : " ");
+  // Each slot is a word of the question, or a glossary phrase in it with everything it also means: any one matches.
+  // A word of punctuation alone is no phrase, as FTS5 ignores it; an explicit AND would match nothing with it.
+  const slots = rewrite(words, glossary(sql, principal)).filter((slot) =>
+    slot.some((w) => tokens(w).length > 0),
+  );
+  if (slots.length === 0) return { mode: "keyword", hits: [], neighbors: [] };
+  const match = slots
+    .map((slot) => (slot.length === 1 ? quote(slot[0] ?? "") : `(${slot.map(quote).join(" OR ")})`))
+    .join(query.anyWord ? " OR " : " AND ");
   const families: readonly Family[] = principal.sensitive ? ["normal", "sensitive"] : ["normal"];
   const types = principal.types ? JSON.stringify(principal.types) : null;
   // BM25 from two tables isn't one scale, so each family is its own ranking, of notes and pages: a note's best
@@ -185,7 +192,7 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
     );
     for (const row of rows) {
       if (kept.length === POOL) break;
-      if (project(row, principal) && (!row.stale || holdsNow(sql, row.owner, words, query.anyWord ?? false)))
+      if (project(row, principal) && (!row.stale || holdsNow(sql, row.owner, slots, query.anyWord ?? false)))
         kept.push(row);
     }
     return kept;
@@ -220,7 +227,7 @@ export function search(sql: Sql, principal: Principal, text: string, query: Quer
     .toSorted(([ka, a], [kb, b]) => b.score - a.score || a.best - b.best || (ka < kb ? -1 : 1))
     .slice(0, limit)
     .flatMap(([, { candidate, score, by }]): Hit[] => {
-      const snippet = snippetOf(sql, principal, candidate, by.has("words") ? words : []);
+      const snippet = snippetOf(sql, principal, candidate, by.has("words") ? slots.flat() : []);
       const matched = by.size === 2 ? "both" : by.has("words") ? "words" : "meaning";
       return snippet === undefined ? [] : [{ ...found(candidate), score, snippet, matched }];
     });
@@ -317,19 +324,80 @@ function snippetOf(
 }
 
 /**
- * Whether a section of the note's current text holds every word of the question (or, with `any`, one of them) as
- * FTS5 matches a chunk: each one a whole word, and one that cuts into several (`transit-apps`) as those words in a row.
+ * Whether a section of the note's current text holds every slot of the question (or, with `any`, one of them) as
+ * FTS5 matches a chunk: a slot holds when one of its words or phrases does, each word whole, and one that cuts into
+ * several (`transit-apps`) as those words in a row.
  */
-function holdsNow(sql: Sql, noteId: string, words: readonly string[], any: boolean): boolean {
+function holdsNow(sql: Sql, noteId: string, slots: readonly (readonly string[])[], any: boolean): boolean {
   const note = getNote(sql, noteId);
   if (!note) return false;
-  const phrases = words.map(tokens).filter((phrase) => phrase.length > 0);
+  const phrases = slots
+    .map((slot) => slot.map(tokens).filter((phrase) => phrase.length > 0))
+    .filter((slot) => slot.length > 0);
   // A phrase stays inside one column, header or text, as in FTS5.
   return chunkNote(note).some((s) => {
     const columns = [tokens(s.header), tokens(s.text)];
-    const holds = (phrase: readonly string[]) => columns.some((have) => phraseAt(have, phrase) >= 0);
+    const holds = (slot: readonly (readonly string[])[]) =>
+      slot.some((phrase) => columns.some((have) => phraseAt(have, phrase) >= 0));
     return any ? phrases.some(holds) : phrases.every(holds);
   });
+}
+
+/** A phrase as FTS5 reads text: its own syntax in it is just text. */
+const quote = (phrase: string) => `"${phrase.replaceAll('"', '""')}"`;
+
+/**
+ * The glossary's groups (docs/product/features/customization.md): a term and what it also means, from each
+ * `settings/` glossary note the reader may see (`terms: {CGPA: GPA, NTU: Northvale Technical University}`).
+ */
+function glossary(sql: Sql, principal: Principal): string[][] {
+  return listNotes(sql, { type: "Settings" })
+    .filter((note) => note.kind === "glossary" && project(note, principal))
+    .flatMap((note) => {
+      const terms: unknown = JSON.parse(note.fm)["terms"];
+      if (typeof terms !== "object" || terms === null || Array.isArray(terms)) return [];
+      return Object.entries(terms).map(([term, means]) => [
+        term,
+        ...[means].flat().filter((m): m is string => typeof m === "string"),
+      ]);
+    });
+}
+
+/**
+ * The question's words as slots: a word on its own, or where words spell a glossary term or one of its meanings,
+ * those words with every other spelling of it, so "my NTU grades" also finds "Northvale Technical University".
+ * Both ways, longest phrase first; words are matched as FTS5 matches them (`tokens`).
+ */
+function rewrite(words: readonly string[], groups: readonly (readonly string[])[]): string[][] {
+  const phrases = groups
+    .flatMap((group) => group.map((phrase) => ({ tokens: tokens(phrase), group })))
+    .filter((phrase) => phrase.tokens.length > 0)
+    .toSorted((a, b) => b.tokens.length - a.tokens.length);
+  const slots: string[][] = [];
+  for (let i = 0; i < words.length;) {
+    const spelled = phrases
+      .map(({ tokens: phrase, group }) => ({ n: spans(words, i, phrase), group }))
+      .find(({ n }) => n > 0);
+    if (!spelled) {
+      slots.push([words[i] ?? ""]);
+      i++;
+      continue;
+    }
+    slots.push([...new Set([words.slice(i, i + spelled.n).join(" "), ...spelled.group.map(fold)])]);
+    i += spelled.n;
+  }
+  return slots;
+}
+
+/** How many of `words`, from `i`, spell exactly `phrase` (as tokens), or 0. */
+function spans(words: readonly string[], i: number, phrase: readonly string[]): number {
+  const have: string[] = [];
+  for (let n = 1; i + n <= words.length; n++) {
+    have.push(...tokens(words[i + n - 1] ?? ""));
+    if (have.length >= phrase.length)
+      return have.length === phrase.length && have.every((token, k) => token === phrase[k]) ? n : 0;
+  }
+  return 0;
 }
 
 /** Where `phrase` starts in `have`, its words in a row, or -1. */

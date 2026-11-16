@@ -2,8 +2,11 @@
 // module that both transports serve (`/mcp` through the Base DO, and `brainiac mcp serve`, which forwards to it).
 // Every read goes through `project`; every change goes through the mutation path, as the calling connection.
 import {
+  aboutYou,
   BUILT_IN_TYPES,
+  CATALOG,
   detect,
+  FieldSpec,
   findClash,
   findQuestions,
   valueAt,
@@ -33,7 +36,10 @@ import { manifestOf, type Proposed } from "./hold.ts";
 import {
   mutate,
   mutateAll,
+  organizeRun,
   undoRun,
+  type Organized,
+  type Placement,
   type BatchResult,
   type Context,
   type Mutation,
@@ -42,6 +48,7 @@ import {
 } from "./mutate.ts";
 import { importInto } from "./imports.ts";
 import { getNote, getNoteByPath, listNotes, type NoteRow } from "./notes.ts";
+import { selfTest, type TypeChange } from "./organize.ts";
 import { project, type Principal } from "./project.ts";
 import { proposalNotes, withdraw, type Decided } from "./proposals.ts";
 import { requestFill, type FillField } from "./secrets.ts";
@@ -156,9 +163,18 @@ function isYaml(value: unknown): value is YamlValue {
 const pathOf = (field: string) => field.split(".").map((key) => (/^\d+$/.test(key) ? Number(key) : key));
 
 /** What a mutation's outcome tells the agent, with the next step for anything that didn't apply. */
-function outcome(result: MutationResult | BatchResult | UndoResult | Decided): Record<string, unknown> {
+function outcome(
+  result: MutationResult | BatchResult | UndoResult | Decided | Organized,
+): Record<string, unknown> {
   switch (result.status) {
     case "applied":
+      if ("types" in result)
+        return {
+          status: "applied",
+          run: result.runId,
+          types: result.types,
+          notes: result.notes.map((n) => ({ id: n.noteId, rev: n.rev })),
+        };
       return "noteId" in result
         ? { status: "applied", id: result.noteId, rev: result.rev, run: result.runId }
         : "notes" in result
@@ -224,7 +240,7 @@ function rolledBack<T>(sql: Sql, fn: () => T): T {
 }
 
 /** A dry run's outcome: what would happen, without the ids of a proposal or run that was never kept. */
-function wouldBe(result: MutationResult | BatchResult | UndoResult): Record<string, unknown> {
+function wouldBe(result: MutationResult | BatchResult | UndoResult | Organized): Record<string, unknown> {
   const { proposal: _proposal, run: _run, ...rest } = outcome(result);
   return { dryRun: true, ...rest };
 }
@@ -464,7 +480,7 @@ type "Application" rows also carry checks (ask for fields ["checks"]), computed 
 );
 
 const describe = tool(
-  `Call this first in a session. Returns who you are to this record (your level and whether you may see sensitive notes), me.md, the schema (every type with its folder, fields, allowed values and which types are held facts), note counts by type and folder, and how many questions and proposals are open.`,
+  `Call this first in a session. Returns who you are to this record (your level and whether you may see sensitive notes), me (who the person is: a summary from their record, then me.md in their own words), their settings notes (house rules for agents, glossary, views, review, output style: follow them), the schema (every type with its version, folder, fields, allowed values and which types are held facts), the shared catalog of types organize can add, note counts by type and folder, and how many questions and proposals are open.`,
   type({ "+": "reject" }),
   (sql, _args, ctx) => {
     const notes = liveVisible(sql, ctx);
@@ -476,14 +492,35 @@ const describe = tool(
       }, {});
     const me = notes.find((note) => note.path === "me.md");
     if (me) ctx.shown.add(me.id);
+    const about = aboutYou(readable(notes), manifestOf(sql) ?? null);
+    for (const id of about.notes) ctx.shown.add(id);
+    const yours = me ? splitNote(me.raw).body.trim() : "";
+    const settings = notes.filter((note) => note.type === "Settings");
+    for (const note of settings) ctx.shown.add(note.id);
     const proposals = proposalRows(sql, ctx).filter((row) => row.data["status"] === "open");
     const { connection } = ctx;
     return ok({
       you: connection
         ? { level: connection.level, sensitive: connection.sensitive, holdDays: connection.holdDays }
         : { level: "person" },
-      me: me ? splitNote(me.raw).body : null,
+      me:
+        [about.text && `# From your record\n\n${about.text}`, yours && `# In your words\n\n${yours}`]
+          .filter(Boolean)
+          .join("\n\n") || null,
+      settings: settings.map((note) => ({
+        id: note.id,
+        path: note.path,
+        rev: note.rev,
+        fields: fieldsOf(note),
+        body: splitNote(note.raw).body,
+      })),
       types: typesOf(sql),
+      catalog: Object.entries(CATALOG).map(([id, entry]) => ({
+        id,
+        name: entry.name,
+        folder: entry.folder,
+        fields: Object.keys(entry.fields),
+      })),
       counts: {
         notes: notes.length,
         byType: count((note) => note.type ?? "(none)"),
@@ -735,6 +772,8 @@ const create = tool(
     let path: string;
     try {
       if (args.path !== undefined) path = normalizePath(args.path);
+      // describe reads the person's own words from this one place.
+      else if (args.type === "Me") path = "me.md";
       else {
         const base = `${spec?.folder ?? slug(args.type)}/${slug(title ?? "") || id.toLowerCase()}`;
         path =
@@ -1001,7 +1040,9 @@ const undo = tool(
   type({ "+": "reject", run: "string", "dry_run?": "boolean | null", "approval_id?": "string | null" }),
   (sql, args, ctx) => {
     if (readOnly(ctx)) return ok(READ_ONLY);
-    const known = sql.all("SELECT 1 FROM revisions WHERE runId = ? LIMIT 1", args.run).length > 0;
+    const known =
+      sql.all("SELECT 1 FROM revisions WHERE runId = ? LIMIT 1", args.run).length > 0 ||
+      sql.all("SELECT 1 FROM schema WHERE runId = ? LIMIT 1", args.run).length > 0;
     if (!known)
       return ok({ status: "invalid", issues: [{ field: "run", message: `No run ${args.run} to undo.` }] });
     // Its answer can show any note the run touched (a conflict's values, a dry run's), deleted ones too.
@@ -1017,6 +1058,105 @@ const undo = tool(
         ...(args.approval_id !== undefined && { approvalId: args.approval_id }),
       });
     return ok(args.dry_run ? wouldBe(rolledBack(sql, run)) : outcome(run()));
+  },
+);
+
+const TypeArg = type({
+  "+": "reject",
+  name: "string",
+  base: "number.integer >= 0",
+  "catalog?": "string | null",
+  "folder?": "string | null",
+  "held?": "boolean | null",
+  "headline?": "string | null",
+  "key?": "string[] | null",
+  "fields?": type({ "[string]": FieldSpec }).or("null"),
+});
+
+const PlaceArg = type({
+  "+": "reject",
+  id: "string",
+  rev: "number.integer >= 0",
+  "type?": "string | null",
+  "set?": "Record<string, unknown> | null",
+  "unset?": "string[] | null",
+  "move?": "string | null",
+});
+
+const organize = tool(
+  `Grow and tidy the record's structure, as one run the person approves with their passkey. Use it when something worth keeping fits no type, or notes are in the wrong place or type.
+Where new info goes: 1. an existing type (describe's types); 2. a variant: a kind value or one optional field on an existing type, not a new type; 3. a catalog type (describe's catalog): {name: "Trip", base: 0, catalog: "trip@2"}; 4. a type of its own only with 3 fields of its own, or its own dates and a status, and a folder in the area for its kind of info (facts/, history/, identity/, health/, finance/, people/). Anything less stays a Fact with tags.
+types: each type to add or change, with base: the version describe showed (0 for a new one). A change made from an older version merges with what changed since, or is refused if both touch the same field: read describe again then.
+notes: each note to place, by id and rev: type converts it (with set and unset for its fields), move gives it a new path; every link follows. A note placed in a sensitive area becomes sensitive.
+The first call answers needsApproval with the plan (dry_run shows it too): show it to the person, and send the same call with approval_id once they approve. Applied, it returns its run (undo takes back all of it, types too) and a self-test: questions from the record that search must still answer with the right note. If any missed, tell the person and offer undo.`,
+  type({
+    "+": "reject",
+    "types?": TypeArg.array().atMostLength(20).or("null"),
+    "notes?": PlaceArg.array().atMostLength(100).or("null"),
+    "dry_run?": "boolean | null",
+    "approval_id?": "string | null",
+  }),
+  (sql, args, ctx) => {
+    if (readOnly(ctx)) return ok(READ_ONLY);
+    // Nobody is there to approve a background run's plan.
+    if (ctx.background) return ok({ status: "forbidden", message: "A background run can't organize." });
+    const types: TypeChange[] = [];
+    for (const arg of args.types ?? []) {
+      const { name, base, catalog, ...draft } = present(arg);
+      if (catalog !== undefined && Object.keys(draft).length > 0)
+        return fail(`types.${name}: catalog goes alone, with name and base; the catalog says the rest.`);
+      types.push(
+        catalog !== undefined
+          ? { name, base, catalog }
+          : { name, base, draft: { ...draft, fields: draft.fields ?? {} } },
+      );
+    }
+    const notes: Placement[] = [];
+    for (const arg of args.notes ?? []) {
+      const place = present(arg);
+      const note = visible(sql, ctx, place.id);
+      if (!note) return fail(`No note with id ${place.id}.`);
+      if (leased(sql, ctx, note.id)) return ok(LEASED);
+      const ops: PatchOp[] =
+        place.type === undefined ? [] : [{ op: "set", path: ["type"], value: place.type }];
+      for (const [field, value] of Object.entries(place.set ?? {})) {
+        if (field === "id" || field === "type")
+          return fail(`set.${field}: send type on its own; the id never changes.`);
+        if (!isYaml(value)) return fail(`set.${field} isn't a value front-matter can hold.`);
+        ops.push({ op: "set", path: pathOf(field), value });
+      }
+      ops.push(...(place.unset ?? []).map((field): PatchOp => ({ op: "unset", path: pathOf(field) })));
+      notes.push({
+        noteId: note.id,
+        rev: place.rev,
+        ops,
+        ...(place.move !== undefined && { path: place.move }),
+      });
+    }
+    if (types.length === 0 && notes.length === 0)
+      return fail("Send the types to add or change, or notes to place.");
+    const run = () =>
+      organizeRun(
+        sql,
+        { types, notes },
+        { ...ctx, ...(args.approval_id !== undefined && { approvalId: args.approval_id }) },
+      );
+    if (args.dry_run) return ok(wouldBe(rolledBack(sql, run)));
+    const result = run();
+    if (result.status !== "applied") return ok(outcome(result));
+    // The notes the run placed, and every note of a type it changed, as the person's next search would find them.
+    const asked = [
+      ...result.notes.map((n) => n.noteId),
+      ...result.types.flatMap((name) => listNotes(sql, { type: name }).map((note) => note.id)),
+    ];
+    const test = selfTest(sql, principal(ctx), asked, ctx.now);
+    return ok({
+      ...outcome(result),
+      selfTest: test,
+      ...(test.missed.length > 0 && {
+        message: `${test.missed.length} of ${test.asked} self-test questions no longer find their note. Tell the person, and offer undo {run: "${result.runId}"}.`,
+      }),
+    });
   },
 );
 
@@ -1666,6 +1806,7 @@ export const TOOLS = {
   import: importTool,
   update,
   undo,
+  organize,
   request_info: requestInfo,
   inbox,
   photos,

@@ -235,7 +235,8 @@ describe("connections", () => {
     const html = await accountPage("nadia@example.com", [], 0, [], activity).text();
     expect(html).toContain("What your connections did");
     expect(html).toContain(`get: ${TUM}</span>`);
-    expect(html).toContain('describe <span class="note">by background filing</span>');
+    // describe's summary of the person shows the open application, so its row names it too.
+    expect(html).toContain(`describe: ${TUM} <span class="note">by background filing</span>`);
     expect(html).toContain("claude.ai");
     expect(html).toContain("Brainiac CLI");
   });

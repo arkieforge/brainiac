@@ -1322,6 +1322,7 @@ const cases: Record<string, () => Promise<void>> = {
         ["update", { id: A, rev: record.note(A)!.rev, set: { status: "offline edit" } }],
         ["create", { type: "Note", fields: { title: "Offline note" } }],
         ["undo", { run: "x" }],
+        ["organize", { notes: [{ id: A, rev: 1, move: "notes/moved.md" }] }],
         ["request_info", { question: "Which school?" }],
         // A read the copy can't answer is refused the same way.
         ["ask", { mode: "context", question: "Which school?" }],
@@ -1375,6 +1376,7 @@ const cases: Record<string, () => Promise<void>> = {
           "import",
           "update",
           "undo",
+          "organize",
           "request_info",
           "inbox",
           "photos",

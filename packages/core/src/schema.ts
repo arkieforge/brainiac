@@ -1,11 +1,11 @@
 import { type, type Type } from "arktype";
-import { parse } from "yaml";
+import { parse, parseDocument } from "yaml";
 
 import { isUlid } from "./ids.ts";
 import { isRelationPath } from "./paths.ts";
 
 // What a manifest (okf-base.yaml) may say about one field. A field with `values` is a choice of those.
-const FieldSpec = type({
+export const FieldSpec = type({
   "kind?": "'text' | 'number' | 'boolean' | 'date' | 'relation' | 'list' | 'mapping' | 'requirements'",
   "values?": "string[] > 0",
   "required?": "boolean",
@@ -19,7 +19,10 @@ const ManifestSpec = type({
   schema_version: "number.integer >= 1",
   types: {
     "[string]": {
+      /** Bumped by every change to the type, so a change made from an older version is merged or refused (growth.ts). */
       version: "number.integer >= 1",
+      /** The shared catalog entry the type was taken from, like `trip@2` (growth.ts `CATALOG`). */
+      "catalog?": "string",
       "folder?": "string",
       /** A fact type: a connection's change to an existing value waits out the hold window (contract §3). */
       "held?": "boolean",
@@ -32,6 +35,7 @@ const ManifestSpec = type({
   },
 });
 export type Manifest = typeof ManifestSpec.infer;
+export type TypeSpec = Manifest["types"][string];
 
 export class ManifestError extends Error {
   override readonly name = "ManifestError";
@@ -42,6 +46,18 @@ export function parseManifest(yaml: string): Manifest {
   const manifest = ManifestSpec(parse(yaml));
   if (manifest instanceof type.errors) throw new ManifestError(`okf-base.yaml: ${manifest.summary}`);
   return manifest;
+}
+
+/**
+ * `okf-base.yaml` with one type set to `spec`, or removed without one, through the YAML document, so the person's
+ * comments and the other types' values survive (the yaml library may move a comment onto its own line). Starts a
+ * manifest when `yaml` is empty.
+ */
+export function setType(yaml: string, name: string, spec: TypeSpec | undefined): string {
+  const doc = parseDocument(yaml === "" ? "schema_version: 1\ntypes: {}\n" : yaml);
+  if (spec === undefined) doc.deleteIn(["types", name]);
+  else doc.setIn(["types", name], doc.createNode(spec));
+  return doc.toString();
 }
 
 /** The bounds a requirement check may put on its `field`. */
@@ -126,6 +142,31 @@ const EXAMPLES = {
  * type of the same name wins.
  */
 export const BUILT_IN_TYPES: Manifest["types"] = {
+  // Something worth keeping that fits no type and doesn't earn one (growth.ts `newTypeIssues`): a fact with tags.
+  Fact: {
+    version: 1,
+    held: true,
+    folder: "facts",
+    fields: {
+      tags: { kind: "list", example: "[music, grade-exam]" },
+      date: { kind: "date" },
+    },
+  },
+  // `me.md`: who the person is, in their own words. Brainiac never writes it; describe puts a summary from the record
+  // before it (core me.ts `aboutYou`).
+  Me: { version: 1, fields: {} },
+  // The person's preferences (docs/product/features/customization.md), one note per kind in `settings/`. They never
+  // grant access: levels, scopes and privacy live in the record's own tables. A glossary's `terms` map a word to
+  // what it also means (`CGPA: GPA`, or a list), and search reads them both ways (packages/base/src/glossary.ts).
+  Settings: {
+    version: 1,
+    folder: "settings",
+    key: ["kind"],
+    fields: {
+      kind: { values: ["agents", "glossary", "views", "review", "outputs"], required: true },
+      terms: { kind: "mapping", example: "{CGPA: GPA, NTU: Northvale Technical University}" },
+    },
+  },
   // Every upload's sidecar note (packages/base/src/vault.ts), so a record can hold one whatever its manifest says.
   // `kind` is optional: an upload's is unknown until the person says what it is.
   Document: {
