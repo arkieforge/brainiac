@@ -81,19 +81,18 @@ function Card({ proposal, online }: { readonly proposal: ProposalItem; readonly 
         {sensitive && <span className="badge sensitive">sensitive</span>}
       </p>
       <p className="what">{headline(proposal)}</p>
-      <ul className="notes small">
-        {proposal.items.map((item) => (
-          <li key={item.noteId} translate="no">
-            {item.baseRev === 0 ? (
-              item.path
-            ) : (
-              <Link to="/n/$noteId" params={{ noteId: item.noteId }}>
-                {item.path}
+      {/* Notes it changes that are already in the record open in place; Plan names every one. */}
+      {proposal.items.some((item) => item.baseRev > 0) && (
+        <p className="notes small">
+          {proposal.items
+            .filter((item) => item.baseRev > 0)
+            .map((item) => (
+              <Link key={item.noteId} to="/n/$noteId" params={{ noteId: item.noteId }}>
+                Open {item.path.split("/").at(-1)}
               </Link>
-            )}
-          </li>
-        ))}
-      </ul>
+            ))}
+        </p>
+      )}
       <div className="approval">
         <Plan items={proposal.items} />
       </div>

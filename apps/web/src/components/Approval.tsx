@@ -39,7 +39,8 @@ export function Plan({ items }: { readonly items: readonly PlanItem[] }) {
                 </dd>
               </div>
             )}
-            {item.patch.live && (
+            {/* A new note's "(new)" already says it comes to be. */}
+            {item.patch.live && item.baseRev > 0 && (
               <div>
                 <dt>note</dt>
                 <dd>{item.patch.live.after ? "comes back" : "is deleted"}</dd>
