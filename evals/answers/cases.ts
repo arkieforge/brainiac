@@ -58,9 +58,12 @@ const noInvented = (run: Answered) => {
   return number ? `says ${number.text}, which the record doesn't hold` : undefined;
 };
 
-/** "unverified", "not verified", "haven't marked it as verified", "verified, but the expiry date is not". */
+/**
+ * "unverified", "not verified", "haven't marked it as verified", "neither value has been verified", "verified, but
+ * the expiry date is not".
+ */
 const UNVERIFIED =
-  /\bun(verified|checked)\b|(\bnot\b|n't\b)[^.!?\n,;:]{0,30}\b(verified|checked)\b|\b(verified|checked)\b[^.!?\n]{0,40}\bbut\b[^.!?\n]{0,30}\b(is|are|was)(n't| not)\b/i;
+  /\bun(verified|checked)\b|(\bnot\b|n't\b|\bneither\b|\bnever\b)[^.!?\n,;:]{0,30}\b(verified|checked)\b|\b(verified|checked)\b[^.!?\n]{0,40}\bbut\b[^.!?\n]{0,30}\b(is|are|was)(n't| not)\b/i;
 
 const sentencesOf = (said: string) =>
   said
@@ -91,11 +94,15 @@ const labelFor = (sentence: string, field: RegExp, others: RegExp) => {
 const POINTS_BACK =
   /^\s*(it|this|that|these|those|they|both|the value|the values)\b|\b(verified|checked|marked) (it|this|that|them)\b|\b(either|both|neither|these|those) values?\b/i;
 
+/** Points back at every value given before: "Neither value has been verified", "Both values are unverified". */
+const POINTS_BACK_ALL = /\b(either|both|neither) values?\b/i;
+
 /**
  * Whether the answer labels the value it gives as unverified: in the sentence that gives it, in a clause not about
- * another field, or in the next sentence when that one names the field or points back at it. A sentence that calls
- * the value "verified" or "checked" fails. So "Expires 2028-11-02. Your CGPA is unverified.", "Expires 2028-11-02
- * and your CGPA is unverified" and "Your CGPA is 3.82 (verified). The scale is unverified." fail.
+ * another field, or in the next sentence when that one names the field or points back at it, or the one after when
+ * it points back at every value and the sentence between gives no number and says nothing of verifying. A sentence
+ * that calls the value "verified" or "checked" fails. So "Expires 2028-11-02. Your CGPA is unverified.", "Expires
+ * 2028-11-02 and your CGPA is unverified" and "Your CGPA is 3.82 (verified). The scale is unverified." fail.
  */
 const labeled = (value: RegExp, field: RegExp, others: RegExp, what: string) => (run: Answered) => {
   const sentences = sentencesOf(run.said);
@@ -104,7 +111,13 @@ const labeled = (value: RegExp, field: RegExp, others: RegExp, what: string) => 
     if (labelFor(sentence, field, others)) return true;
     if (/\b(verified|checked)\b/i.test(sentence)) return false;
     const next = sentences[i + 1] ?? "";
-    return (field.test(next) || POINTS_BACK.test(next)) && labelFor(next, field, others);
+    if ((field.test(next) || POINTS_BACK.test(next)) && labelFor(next, field, others)) return true;
+    const after = sentences[i + 2] ?? "";
+    return (
+      !/\d|\b(verified|checked)\b/i.test(next) &&
+      POINTS_BACK_ALL.test(after) &&
+      labelFor(after, field, others)
+    );
   });
   return ok ? undefined : `doesn't say ${what} is unverified`;
 };

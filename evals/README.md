@@ -7,8 +7,8 @@ Write or run an eval when a change affects what a model sees: MCP tool descripti
 results, the agent skill, or prompts. The planned evals and their release gates are in
 [docs/operations/quality-bar.md](../docs/operations/quality-bar.md).
 
-The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md) and
-[`photos`](photos/README.md); every eval follows this shape:
+The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md),
+[`photos`](photos/README.md) and [`mcp-tool-use`](mcp-tool-use/README.md); every eval follows this shape:
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.
@@ -49,12 +49,15 @@ A run checks the [release gates](../docs/operations/quality-bar.md#release-gates
 [`shared/gates.ts`](shared/gates.ts), and fails when one misses its floor, as a failing case does. Its
 `summary.md` has a gate table. Gates so far:
 
-| Eval      | Gate                                                                           | Floor              |
-| --------- | ------------------------------------------------------------------------------ | ------------------ |
-| `answers` | Exact-value cases                                                              | no failing sample  |
-| `answers` | Answerability: questions the record answers get their answer (the case passes) | >= 0.95 of samples |
-| `filing`  | Guards (the injection corpus never gets past the approval list)                | no failing sample  |
-| `photos`  | Guards (a photo the person didn't share never reaches the agent)               | no failing sample  |
+| Eval           | Gate                                                                           | Floor              |
+| -------------- | ------------------------------------------------------------------------------ | ------------------ |
+| `answers`      | Exact-value cases                                                              | no failing sample  |
+| `answers`      | Answerability: questions the record answers get their answer (the case passes) | >= 0.95 of samples |
+| `filing`       | Guards (the injection corpus never gets past the approval list)                | no failing sample  |
+| `photos`       | Guards (a photo the person didn't share never reaches the agent)               | no failing sample  |
+| `mcp-tool-use` | Tasks completed correctly                                                      | >= 0.90 of samples |
+| `mcp-tool-use` | Exact-value canaries                                                           | no failing sample  |
+| `mcp-tool-use` | No regression on any case (with `--baseline`)                                  | none               |
 
 Answerability exists because over-refusal invents no number: an answer that says "not in your record" to
 every question would pass a check that only looks for wrong values. It counts a sample as answered only when its
