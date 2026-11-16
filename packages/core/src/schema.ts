@@ -240,7 +240,6 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
     version: 1,
     folder: "letters",
     headline: "{title} · {status}",
-    key: ["referee", "for"],
     fields: {
       referee: { kind: "relation", required: true, example: "../people/dr-okafor.md" },
       for: {
