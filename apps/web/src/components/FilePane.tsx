@@ -237,7 +237,16 @@ export function KindForm({ file }: { readonly file: FileItem }) {
  * Whether the person's Claude may see this photo itself, to file it and fill in what it says. Turning that on hands
  * an unread photo to their agents, so it needs their passkey; turning it off never does.
  */
+/**
+ * Whether the person can let their Claude see a file itself: a photo, or a scan (a PDF the checks couldn't clear;
+ * a cleared one's text already reaches agents). The record decides again (`showable` in packages/base).
+ */
+export const showable = (file: FileItem) =>
+  file.mime.startsWith("image/") ||
+  (file.mime === "application/pdf" && (file.class === "unclassified" || file.class === "vault"));
+
 export function ShareForm({ file }: { readonly file: FileItem }) {
+  const what = file.mime === "application/pdf" ? "scan" : "photo";
   const [message, setMessage] = useState<string>();
   const [challenge, setChallenge] = useState<string>();
   const send = async (body: { readonly on: boolean; readonly response?: unknown }) => {
@@ -270,8 +279,8 @@ export function ShareForm({ file }: { readonly file: FileItem }) {
     <div className="fields">
       <p className="small muted">
         {file.shared
-          ? "Your Claude can see this photo, to file it and fill in what it shows."
-          : "Your Claude can't see this photo. Let it, and it can file the photo and fill in what it shows."}
+          ? `Your Claude can see this ${what}, to file it and fill in what it shows.`
+          : `Your Claude can't see this ${what}. Let it, and it can file the ${what} and fill in what it shows.`}
       </p>
       <button type="button" onClick={() => void toggle()}>
         {file.shared ? "Stop your Claude seeing it" : "Let your Claude see it"}
@@ -280,7 +289,7 @@ export function ShareForm({ file }: { readonly file: FileItem }) {
       {challenge && (
         <div className="approval" role="status">
           <p>
-            This hands the photo itself to your agents, whatever it shows
+            This hands the {what} itself to your agents, whatever it shows
             {file.class === "vault" ? ", and the checks found something secret in it" : ""}. It needs your
             passkey.
           </p>
@@ -343,7 +352,7 @@ export function FileFacts({ file }: { readonly file: FileItem }) {
       <span className="badge">{(file.bytes / 1024).toFixed(1)} KB</span>
       <p className="small muted">
         {file.shared
-          ? `${file.checks === "found" ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault` : "It stays unclassified"}: your Claude can see the photo because you let it, never its text.`
+          ? `${file.checks === "found" ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault` : "It stays unclassified"}: your Claude can see it because you let it, never its text.`
           : file.checks === "found"
             ? `The checks found ${file.findings.join(", ")} in it, so it stays in the vault: agents never see it.`
             : file.checks === "unreadable"

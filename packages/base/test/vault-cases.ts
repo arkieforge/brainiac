@@ -25,6 +25,7 @@ import {
   rewrapDataKey,
   PERSON,
   photoFor,
+  showable,
   saveSecret,
   sealFile,
   shareFile,
@@ -852,8 +853,59 @@ export const vaultCases: Record<string, Case> = {
     // As the record asks again after reading the bytes.
     ok("error" in photoFor(sql, floorConnection, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
     ok("view" in photoFor(sql, agent, "01JD7QA1ZK8M3V5X6Y7Z8A9NRM"));
-    // Only a photo can be shared at all.
+    // Only a photo or a scan can be shared at all.
     const transcript = upload(sql, key, TRANSCRIPT, human);
     ok("error" in shareFile(sql, transcript.sha256, true, human, { challenge: "x", signature: signed() }));
   },
+
+  "a scanned transcript reaches an agent with the sensitive scope only once shared, and a cleared PDF never this way":
+    (sql, fixtures) => {
+      const key = record(sql, fixtures);
+      // A scan: its pages are images, so the checks can't read it all and it stays unclassified.
+      const bytes = Buffer.from(
+        "%PDF-1.7\n1 0 obj << /Subtype /Image /Filter /DCTDecode >> stream\n\xff\xd8\xff",
+        "latin1",
+      );
+      const { sha256 } = sealFile(key, bytes);
+      const scan = {
+        sha256,
+        r2Key: `blobs/test/${sha256}`,
+        mime: "application/pdf",
+        bytes: bytes.length,
+        text: undefined,
+      };
+      const uploaded = recordUpload(sql, key, scan, human);
+      ok("sidecar" in uploaded && uploaded.sidecar, JSON.stringify(uploaded));
+      const sidecar = uploaded.sidecar;
+      equal(classOf(sql, sha256), "unclassified");
+      const agent = connectionFor(sql, { sensitive: true });
+      const ctx = via(agent);
+
+      // Listed as waiting, never handed over unshared.
+      const waiting = JSON.stringify(photosOf(sql, ctx).value);
+      ok(
+        waiting.includes(sidecar) &&
+          waiting.includes('"mime":"application/pdf"') &&
+          waiting.includes('"shared":false'),
+        waiting,
+      );
+      ok(!callTool(sql, "photos", { id: sidecar }, ctx).ok);
+
+      // Shared with the person's passkey: the record attaches it, for its pages to be read from R2.
+      const file = getFile(sql, sha256);
+      ok(file);
+      ok("file" in shareFile(sql, sha256, true, human, { challenge: shareHash(file), signature: signed() }));
+      const got = photosOf(sql, ctx, { id: sidecar });
+      ok(got.ok && got.attach?.sha256 === sha256, JSON.stringify(got));
+      // Without the sensitive scope, or in a background run, it is neither listed nor handed over.
+      const floor = via(connectionFor(sql));
+      same((photosOf(sql, floor).value as { photos: unknown[] }).photos, []);
+      ok(!callTool(sql, "photos", { id: sidecar }, floor).ok);
+      ok(!callTool(sql, "photos", { id: sidecar }, { ...ctx, background: true }).ok);
+
+      // A cleared PDF's text already reaches agents through get, so it isn't a scan to share.
+      ok(showable(file));
+      ok(!showable({ ...file, class: "normal" }));
+      ok(!showable({ ...file, class: "sensitive" }));
+    },
 };

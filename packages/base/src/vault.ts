@@ -23,7 +23,7 @@ import { canSee, connectionOf, type Connection } from "./connections.ts";
 import { enqueue, finishJob } from "./jobs.ts";
 import { getNote, type NoteRow } from "./notes.ts";
 import { mutate, type Context, type Forbidden, type MutationResult } from "./mutate.ts";
-import { extracts, isImage, mediaType, needsReading, PIPELINE } from "./pages.ts";
+import { extracts, isImage, mediaType, needsReading, pdfJpegs, PIPELINE } from "./pages.ts";
 import { chunkFile, fileOwner, putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
@@ -698,6 +698,14 @@ function confirm(sql: Sql, file: FileRow, kind: string, now: number): { file: Fi
 }
 
 /**
+ * Whether the person can let their agents see a file itself: a photo, or a scan, a PDF the checks couldn't clear
+ * (a cleared PDF's text already reaches agents through `get`, page by page).
+ */
+export const showable = (file: Pick<FileRow, "mime" | "class">) =>
+  isImage(file.mime) ||
+  (mediaType(file.mime) === "application/pdf" && (file.class === "unclassified" || file.class === "vault"));
+
+/**
  * The challenge for letting agents see a file's photo, as it is now: tagged so it can't equal any other plan's
  * hash, and over how many times it was turned on or off, so a signature can't be used twice.
  */
@@ -724,7 +732,7 @@ export function shareFile(
   return sql.transaction((): Classified => {
     const file = getFile(sql, sha256);
     if (!file) return { error: "No such file." };
-    if (!isImage(file.mime)) return { error: "Only a photo can be shown to your agents." };
+    if (!showable(file)) return { error: "Only a photo or a scan can be shown to your agents." };
     if (on === (file.sharedAt !== null)) return { file: viewFile(undefined, file) };
     if (on) {
       const challenge = shareHash(file);
@@ -791,7 +799,7 @@ function photoOf(sql: Sql, connection: Connection, noteId: string) {
   const file = sql
     .all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE path IS NOT NULL`)
     .find((row) => pathKey(row.path ?? "") === key);
-  return file && isImage(file.mime) ? { note, file } : undefined;
+  return file && showable(file) ? { note, file } : undefined;
 }
 
 function photoView(sql: Sql, connection: Connection, note: NoteRow, file: FileRow): PhotoView {
@@ -804,11 +812,15 @@ function photoView(sql: Sql, connection: Connection, note: NoteRow, file: FileRo
   };
   if (file.sharedAt === null) return { ...base, shared: false };
   const parsed = file.noteId === null ? undefined : getNote(sql, file.noteId);
-  const unreadable = !READABLE.has(mediaType(file.mime))
-    ? `It's a ${mediaType(file.mime)} file, which models don't read. Ask the person what it shows.`
-    : file.bytes > PHOTO_MAX_BYTES
-      ? "It's larger than the 5 MB a model takes. Ask the person what it shows."
-      : undefined;
+  // A scan's size is its pages': each is judged once its bytes are read (`photoImages`).
+  const unreadable =
+    mediaType(file.mime) === "application/pdf"
+      ? undefined
+      : !READABLE.has(mediaType(file.mime))
+        ? `It's a ${mediaType(file.mime)} file, which models don't read. Ask the person what it shows.`
+        : file.bytes > PHOTO_MAX_BYTES
+          ? "It's larger than the 5 MB a model takes. Ask the person what it shows."
+          : undefined;
   return {
     ...base,
     shared: true,
@@ -859,6 +871,46 @@ export function photoFor(
     };
   if (view.unreadable !== undefined) return { error: view.unreadable };
   return { view, file: photo.file };
+}
+
+/** An image as an MCP image block carries it. */
+export interface PhotoImage {
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+// The most of a scan's pages one answer holds, and all their bytes together: a transcript's few pages, without
+// the answer outgrowing what a model reads in one turn.
+const SCAN_PAGES = 8;
+const SCAN_MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * What the agent sees of a shared file, from its opened bytes: a photo as itself, a scan as its pages' images (the
+ * JPEGs `pdfJpegs` finds). `left` says a scan holds more pages than the answer does, so the agent never takes the
+ * first pages for all of it. A scan whose pages aren't JPEGs, or one too large for a model, is refused with words
+ * for the agent.
+ */
+export function photoImages(
+  mime: string,
+  bytes: Uint8Array,
+): { readonly images: readonly PhotoImage[]; readonly left?: string } | { readonly error: string } {
+  if (mediaType(mime) !== "application/pdf")
+    return { images: [{ data: Buffer.from(bytes).toString("base64"), mimeType: mediaType(mime) }] };
+  const found = pdfJpegs(bytes, SCAN_PAGES + 1);
+  const pages = found.slice(0, SCAN_PAGES);
+  if (pages.length === 0)
+    return { error: "This scan's pages aren't images Brainiac can hand over. Ask the person what it shows." };
+  if (
+    pages.some((page) => page.length > PHOTO_MAX_BYTES) ||
+    pages.reduce((sum, page) => sum + page.length, 0) > SCAN_MAX_BYTES
+  )
+    return { error: "This scan is larger than a model takes in one answer. Ask the person what it shows." };
+  return {
+    images: pages.map((page) => ({ data: Buffer.from(page).toString("base64"), mimeType: "image/jpeg" })),
+    ...(found.length > SCAN_PAGES && {
+      left: `This scan has more than ${SCAN_PAGES} page images; these are its first ${SCAN_PAGES}. Ask the person for what the rest say.`,
+    }),
+  };
 }
 
 // A file token opens one file's bytes once, on the usercontent origin, for a minute. Like a CLI token it names its

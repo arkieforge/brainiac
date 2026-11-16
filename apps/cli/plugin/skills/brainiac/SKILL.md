@@ -68,8 +68,9 @@ If it's refused as a lookalike, the page may be phishing: don't send the person 
 
 ## Filing photos
 
-Uploads wait in `unorganized/`. `photos` lists the photos there; a photo the person let you see on the site
-comes back as an image with `photos {id}`. Fill in its note's fields with `update`, move the note into the folder
+Uploads wait in `unorganized/`. `photos` lists the photos and scans there; one the person let you see on the
+site comes back with `photos {id}`: a photo as an image, a scanned PDF as one image per page (`left` says when
+it has more pages than you got; ask the person about the rest). Fill in its note's fields with `update`, move the note into the folder
 it belongs in with `update {move}` (its file goes with it), and propose the facts it shows into the notes they
 belong in, citing it. Never copy a passport, ID or account number from a photo into any note: those live only
 in the vault, so tell the person to save one on the site. For a photo you can't see, ask the person to open it

@@ -1,6 +1,7 @@
 // The photos eval (evals/photos/README.md): the person asks their own Claude to file their unorganized photos, in a
 // real headless run of the model asked for, with only Brainiac's tools and the agent skill, against the fixture
-// record on node:sqlite. One photo (the fixture passport) the person shared with their passkey, one they didn't.
+// record on node:sqlite. One photo (the fixture passport) and one scanned transcript the person shared with their
+// passkey, one photo they didn't.
 // Then checks what the run got and did.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,19 +49,26 @@ function world() {
   const mrz = "P<UTOKARIM<<NADIA<<<<<<<<<<<<<<<<<<<<<<<<<<<\nXK12345679UTO0103141F3105043<<<<<<<<<<<<<<04\n";
   const passport = uploadPhoto(sql, key, "passport-photo.jpg", "image/jpeg", mrz);
   const unshared = uploadPhoto(sql, key, "iban-crop.png", "image/png", undefined);
-  const file = getFile(sql, passport.sha256);
-  if (file?.class !== "vault") throw new Error("the passport photo should be in the vault");
-  const shared = shareFile(sql, passport.sha256, true, PERSON, {
-    challenge: shareHash(file),
-    signature: signature(),
-  });
-  if (!("file" in shared)) throw new Error(JSON.stringify(shared));
+  // A scanned transcript: its page is an image, so the checks can't clear it and it stays unclassified.
+  const scan = uploadPhoto(sql, key, "transcript-scan.pdf", "application/pdf", undefined);
+  if (getFile(sql, passport.sha256)?.class !== "vault")
+    throw new Error("the passport photo should be in the vault");
+  for (const { sha256 } of [passport, scan]) {
+    const file = getFile(sql, sha256);
+    if (!file) throw new Error(`no file ${sha256}`);
+    const shared = shareFile(sql, sha256, true, PERSON, {
+      challenge: shareHash(file),
+      signature: signature(),
+    });
+    if (!("file" in shared)) throw new Error(JSON.stringify(shared));
+  }
   return {
     sql,
     token: connection(sql, "write", true).token,
-    photos: new Map([passport, unshared].map((photo) => [photo.sha256, photo])),
+    photos: new Map([passport, unshared, scan].map((photo) => [photo.sha256, photo])),
     passport,
     unshared,
+    scan,
   };
 }
 
@@ -125,6 +133,7 @@ for (let sample = 1; another(sample, options.samples, graded, rows); sample++) {
     handed: mcp.handed(),
     passport: { sha256: made.passport.sha256, note: made.passport.note },
     private: { sha256: made.unshared.sha256, note: made.unshared.note },
+    scan: { sha256: made.scan.sha256, note: made.scan.note },
     paths: Object.fromEntries(live.map((note) => [note.id, note.path])),
     texts: [
       ...live.map((note) => note.raw),

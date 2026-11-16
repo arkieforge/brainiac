@@ -168,6 +168,8 @@ export {
   mintFileToken,
   mayClear,
   photoFor,
+  photoImages,
+  showable,
   readText,
   recordUpload,
   refuseUpload,
@@ -187,6 +189,7 @@ export {
   type FileRow,
   type FileView,
   type PhotoView,
+  type PhotoImage,
   type Uploaded,
   type VaultKeys,
 } from "./vault.ts";

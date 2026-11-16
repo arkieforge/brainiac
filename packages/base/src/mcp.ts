@@ -32,7 +32,7 @@ function toolServer(call: (name: string, args: unknown) => Promise<Answer>): Mcp
       if (!answer.ok) return { content: [{ type: "text", text: answer.error }], isError: true };
       const text = { type: "text" as const, text: JSON.stringify(answer.value) };
       return {
-        content: answer.image ? [text, { type: "image" as const, ...answer.image }] : [text],
+        content: [text, ...(answer.images ?? []).map((image) => ({ type: "image" as const, ...image }))],
       };
     });
   }
