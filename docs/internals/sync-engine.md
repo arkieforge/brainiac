@@ -40,6 +40,7 @@ approved { approvals: [{ planHash, approvalId }] } // plans the person signed th
 gap      { clientId, highWater }        // resend from highWater + 1
 reset    { clientId, clientSeq?, reason } // two machines share this id; no clientSeq: another actor owns it
 proposals {}                            // the person's sockets only: the open proposals changed, so the site asks /api/proposals again
+manifest {}                             // every socket: the manifest changed (organize, undo); the site asks /api/schema, a daemon says hello again
 ```
 
 The DO computes each mutation's digest itself. A result names the `changeId` it answers, so a copy that

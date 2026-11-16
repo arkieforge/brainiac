@@ -10,7 +10,7 @@ import { deepEqual, isUlid, PathError, pathKey, resolveRelation, type PlanItem }
 import { connectionOf } from "./connections.ts";
 import { diff, stateOf } from "./diff.ts";
 import { getNote, type NoteRow } from "./notes.ts";
-import { MANIFEST } from "./organize.ts";
+import { MANIFEST, manifestVersion } from "./organize.ts";
 import type { Sql } from "./sql.ts";
 
 /** How long a review session lasts after its signature, and how long its nonce waits to be signed. */
@@ -365,8 +365,7 @@ function askedBy(sql: Sql, actor: string): Pick<WaitingPlan, "from" | "by"> {
 /** Where a plan item's note is now: a note's revision, or for the manifest (organize.ts) the schema's version. */
 function revisionOf(sql: Sql, noteId: string): number {
   if (noteId !== MANIFEST) return getNote(sql, noteId)?.rev ?? 0;
-  const [schema] = sql.all<{ version: number }>("SELECT max(version) AS version FROM schema");
-  return schema?.version ?? 0;
+  return manifestVersion(sql);
 }
 
 const pendingOf = (sql: Sql, row: ApprovalRow): WaitingPlan => {

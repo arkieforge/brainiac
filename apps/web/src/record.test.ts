@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 // A tab's start-up racing a sign-out: everything else here is the browser, faked as little as it can be.
 import type { Store } from "@brainiac/sync";
+import { createElement, useEffect } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const slots: { name: string; released: boolean }[] = [];
@@ -127,5 +129,82 @@ describe("review saves", () => {
     });
     // Sent on revision 2, so the record refuses it as a conflict rather than verifying title B unseen.
     expect(posted).toEqual([{ raw: "---\ntitle: A!\n---\n", baseRev: 2, review: "nonce" }]);
+  });
+});
+
+describe("the manifest", () => {
+  it("is read again when the record says it changed, when the tab comes back online, and once live after a failed read", async () => {
+    vi.resetModules();
+    localStorage.setItem("brainiac:user", "ada");
+    const opened: (FakeSocket & { sent: string[] })[] = [];
+    class Socket extends FakeSocket {
+      sent: string[] = [];
+      constructor(url: string) {
+        super(url);
+        opened.push(this);
+      }
+      override send(data: string) {
+        this.sent.push(data);
+      }
+    }
+    // Each read of the schema answers with the record's manifest as of then; the first, at start, fails.
+    let types: Record<string, object> = { Fact: { version: 1, fields: {} } };
+    let schemaReads = 0;
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("fetch", async (path: string) => {
+      if (path === "/api/session") return Response.json({ user: "ada" });
+      if (path === "/api/schema") {
+        if (++schemaReads === 1) throw new TypeError("Failed to fetch");
+        return Response.json({ manifest: { schema_version: 1, types } });
+      }
+      return Response.json({ files: [], proposals: [] });
+    });
+    const record = await import("./record.ts");
+    // A mounted component reading the manifest as a form does: each wait settles when it renders with that type.
+    const waits: [string, () => void][] = [];
+    const shows = (type: string) => new Promise<void>((resolve) => waits.push([type, resolve]));
+    function Probe() {
+      const has = record.useRecord().manifest?.types ?? {};
+      useEffect(() => {
+        for (const [type, resolve] of waits) if (type in has) resolve();
+      });
+      return null;
+    }
+    createRoot(document.createElement("div")).render(createElement(Probe));
+    await record.start();
+    const live = async () => {
+      const socket = opened.at(-1);
+      if (!socket) throw new Error("no socket");
+      socket.readyState = 1;
+      socket.dispatchEvent(new Event("open"));
+      const hello = JSON.parse(socket.sent.at(-1) ?? "{}");
+      socket.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "snapshot", seq: 0, notes: [], attempt: hello.attempt }),
+        }),
+      );
+      return socket;
+    };
+    // The start's read failed: going live reads it again.
+    const fact = shows("Fact");
+    const socket = await live();
+    await fact;
+    expect(schemaReads).toBe(2);
+
+    // Organize added Trip somewhere else: the socket says so, and the tab's forms get it without a reload.
+    types = { Trip: { version: 2, folder: "history/travel", fields: {} } };
+    const trip = shows("Trip");
+    socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "manifest" }) }));
+    await trip;
+    expect(schemaReads).toBe(3);
+
+    // Changed again while the tab was offline: the push went to nobody, so coming back reads it again.
+    socket.dispatchEvent(new Event("close"));
+    types = { ...types, Visa: { version: 1, folder: "identity/visas", fields: {} } };
+    const visa = shows("Visa");
+    window.dispatchEvent(new Event("online"));
+    await live();
+    await visa;
+    expect(schemaReads).toBe(4);
   });
 });

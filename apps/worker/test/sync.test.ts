@@ -776,3 +776,48 @@ const waitingOn = (user: string, id?: string) =>
   mf.dispatchFetch(`${ORIGIN}/api/approvals${id === undefined ? "" : `?id=${id}`}`, {
     headers: session(user),
   });
+
+/** How many times a device's socket was told the manifest changed. */
+const heard = (d: { received: string[] }) =>
+  d.received.filter((text) => JSON.parse(text).type === "manifest").length;
+
+describe("the manifest", () => {
+  it("a type organize adds reaches every open tab and laptop live, and nothing else carries the manifest", async () => {
+    const user = "manifest";
+    const base = await record(user);
+    const tab = await online("manifest-tab", session(user));
+    const laptop = await online("manifest-laptop", bearer((await cliToken(base)).token));
+    const agent = await base.addConnection({ kind: "cli" });
+    await base.setGrants(agent.id, { level: "write", sensitive: false, holdDays: 0 });
+
+    // An ordinary edit reaches the laptop with no word of the manifest.
+    const pushed = laptop.next((m) => m.type === "changes" && m.items.length > 0);
+    tab.client.create(ID, TUM, raw, "normal");
+    await pushed;
+    expect([heard(tab), heard(laptop)]).toEqual([0, 0]);
+
+    // An agent's organize run adds Trip from the catalog, signed by the person.
+    const args = { types: [{ name: "Trip", base: 0, catalog: "trip@2" }] };
+    const planned = (await base.tool({ connectionId: agent.id }, "organize", args)) as Answer;
+    if (!planned.ok) throw new Error(planned.error);
+    const { items } = planned.value as { items: PlanItem[] };
+    const told = [tab, laptop].map((d) => d.next((m) => m.type === "manifest"));
+    const approval_id = await base.sign(items);
+    const done = (await base.tool({ connectionId: agent.id }, "organize", {
+      ...args,
+      approval_id,
+    })) as Answer;
+    expect(done).toMatchObject({ ok: true, value: { status: "applied" } });
+    await Promise.all(told);
+
+    // The tab asks again over HTTP; the laptop says hello again on the same socket, as the daemon does.
+    const schema = (await (await siteCall(user, "/api/schema")).json()) as { manifest: { types: object } };
+    expect(Object.keys(schema.manifest.types)).toContain("Trip");
+    const welcomed = laptop.next((m) => m.type === "welcome");
+    laptop.client.connect();
+    expect(await welcomed).toMatchObject({ manifest: expect.stringContaining("Trip:") });
+    // Once per change, and only as that word: no socket was sent the manifest's text unasked.
+    expect([heard(tab), heard(laptop)]).toEqual([1, 1]);
+    expect(tab.received.some((text) => text.includes("trip@2") || text.includes("Trip:"))).toBe(false);
+  });
+});

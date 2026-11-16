@@ -41,6 +41,11 @@ interface SchemaRow {
 const latest = (sql: Sql) =>
   sql.all<SchemaRow>("SELECT version, manifest FROM schema ORDER BY version DESC LIMIT 1")[0];
 
+/** The manifest's version now, 0 for none. Every change to it adds a version, an undo's too, so it only grows. */
+export function manifestVersion(sql: Sql): number {
+  return sql.all<{ version: number | null }>("SELECT max(version) AS version FROM schema")[0]?.version ?? 0;
+}
+
 const typesOf = (row: SchemaRow | undefined) => (row ? parseManifest(row.manifest).types : {});
 
 /** The type as the record had it at `version`, from the manifest's history. */

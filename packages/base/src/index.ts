@@ -111,7 +111,7 @@ export {
   type ProfileSeen,
   type ProfileWork,
 } from "./profiles.ts";
-export { MANIFEST, selfTest, type SelfTest, type TypeChange } from "./organize.ts";
+export { MANIFEST, manifestVersion, selfTest, type SelfTest, type TypeChange } from "./organize.ts";
 export {
   decide,
   pending,
