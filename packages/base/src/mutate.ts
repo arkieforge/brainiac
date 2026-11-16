@@ -172,6 +172,28 @@ function blindEdge(sql: Sql, reader: Principal, { before, after }: Effect): bool
   return blind(before, was) || blind(after, is);
 }
 
+/** An application's statuses once the portal has its files: the drafts sent with it stay as they were sent. */
+const SENT = new Set(["submitted", "interview", "decision"]);
+
+/**
+ * The application a change to a Draft would alter after it was sent (docs/product/features/applications.md):
+ * submitted versions are frozen. A new version is a new Draft; moving the application back to preparing thaws it.
+ */
+function frozenBy(sql: Sql, { before, after }: Effect): NoteRow | undefined {
+  if (!before || before.deletedAt !== null || before.type !== "Draft") return undefined;
+  if (
+    after.raw === before.raw &&
+    after.path === before.path &&
+    after.class === before.class &&
+    after.deletedAt === null
+  )
+    return undefined;
+  const application = relationTarget(sql, before, JSON.parse(before.fm)["for"]);
+  return application?.type === "Application" && SENT.has(String(JSON.parse(application.fm)["status"]))
+    ? application
+    : undefined;
+}
+
 /**
  * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
  * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
@@ -214,6 +236,19 @@ function judged<T extends { readonly status: string }>(
               },
             ],
           });
+        for (const effect of effects) {
+          const application = frozenBy(sql, effect);
+          if (application)
+            throw new Held({
+              status: "invalid",
+              issues: [
+                {
+                  field: "status",
+                  message: `${effect.before?.path} is the version sent with ${application.title ?? application.path}, so it stays as it was. Write a new version, or move the application back to preparing first.`,
+                },
+              ],
+            });
+        }
         const reader = connection ? principalOf(connection) : (ctx.reader ?? PERSON);
         if (reader !== PERSON && effects.some((effect) => blindEdge(sql, reader, effect)))
           throw new Held({

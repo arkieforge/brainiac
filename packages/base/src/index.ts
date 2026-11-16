@@ -99,6 +99,7 @@ export {
   type LinkWork,
   type Snapshot,
 } from "./links.ts";
+export { draftRendering, packetOf, type Packet, type PacketPart, type Rendering } from "./drafts.ts";
 export { DOI_ACTOR, installLookup, LOOKUP_MS, type Found } from "./papers.ts";
 export { bareDoi, bareOrcid, linkedOrcid, linkOrcid, ORCID_ACTOR, unlinkOrcid, type Work } from "./orcid.ts";
 export {

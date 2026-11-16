@@ -65,6 +65,7 @@ brainiac/
 ├── apps/
 │   ├── worker/              the one Worker: API, MCP, files, queue consumer, Workflows; serves web's build; exports the Base DO
 │   ├── ocr/                 OCR for the vault's checks: its own Worker, reached only over RPC, so Tesseract's memory stays out of the main one
+│   ├── typst/               Drafts' PDFs: its own Worker, reached only over RPC, so the compiler's 28 MB of wasm stays out of the main one's cold starts
 │   ├── web/                 the site: TanStack Start in SPA mode, built to static files
 │   ├── marketing/           the public Astro site
 │   ├── cli/                 brainiac CLI, daemon, stdio MCP, Claude Code hook (bun build --compile)

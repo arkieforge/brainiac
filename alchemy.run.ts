@@ -166,6 +166,18 @@ export default Alchemy.Stack(
         env: { IMAGES: Cloudflare.Images.Images() },
       });
 
+      // Typst for drafts (apps/typst): its own Worker, so the compiler's 28 MB of wasm stays out of the main one's
+      // cold starts. Only the site's download routes reach it, over RPC; its fonts are its assets.
+      const typst = yield* Cloudflare.Worker("typst", {
+        name: name("typst"),
+        main: "apps/typst/src/index.ts",
+        assets: { directory: "apps/typst/fonts" },
+        compatibility: { flags: ["nodejs_compat"] },
+        workersDev: false,
+        // A CV compiles in well under a second locally; room for a long packet on a slower CPU.
+        limits: { cpuMs: 30_000 },
+      });
+
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
         ...(domain && usercontent && { domain: { name: domain, aliases: [usercontent] } }),
@@ -192,6 +204,8 @@ export default Alchemy.Stack(
           BROWSER: Cloudflare.Workers.Browser(),
           // The text of photos and scans, for the vault's checks only, in the jobs consumer.
           OCR: ocr,
+          // A draft's PDF, in the site's download routes (apps/worker/src/drafts.ts).
+          TYPST: typst,
           VAULT_KEY: yield* vaultKey(generation),
           ...(previousKey && { VAULT_KEY_PREVIOUS: previousKey }),
           JOBS: jobs,

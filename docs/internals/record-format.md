@@ -46,7 +46,7 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 - **Held types**: a type marked `held: true` in `okf-base.yaml` is a fact type. A connection's change to its existing values waits out the hold window, and its folder is a held area (see "The contract").
 - **Names**: kebab-case `<what>-<when>`. Portal file names (`Karim_Nadia_Transcript.pdf`) are applied only when building a packet.
 - **Distinct events are distinct notes**: two IELTS attempts are two TestScore notes, the newer one `supersedes` the older. "Current score" is a query, and history stays queryable.
-- **Source and generated output are separate**: `out/` and `derived/` can be rebuilt; versions you actually submitted are frozen on the application.
+- **Source and generated output are separate**: a draft (`Draft`: a CV, resume, SOP, cover letter or essay) is a note in its application's folder, one per version (`cv-v2.md`), its body the text and `claims` the value behind each number, date and name in it; its PDF is rendered on demand and never stored. An application's `packet` lists the drafts and documents its portal takes, each `{item, name}`. A draft for an application that is submitted, at interview or decided is frozen: the mutation path refuses any change to it until the application goes back to preparing.
 - **Filenames** are normalized to Unicode NFC and checked case-insensitively for clashes, so macOS, Windows and Linux copies agree.
 
 ### How edits keep your text

@@ -8,6 +8,7 @@ import type { PlanItem } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 import type { Approver } from "./approvals.ts";
+import { draftDownload, packetDownload } from "./drafts.ts";
 import type { Env } from "./env.ts";
 import { isUsercontent, serveUsercontent } from "./usercontent.ts";
 
@@ -54,7 +55,7 @@ const sameOrigin = (request: Request) => request.headers.get("origin") === new U
  */
 export function routeSite(
   request: Request,
-  env: Pick<Env, "BASE" | "USERCONTENT_ORIGIN">,
+  env: Pick<Env, "BASE" | "USERCONTENT_ORIGIN" | "TYPST">,
   session: Session,
 ): Promise<Response> | undefined {
   if (isUsercontent(request, env)) return serveUsercontent(request, env);
@@ -66,7 +67,7 @@ export function routeSite(
 
 async function serveApi(
   request: Request,
-  env: Pick<Env, "BASE" | "USERCONTENT_ORIGIN">,
+  env: Pick<Env, "BASE" | "USERCONTENT_ORIGIN" | "TYPST">,
   session: Session,
   pathname: string,
 ): Promise<Response> {
@@ -94,6 +95,11 @@ async function serveApi(
       return failed(400, "Say which email, and whether it's on.");
     return json(await record.emails(ask.email, ask.on));
   }
+  // A saved draft as a PDF, and an application's packet as a zip: downloads for the person only.
+  const draft = /^\/api\/drafts\/([0-9A-HJKMNP-TV-Z]{26})\/pdf$/.exec(pathname)?.[1];
+  if (draft !== undefined && !post) return draftDownload(await record.draftRendering(draft), env.TYPST);
+  const packet = /^\/api\/applications\/([0-9A-HJKMNP-TV-Z]{26})\/packet$/.exec(pathname)?.[1];
+  if (packet !== undefined && !post) return packetDownload(await record.packet(packet), env.TYPST);
   // Drift checks of the person's own profiles: paid, so only the signed-in person starts one.
   if (pathname === "/api/profiles/check" && post) return json(await record.checkProfiles());
   const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})(\/move)?$/.exec(pathname);

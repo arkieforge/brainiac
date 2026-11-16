@@ -1,4 +1,5 @@
 import type { Base, JobMessage } from "./base.ts";
+import type { Typst } from "./drafts.ts";
 import type { Ocr } from "./jobs.ts";
 
 export interface Env {
@@ -8,6 +9,8 @@ export interface Env {
   AI: Ai;
   /** The OCR Worker (apps/ocr), over RPC: the text of photos and scans, for the vault's checks only (jobs.ts). */
   OCR: Ocr;
+  /** The Typst Worker (apps/typst), over RPC: a draft's PDF for the person's download (drafts.ts). */
+  TYPST?: Typst;
   BASE: DurableObjectNamespace<Base>;
   BLOBS: R2Bucket;
   /** Wraps every record's data key (packages/base/src/vault.ts). A Secrets Store secret, one per stage and generation. */

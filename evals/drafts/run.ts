@@ -64,7 +64,7 @@ function world(c: Case) {
     if (put.status !== "applied") throw new Error(`${c.id}: ${JSON.stringify(put)}`);
   }
   // The person's own Claude: it may read everything, sensitive notes included.
-  const reader = connection(sql, "read", true);
+  const reader = connection(sql, c.level ?? "read", true);
   const facts = factsOf(listNotes(sql).flatMap((n) => (project(n, reader.connection) ? [n.raw] : [])));
   return { sql, reader, facts };
 }

@@ -55,6 +55,9 @@ import {
   type SecretInput,
   type SecretView,
   type Digest,
+  draftRendering,
+  packetOf,
+  type Rendering,
   type FileToken,
   type Extracted,
   type FileView,
@@ -139,6 +142,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
 import { checkSignature, type Approver } from "./approvals.ts";
+import type { PacketFiles } from "./drafts.ts";
 import type { Env } from "./env.ts";
 import type { Models } from "./jobs.ts";
 
@@ -376,6 +380,35 @@ export class Base extends DurableObject<Env> {
   emails(email?: Email, on?: boolean): Record<Email, boolean> {
     if (email !== undefined && on !== undefined) setEmail(this.sql, email, on);
     return emails(this.sql);
+  }
+
+  /**
+   * A saved Draft as Typst source, for the site's download route (the person's session only): it renders only
+   * while every claim in it matches the record.
+   */
+  draftRendering(id: string): Rendering | { readonly error: string } {
+    return draftRendering(this.sql, id, Date.now());
+  }
+
+  /**
+   * An application's packet for the site's download route (the person's session only): its drafts as Typst
+   * source and its cleared files' bytes, in the packet's order, and what the person adds by hand.
+   */
+  async packet(id: string): Promise<PacketFiles> {
+    const packet = packetOf(this.sql, id, Date.now());
+    if ("error" in packet) return packet;
+    const key = await this.dataKey();
+    const parts = await Promise.all(
+      packet.parts.map(async (part) => {
+        if (part.kind === "draft") return { name: part.name, source: part.source };
+        const object = await this.env.BLOBS.get(part.file.r2Key);
+        // Gone from R2 is a bug, not a state: the download fails loudly rather than leave a file out.
+        if (!object) throw new Error(`The record's file ${part.file.sha256} is missing from R2.`);
+        const sealed = new Uint8Array(await object.arrayBuffer());
+        return { name: part.name, bytes: unseal(key, sealed, `file:${part.file.sha256}`) };
+      }),
+    );
+    return { name: packet.name, parts, missing: packet.missing };
   }
 
   /**

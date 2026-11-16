@@ -1797,6 +1797,20 @@ mode "verify" with text (your draft answer) and claims: one {note, field, value}
 
 /** What each kind of draft is for, as an outline: the person's house rules come first where they differ. */
 const OUTLINES = {
+  cv: [
+    "Your name and a contact line, from me.md",
+    "Education: degree, school, dates and grade, most recent first",
+    "Research and publications, with your author position",
+    "Experience: role, organisation, dates and what you did, most recent first",
+    "Test scores, when the application asks for them",
+    "Skills and awards the record holds",
+  ],
+  resume: [
+    "One page: your name and a contact line",
+    "Experience first, most recent first, a line or two each",
+    "Education",
+    "Skills the record holds",
+  ],
   sop: [
     "What draws you to this field: the interest your studies, research or work show",
     "What you have done: education, research, projects and roles, each from a fact",
@@ -1819,6 +1833,50 @@ const DRAFT_RULES = [
   'Before you show the draft, check it with ask {mode: "verify"}: text is the whole draft, claims one {note, field, value} for each number, date, name or title it states. Fix it until its status is ok. Keep cites and labels like "unverified" out of the draft itself; tell the person beside it which values they haven\'t verified.',
 ];
 
+/** Where a draft is saved, so the person can download it as a PDF and send it with an application. */
+const SAVE =
+  'To keep it, or when the person wants the PDF: create {type: "Draft", path: "<the application\'s folder>/<kind>-v<n>.md", fields: {title, kind, claims}, link: {for: "<application id>"}, body: the draft, sensitive: true if it quotes a grade, a score or an ID}, with the claims you verified. Then draft {verify: "<its id>"} checks it as saved, and says where the person downloads it.';
+
+/** A saved Draft's claims: as many as a CV can hold. */
+const SavedClaims = Claim.array().atMostLength(500);
+
+/**
+ * A saved Draft checked as `ask {mode: "verify"}` checks a draft: its body against its `claims`. A normal draft
+ * quoting a sensitive note's value would hand that value to every connection that can't see the note, so it
+ * doesn't pass. Once it passes, the person can download it as a PDF from the site.
+ */
+export function checkDraft(sql: Sql, ctx: Context, note: NoteRow): Answer {
+  const call: Call = { ...ctx, shown: new Set() };
+  const claims = SavedClaims(fieldsOf(note)["claims"] ?? []);
+  if (claims instanceof type.errors)
+    return ok({
+      status: "fix",
+      message: `claims must be a list of {note, field, value}: ${claims.summary}. Fix it with update, then verify again.`,
+    });
+  const answer = verifyDraft(sql, call, splitNote(note.raw).body, claims);
+  if (!answer.ok || typeof answer.value !== "object" || answer.value === null) return answer;
+  const checked = answer.value as { readonly status: string };
+  const leaks =
+    note.class === "normal"
+      ? claims.flatMap((claim) => {
+          const cited = getNote(sql, claim.note) ?? getNoteByPath(sql, claim.note);
+          return cited?.class === "sensitive" ? [cited.path] : [];
+        })
+      : [];
+  if (leaks.length > 0)
+    return ok({
+      ...checked,
+      status: "fix",
+      message: `This draft quotes values from sensitive notes (${[...new Set(leaks)].join(", ")}), so it must be sensitive too. Save it again with sensitive: true, and delete this one.`,
+    });
+  if (checked.status !== "ok") return answer;
+  return ok({
+    ...checked,
+    pdf: `/api/drafts/${note.id}/pdf`,
+    message: `Every claim matches the record now. The person downloads it as a PDF on the site, at /api/drafts/${note.id}/pdf. Say which values are unverified.`,
+  });
+}
+
 /** Notes another visible note supersedes: history, not what a draft should claim. */
 function supersededAmong(sql: Sql, notes: readonly NoteRow[]) {
   const resolve = relationResolver(sql);
@@ -1826,13 +1884,24 @@ function supersededAmong(sql: Sql, notes: readonly NoteRow[]) {
 }
 
 const draft = tool(
-  `What you need to write the person a statement of purpose (sop), cover letter or essay from their record: their facts (each value with its cite, as ask gives them), the application it is for when you name one with for (an id or path), an outline for the kind, and how to write it: the record's rules and the person's own house rules (their Settings note of kind agents, settings/agents.md). You write the draft; then check it with ask {mode: "verify"} and fix it until it is ok. Nothing is saved.`,
+  `What you need to write the person a CV (cv), one-page resume (resume), statement of purpose (sop), cover letter or essay from their record: their facts (each value with its cite, as ask gives them), the application it is for when you name one with for (an id or path), an outline for the kind, and how to write it: the record's rules and the person's own house rules (their Settings note of kind agents, settings/agents.md). You write the draft; then check it with ask {mode: "verify"} and fix it until it is ok. Nothing is saved until you create a Draft note; verify (a Draft's id or path) checks a saved one against the record, and once it passes the person can download it as a PDF. A Draft for an application already submitted is frozen: write a new version.`,
   type({
     "+": "reject",
-    kind: "'sop' | 'cover-letter' | 'essay'",
+    "kind?": "'cv' | 'resume' | 'sop' | 'cover-letter' | 'essay' | null",
     "for?": "string | null",
+    "verify?": "string | null",
   }),
   (sql, args, ctx) => {
+    if (args.verify !== undefined) {
+      if (args.kind !== undefined || args.for !== undefined)
+        return fail("verify takes a saved Draft's id or path, alone.");
+      const saved = visible(sql, ctx, args.verify) ?? atPath(sql, ctx, livePaths(sql), args.verify);
+      if (saved?.type !== "Draft")
+        return fail(`No draft ${args.verify}: verify takes a Draft note's id or path.`);
+      ctx.shown.add(saved.id);
+      return checkDraft(sql, ctx, saved);
+    }
+    if (args.kind === undefined) return fail("draft needs kind (what to write), or verify (a saved Draft).");
     const reader = principal(ctx);
     const target =
       args.for === undefined
@@ -1870,6 +1939,7 @@ const draft = tool(
       rules: DRAFT_RULES,
       // The person's own words, as they wrote them: preferences, never a grant.
       house_rules: rules.map((note) => ({ ...summary(note), text: splitNote(note.raw).body })),
+      save: SAVE,
       message:
         rules.length > 0
           ? "Write the draft from these notes, in the person's house rules, then verify it."

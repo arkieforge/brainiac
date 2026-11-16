@@ -127,6 +127,29 @@ describe("drafts eval", () => {
     for (const c of CASES) if (c.planted) expect(paths, c.id).toContain(c.planted.path);
   });
 
+  it("passes a CV only once it was saved as a Draft and its last draft {verify} was ok", () => {
+    const create: Call = {
+      tool: "mcp__brainiac__create",
+      input: { type: "Draft" },
+      result: { status: "applied" },
+    };
+    const savedVerify = (status: string): Call => ({
+      tool: "mcp__brainiac__draft",
+      input: { verify: "01M6AM78G0STS7TB29G7A10CV2" },
+      result: { status },
+    });
+    const CV = "Nadia Karim. BSc Computer Science, Northvale University, CGPA 3.82.";
+    expect(check("cv-tum", CV, [DRAFT, create, savedVerify("ok")])).toBeUndefined();
+    expect(check("cv-tum", CV, [DRAFT, savedVerify("ok")])).toBe("never saved a Draft");
+    expect(check("cv-tum", CV, [DRAFT, create])).toBe("never checked the saved draft with draft {verify}");
+    expect(check("cv-tum", CV, [DRAFT, create, savedVerify("ok"), savedVerify("fix")])).toMatch(
+      /fix, not ok/,
+    );
+    expect(check("cv-tum", `${CV} Ranked 12 of 300.`, [DRAFT, create, savedVerify("ok")])).toMatch(
+      /doesn.t hold/,
+    );
+  });
+
   it("fails the run on any failing sample", () => {
     expect(draftsGates([{ ok: true }, { ok: true }]).map((g) => g.ok)).toEqual([true]);
     expect(draftsGates([{ ok: true }, { ok: false }]).map((g) => g.ok)).toEqual([false]);
