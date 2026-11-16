@@ -223,6 +223,33 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       requirements: { kind: "requirements" },
     },
   },
+  // Someone in the record: a referee who writes the person's letters, an advisor, family for visa forms.
+  Person: {
+    version: 1,
+    folder: "people",
+    headline: "{title} · {role} · {org}",
+    fields: {
+      role: { values: ["referee", "advisor", "family"], required: true },
+      org: { kind: "text", example: "Northvale University, School of Computing" },
+    },
+  },
+  // Where one letter for one application stands (docs/product/features/applications.md, "Letters, status only");
+  // the letter itself goes through the institution's own system. Only `received` (the portal shows it arrived)
+  // meets a requirement, and until then a letter an open application waits on is a question (questions.ts).
+  Letter: {
+    version: 1,
+    folder: "letters",
+    headline: "{title} · {status}",
+    fields: {
+      referee: { kind: "relation", required: true, example: "../people/dr-okafor.md" },
+      for: {
+        kind: "relation",
+        required: true,
+        example: "../applications/tum-msc-informatics-2027/application.md",
+      },
+      status: { values: ["to-ask", "requested", "sent", "received"], required: true },
+    },
+  },
   // A page the person saved (packages/base/src/links.ts). `for` names the application that relies on it, if one
   // does; `synced` is what the links connector last saw there: whether it answers, its text, its PDF snapshot.
   Link: {

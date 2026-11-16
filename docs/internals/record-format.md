@@ -108,7 +108,7 @@ requirements:
 ---
 ```
 
-A requirement is "met" only when its check passes on the current notes (or you tick a manual one with `done: true`). Thresholds, counts and validity dates are evaluated, never guessed from text: `need` is words for you, and a check that isn't typed (`check: "IELTS 6.5"`) is refused when the note is saved. A check matches notes of its `type` whose other keys equal theirs (`test`, `kind`, `status`), `field` within its bounds (`gte`, `lte`, `gt`, `lt`), not expired on the application's `valid_on` date (today without one), at least `count_gte` of them; `for: this` takes only notes whose `for` names the application, and a superseded note meets nothing. An application without the date its check names meets nothing rather than guess one. The status runs `researching → preparing → submitted → interview → decision`; at `decision` nothing relies on its items any more. `query` and `get` hand an application's checks to agents (`packages/core/src/review.ts`, `requirementsOf`).
+A requirement is "met" only when its check passes on the current notes (or you tick a manual one with `done: true`). Thresholds, counts and validity dates are evaluated, never guessed from text: `need` is words for you, and a check that isn't typed (`check: "IELTS 6.5"`) is refused when the note is saved. A check matches notes of its `type` whose other keys equal theirs (`test`, `kind`, `status`), `field` within its bounds (`gte`, `lte`, `gt`, `lt`), not expired on the application's `valid_on` date (today without one), at least `count_gte` of them; `for: this` takes only notes whose `for` names the application, and a superseded note meets nothing. An application without the date its check names meets nothing rather than guess one. The status runs `researching → preparing → submitted → interview → decision`; at `decision` nothing relies on its items any more. A `Letter` names its `referee` (a `Person` note) and the application it is `for`, and its `status` runs `to-ask → requested → sent → received`: `sent` is the referee's word, `received` the portal's, so only `received` meets a letters check like the one above. `query` and `get` hand an application's checks to agents (`packages/core/src/review.ts`, `requirementsOf`).
 
 ### The knowledge graph
 
@@ -130,7 +130,7 @@ When something worth keeping fits no type (travel history for a visa, a patent, 
 | `facts/tests/`                   | Scored exams, one note per attempt                                              | sensitive                         |
 | `history/`                       | What forms ask about: Trip, Address, Gap                                        | sensitive                         |
 | `identity/` `health/` `finance/` | IdDocument, License, Visa, Vaccination, FundsProof                              | sensitive (+ secrets for numbers) |
-| `people/`                        | Referee, Advisor, Family (for visa forms)                                       | sensitive                         |
+| `people/` `letters/`             | Person (referee, advisor, family for visa forms), Letter (status only)          | sensitive                         |
 
 1. **Fits an existing type?** Use it.
 1. **A variant?** Add a `kind` value or one optional field, not a new type.

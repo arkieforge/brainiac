@@ -170,8 +170,9 @@ export function Questions() {
         )}
       </header>
       <ul>
+        {/* A letter's question keeps its id while it moves a step on: new words start the card afresh. */}
         {asked.map((question) => (
-          <Card key={question.id} question={question} />
+          <Card key={`${question.id} ${question.text}`} question={question} />
         ))}
       </ul>
       {asked.length < open.length && (

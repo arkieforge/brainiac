@@ -1071,6 +1071,77 @@ export const toolCases: Record<string, Case> = {
       equal(untyped["status"], "invalid");
     },
 
+  "letters are reminders until the application's portal shows them received, and only received ones meet it":
+    (sql, fixtures) => {
+      const n = record(sql, fixtures);
+      const scoped = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+      const lee = call(sql, scoped, "create", {
+        type: "Person",
+        fields: { title: "Prof Lee Min", role: "referee" },
+      });
+      equal(lee["status"], "applied");
+      const letter = (title: string, referee: string, status = "requested") =>
+        call(sql, scoped, "create", {
+          type: "Letter",
+          fields: { title, status },
+          link: { referee, for: n.tum },
+        });
+      const okafor = letter("Dr Okafor's letter for TUM", n.okafor);
+      const second = letter("Prof Lee's letter for TUM", String(lee["id"]));
+      same([okafor["status"], second["status"]], ["applied", "applied"]);
+      const [first, other] = [String(okafor["id"]), String(second["id"])];
+      // A status Brainiac doesn't know is refused, with the ones it does.
+      const unknown = letter("A third letter", n.okafor, "promised");
+      equal(unknown["status"], "invalid");
+      match(
+        String((unknown["issues"] as { message: string }[])[0]?.message),
+        /^status must be "received", "requested", "sent" or "to-ask" \(was "promised"\)/,
+      );
+
+      // Each one is a reminder for the person, with the next step one tap away.
+      const reminders = () =>
+        rows(sql, scoped, { type: "Question", fields: ["question", "suggested", "deadline"] }).map(
+          (r) => r.fields,
+        );
+      same(reminders(), [
+        {
+          question: "Has Dr Amara Okafor sent your letter for TUM MSc Informatics, Winter 2027?",
+          suggested: "sent",
+          deadline: "2027-05-31",
+        },
+        {
+          question: "Has Prof Lee Min sent your letter for TUM MSc Informatics, Winter 2027?",
+          suggested: "sent",
+          deadline: "2027-05-31",
+        },
+      ]);
+      const letters = () => {
+        const checks = rows(sql, scoped, { type: "Application", fields: ["checks"] })[0]?.fields[
+          "checks"
+        ] as Record<string, { need: string }[]>;
+        return [...(checks["passing"] ?? []), ...(checks["failing"] ?? [])].find(
+          (r) => r.need === "Two recommendation letters",
+        );
+      };
+
+      // Sent by the referee isn't received by the portal: only the received one counts.
+      const update = (id: string, status: string) =>
+        equal(call(sql, scoped, "update", { id, rev: revOf(sql, id), set: { status } })["status"], "applied");
+      update(first, "sent");
+      update(other, "received");
+      same(letters(), {
+        need: "Two recommendation letters",
+        why: "1 of 2 needed",
+      });
+      same(
+        reminders().map((r) => r["question"]),
+        ["Does TUM MSc Informatics, Winter 2027 show Dr Amara Okafor's letter as received?"],
+      );
+      update(first, "received");
+      same(letters(), { need: "Two recommendation letters", by: [first, other] });
+      same(reminders(), []);
+    },
+
   "related walks links both ways up to depth, grouped by field, and only to notes the connection may see": (
     sql,
     fixtures,

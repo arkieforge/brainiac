@@ -217,8 +217,58 @@ export function findQuestions(
         sensitive: sensitive(note, context?.from),
       });
     }
+    if (type === "Letter" && !skipped.includes("status") && !covered.has(`${note.id}.status`)) {
+      const owed = letterOwed(note, resolve, spec);
+      // Its words name the application and the referee, so it is as private as either.
+      if (owed)
+        found.push({ ...owed.question, sensitive: sensitive(note, ...owed.names.map((id) => byId.get(id))) });
+    }
   }
   return rank([...asked, ...found]);
+}
+
+/** What Brainiac asks about a letter at each status before it's received: the reminder to the person. */
+const LETTER_ASKS: Readonly<Record<string, (who: string, app: string) => string>> = {
+  "to-ask": (who, app) => `Have you asked ${who} for your letter for ${app}?`,
+  requested: (who, app) => `Has ${who} sent your letter for ${app}?`,
+  sent: (who, app) => `Does ${app} show ${who}'s letter as received?`,
+};
+
+/**
+ * A letter an open application still waits on, as a question about its status with the next one suggested. Its
+ * words name the referee only when the reader can see the referee's note.
+ */
+function letterOwed(
+  note: ReviewNote,
+  resolve: ReturnType<typeof resolver>,
+  spec: Spec,
+): { readonly question: Omit<Question, "sensitive">; readonly names: readonly string[] } | undefined {
+  const status = str(note.data["status"]);
+  // Own keys only: a status of `constructor` must not find Object.prototype's.
+  const ask = status !== undefined && Object.hasOwn(LETTER_ASKS, status) ? LETTER_ASKS[status] : undefined;
+  const application = resolve(note, note.data["for"]);
+  if (!ask || application?.data["type"] !== "Application" || application.data["status"] === "decision")
+    return undefined;
+  const referee = resolve(note, note.data["referee"]);
+  const input = inputOf(spec.fields["status"]);
+  const values = input?.kind === "choice" ? input.values : [];
+  const at = values.indexOf(status ?? "");
+  const next = at === -1 ? undefined : values[at + 1];
+  const deadline = str(application.data["deadline"])?.slice(0, 10);
+  return {
+    question: {
+      id: `${note.id}.status`,
+      kind: "found",
+      noteId: note.id,
+      field: "status",
+      text: ask(referee ? labelOf(referee) : "your referee", labelOf(application)),
+      why: `For ${labelOf(application)}${deadline ? `, due ${deadline}` : ""}`,
+      input: input ?? { kind: "text" },
+      ...(next !== undefined && { suggested: next }),
+      ...(deadline !== undefined && { deadline }),
+    },
+    names: [application.id, ...(referee ? [referee.id] : [])],
+  };
 }
 
 /** Exactly equal, absent and empty as one: a field empty when asked and still empty hasn't changed, a new case has. */
