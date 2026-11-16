@@ -117,8 +117,10 @@ async function serveApi(
   // Plans waiting for the person's passkey, whoever asked (an agent, the laptop, another tab), as the record keeps
   // them: a page shows these, never a plan from its own URL. Sensitive values load only here, on demand.
   if (pathname === "/api/approvals" && !post) {
+    // One plan by its id (an agent's link), or the newest waiting.
+    const id = new URL(request.url).searchParams.get("id");
     // The RPC stub's mapped type drops a plan's `unknown` values, so the answer passes through as JSON.
-    const approvals: unknown = await record.pendingApprovals();
+    const approvals: unknown = await record.pendingApprovals(id === null ? undefined : id.slice(0, 64));
     return json({ approvals });
   }
   if (pathname === "/api/approvals/decline" && post) {

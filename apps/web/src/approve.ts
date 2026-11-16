@@ -55,9 +55,13 @@ export interface Waiting {
   readonly stale: boolean;
 }
 
-/** The plans waiting for the person, or undefined offline: they load only from the record, never a cache. */
-export async function waitingPlans(): Promise<readonly Waiting[] | undefined> {
-  const res = await api("/api/approvals").catch(() => undefined);
+/**
+ * The plans waiting for the person (or just the one `approvalId` names), or undefined offline: they load only from
+ * the record, never a cache.
+ */
+export async function waitingPlans(approvalId?: string): Promise<readonly Waiting[] | undefined> {
+  const query = approvalId === undefined ? "" : `?${new URLSearchParams({ id: approvalId })}`;
+  const res = await api(`/api/approvals${query}`).catch(() => undefined);
   const body = res?.ok ? await res.json().catch(() => undefined) : undefined;
   return Array.isArray(body?.approvals) ? body.approvals : undefined;
 }

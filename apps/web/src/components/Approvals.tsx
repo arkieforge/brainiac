@@ -68,13 +68,12 @@ export function Approvals({ approvalId }: { readonly approvalId?: string }) {
   const [plans, setPlans] = useState<readonly Waiting[] | "offline">();
   const [done, setDone] = useState<ReadonlyMap<string, string>>(new Map());
   useEffect(() => {
-    void waitingPlans().then((list) => setPlans(list ?? "offline"));
-  }, []);
+    void waitingPlans(approvalId).then((list) => setPlans(list ?? "offline"));
+  }, [approvalId]);
   if (plans === undefined) return <p className="empty">Loading…</p>;
   if (plans === "offline")
     return <p className="empty">Approvals load only while you're online on this device.</p>;
-  const shown = approvalId === undefined ? plans : plans.filter((p) => p.approvalId === approvalId);
-  const open = shown.filter((p) => !done.has(p.approvalId));
+  const open = plans.filter((p) => !done.has(p.approvalId));
   return (
     <section className="approvals">
       <header className="pane-head">
@@ -88,7 +87,7 @@ export function Approvals({ approvalId }: { readonly approvalId?: string }) {
         </p>
       </header>
       <ul>
-        {shown.map((plan) =>
+        {plans.map((plan) =>
           done.has(plan.approvalId) ? (
             <li key={plan.approvalId} className="approval">
               <p role="status">{done.get(plan.approvalId)}</p>
@@ -102,7 +101,7 @@ export function Approvals({ approvalId }: { readonly approvalId?: string }) {
           ),
         )}
       </ul>
-      {approvalId !== undefined && plans.length > shown.length && (
+      {approvalId !== undefined && (
         <p className="more">
           <Link to="/approvals">See everything waiting</Link>
         </p>

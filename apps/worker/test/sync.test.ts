@@ -584,8 +584,10 @@ describe("approving a blocked edit on the site", () => {
         ).status,
       ).toBe(401);
 
-    const [waiting] = ((await (await waitingOn("approve-agent")).json()) as { approvals: Waiting[] })
-      .approvals;
+    // The link's page asks for its plan by id, as the record keeps it.
+    const [waiting] = (
+      (await (await waitingOn("approve-agent", approvalId)).json()) as { approvals: Waiting[] }
+    ).approvals;
     expect(waiting).toMatchObject({ approvalId, planHash: held["planHash"] });
     expect(waiting?.items.map((item) => item.patch.fields["overall"])).toEqual([{ before: 8, after: 8.5 }]);
     expect((await approve(undefined, sign(String(held["planHash"])), { approvalId })).status).toBe(200);
@@ -749,4 +751,7 @@ interface Waiting {
 }
 
 /** The plans waiting in `user`'s record, as their tab loads them. */
-const waitingOn = (user: string) => mf.dispatchFetch(`${ORIGIN}/api/approvals`, { headers: session(user) });
+const waitingOn = (user: string, id?: string) =>
+  mf.dispatchFetch(`${ORIGIN}/api/approvals${id === undefined ? "" : `?id=${id}`}`, {
+    headers: session(user),
+  });
