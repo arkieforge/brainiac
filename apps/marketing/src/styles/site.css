@@ -1360,19 +1360,17 @@ footer {
   }
 }
 
-/* On a phone the terminal and the works-with strip scroll sideways, fading at the edge. */
+/* On a phone the terminal scrolls its full lines sideways; the works-with strip scrolls and fades at its edge. */
 @media (max-width: 640px) {
+  .works {
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+  }
   .term .row {
     overflow: visible;
     width: max-content;
   }
 }
-@media (max-width: 640px) {
-  .works,
-  .term {
-    mask-image: linear-gradient(to right, #000 85%, transparent);
-  }
-}
+
 /* The reminder that is due today sits below the line, clear of the other labels. */
 .timeline {
   margin-bottom: 26px;
