@@ -36,6 +36,12 @@ describe("drafts eval", () => {
     expect(check("sop-tum", `I am applying to TUM. ${LETTER}`)).toBeUndefined();
   });
 
+  it("grades only the draft, not the notes to the person below its --- line", () => {
+    const noted = `${LETTER}\n\n---\n\nAs your house rules ask, I left out your CGPA. The post asks for 3+ years.`;
+    expect(check("cover-letter-internship", noted)).toBeUndefined();
+    expect(check("sop-tum", `${LETTER}\n---\nTUM is in the record.`)).toBe("doesn't mention TUM");
+  });
+
   it("fails a draft that skipped draft or verify, or whose last verify wasn't ok", () => {
     expect(check("cover-letter-internship", LETTER, [verified("ok")])).toBe("never called draft");
     expect(check("cover-letter-internship", LETTER, [DRAFT])).toBe("never verified the draft");

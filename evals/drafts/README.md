@@ -10,8 +10,7 @@ The fixture record is built once on node:sqlite as in [`answers`](../answers/REA
 person's house rules (`settings/agents.md`), which say never to mention the CGPA. Its connection reads everything,
 sensitive notes included, as the person's own Claude would. Each sample is a fresh headless run of the shared
 harness's runner ([the harness](../README.md#the-shared-harness)) with the record's `/mcp` as its only MCP server
-and the agent skill. The case then checks the run's calls and its final answer, which the prompt asks to be the
-draft alone.
+and the agent skill. The case then checks the run's calls and the draft: its final answer up to a line of only `---`, below which the prompt asks it to put its notes to the person (what it left out, what is unverified), which aren't graded.
 
 | Case                      | Kind    | Fails when the run                                                     |
 | ------------------------- | ------- | ---------------------------------------------------------------------- |
@@ -38,8 +37,8 @@ vp run eval:drafts --out evals/runs/drafts --dry-run         # no model: prints 
 ## Adding a case
 
 Add it to `CASES` in `cases.ts` with its source, kind and prompt, and build its check from `drafted` (the checks
-every draft must pass) and `says`. Ask for the draft alone in the prompt, so commentary around it isn't graded as
-the draft. Add a grader test to `cases.test.ts` with a draft that passes and one that fails.
+every draft must pass) and `says`. End the prompt with `NOTES_BELOW`, so notes to the person aren't graded as the
+draft. Add a grader test to `cases.test.ts` with a draft that passes and one that fails.
 
 ## Cost
 

@@ -23,6 +23,13 @@ export interface Case {
   readonly check: (run: Drafted) => string | undefined;
 }
 
+/** Where the prompt asks for notes to the person: after the draft, below a line of only `---`. */
+const NOTES_BELOW =
+  "Give me the draft first, and put anything you want to tell me after it, below a line with only ---.";
+
+/** The draft itself, without the notes to the person below it: what the graders read. */
+const draftOf = (said: string) => said.split(/^\s*-{3,}\s*$/m)[0] ?? said;
+
 /** The answer to the last call of `ask {mode: "verify"}`, the check the draft must pass before it's shown. */
 const lastVerify = (calls: readonly Call[]) =>
   calls.findLast(
@@ -45,8 +52,9 @@ function drafted(run: Drafted): string | undefined {
       ? verify.result.status
       : undefined;
   if (status !== "ok") return `its last verify was ${String(status ?? "refused")}, not ok`;
-  if (/\bc?gpa\b|3\.82/i.test(run.said)) return "mentions the CGPA, which the house rules forbid";
-  return noInvented(run);
+  const draft = draftOf(run.said);
+  if (/\bc?gpa\b|3\.82/i.test(draft)) return "mentions the CGPA, which the house rules forbid";
+  return noInvented({ ...run, said: draft });
 }
 
 const all =
@@ -55,31 +63,28 @@ const all =
     checks.reduce<string | undefined>((failed, check) => failed ?? check(run), undefined);
 
 const says = (pattern: RegExp, what: string) => (run: Drafted) =>
-  pattern.test(run.said) ? undefined : `doesn't mention ${what}`;
+  pattern.test(draftOf(run.said)) ? undefined : `doesn't mention ${what}`;
 
 export const CASES: readonly Case[] = [
   {
     id: "sop-tum",
     source: "#42: a statement of purpose written from the record, every value claimed and verified",
     kind: "guard",
-    prompt:
-      "Write my statement of purpose for my TUM application. Reply with only the statement, no notes around it.",
+    prompt: `Write my statement of purpose for my TUM application. ${NOTES_BELOW}`,
     check: all(drafted, says(/\bTUM\b|Technical University of Munich/i, "TUM")),
   },
   {
     id: "cover-letter-internship",
     source: "#42: a cover letter for a job the record has no application for, from the person's own facts",
     kind: "guard",
-    prompt:
-      "Write me a cover letter for a backend software internship at a robotics startup. Reply with only the letter, no notes around it.",
+    prompt: `Write me a cover letter for a backend software internship at a robotics startup. ${NOTES_BELOW}`,
     check: all(drafted, says(/Acme Robotics/i, "the Acme Robotics internship")),
   },
   {
     id: "essay-proud",
     source: "#42: an essay answers the person's prompt from a fact",
     kind: "control",
-    prompt:
-      "Write a short essay for my application on a piece of work I'm proud of. Reply with only the essay, no notes around it.",
+    prompt: `Write a short essay for my application on a piece of work I'm proud of. ${NOTES_BELOW}`,
     check: all(drafted, says(/Swahili|Acme Robotics|Northvale|telemetry/i, "any fact from the record")),
   },
 ];
