@@ -37,7 +37,7 @@ Everyone enrolls a passkey at sign-up (sign-in is Better Auth, self-hosted, with
 - Loosening privacy (for example making a sensitive note normal, or a local-only note synced)
 - Granting or raising a connection's level or a token's scope
 - Using a secret whose policy is `ask`, submitting a form, and emailing anyone but you
-- `organize` runs that move or convert notes, schema merges and new top-level areas
+- Every `organize` run, and any change to the manifest, an undo's included: types, schema merges and new top-level areas
 
 **Losing your passkeys**: two passkeys are requested at sign-up. If both are lost, recovery is sign-in plus a 72-hour wait, with a notice to every verified email address, before a new passkey can approve anything.
 

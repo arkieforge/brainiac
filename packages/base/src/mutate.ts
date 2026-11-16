@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  areaClass,
   deepEqual,
   findClash,
   isRelationPath,
@@ -34,7 +35,8 @@ import { diff, side, stateOf, type State } from "./diff.ts";
 import { DAY_MS, holds, manifestOf, recordHeld, type Action, type Proposed } from "./hold.ts";
 import { enqueue } from "./jobs.ts";
 import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
-import { putChunks } from "./search.ts";
+import { changeTypes, brokenNotes, revertTypes, type TypeChange } from "./organize.ts";
+import { chunkNote, putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
 /**
@@ -174,10 +176,12 @@ function blindEdge(sql: Sql, reader: Principal, { before, after }: Effect): bool
 function judged<T extends { readonly status: string }>(
   sql: Sql,
   ctx: Context,
-  scope: "change" | "undo",
+  scope: "change" | "undo" | "organize",
   action: Action,
   released: readonly PlanItem[] | undefined,
   fn: (started: Started) => T,
+  /** What `fn` did besides notes, read once it's done: a manifest change, which the plan signs too. */
+  extra: () => readonly PlanItem[] = () => [],
 ): T | NeedsApproval | Proposed | Forbidden | Invalid {
   const { connection } = ctx;
   if (connection?.level === "read") return { status: "forbidden", reason: "This connection can only read." };
@@ -212,7 +216,7 @@ function judged<T extends { readonly status: string }>(
               { field: "supersedes", message: "supersedes must name a note this connection can see." },
             ],
           });
-        const verdict = settle(sql, effects, ctx, scope);
+        const verdict = settle(sql, effects, ctx, scope, extra());
         if (verdict === "signed" || !connection || released || effects.length === 0) {
           if (typeof verdict === "object") throw new Held(verdict);
           return result;
@@ -264,8 +268,16 @@ function nextSeq(sql: Sql): number {
   return Number(row?.value);
 }
 
-/** Front-matter checks every write passes: an unchanged ULID id, and the manifest's types when there is one. */
-function check(sql: Sql, raw: string, id?: string): Issue[] | Readonly<Record<string, unknown>> {
+/**
+ * Front-matter checks every write passes: an unchanged ULID id, and the manifest's types when there is one (the
+ * record's latest, or `manifest` when given).
+ */
+function check(
+  sql: Sql,
+  raw: string,
+  id?: string,
+  manifest?: string,
+): Issue[] | Readonly<Record<string, unknown>> {
   let data: Readonly<Record<string, unknown>>;
   try {
     data = parseNote(raw).data;
@@ -274,7 +286,10 @@ function check(sql: Sql, raw: string, id?: string): Issue[] | Readonly<Record<st
     throw error;
   }
   if (id !== undefined && data["id"] !== id) return [{ field: "id", message: "A note's id never changes." }];
-  const [schema] = sql.all<{ manifest: string }>("SELECT manifest FROM schema ORDER BY version DESC LIMIT 1");
+  const [schema] =
+    manifest === undefined
+      ? sql.all<{ manifest: string }>("SELECT manifest FROM schema ORDER BY version DESC LIMIT 1")
+      : [{ manifest }];
   // shortcut: the manifest is parsed per write; cache it in the DO when profiles show it.
   const issues = schema
     ? validate(parseManifest(schema.manifest), data)
@@ -325,8 +340,10 @@ function write(
     ctx.now,
   );
   // A deleted note, or one whose class changed, leaves the search index in this transaction, before any job
-  // runs, so it never matches in the family it left; a live one is then re-indexed by a job.
-  if (next.deletedAt !== null || (prev && prev.class !== next.class)) putChunks(sql, next.id, rev, []);
+  // runs, so it never matches in the family it left. A live one whose class changed is keyword-indexed in its new
+  // family at once, so a search finds it there before its job brings the vectors; every live one gets a job.
+  if (next.deletedAt !== null) putChunks(sql, next.id, rev, []);
+  else if (prev && prev.class !== next.class) putChunks(sql, next.id, rev, stored ? chunkNote(stored) : []);
   if (next.deletedAt === null) enqueue(sql, "index", next.id, rev);
   else sql.all("DELETE FROM jobs WHERE noteId = ?", next.id);
   return { status: "applied", noteId: next.id, rev, seq, runId };
@@ -410,6 +427,80 @@ function batch(
       });
       return { status: "applied", runId: ctx.runId, notes };
     });
+  } catch (error) {
+    if (error instanceof Refused) return error.result;
+    throw error;
+  }
+}
+
+/** One note an organize run places: its edits (a new type, fields), then a move, as of `rev`. */
+export interface Placement {
+  readonly noteId: string;
+  readonly rev: number;
+  readonly ops: readonly PatchOp[];
+  readonly path?: string;
+}
+
+export interface Organized {
+  readonly status: "applied";
+  readonly runId: string;
+  readonly notes: readonly { readonly noteId: string; readonly rev: number }[];
+  /** The types the run added or changed. */
+  readonly types: readonly string[];
+}
+
+/**
+ * An organize run (contract §4): the type changes first, then each note's edits and move, as one run and one plan
+ * the person signs whole, manifest included, so it applies only with an approval of exactly this. A note placed in
+ * a sensitive area becomes sensitive in the run (core `areaClass`); the run never leaves a note failing its type.
+ * Propose-level connections can't organize: there is no plan to propose short of the person signing it.
+ */
+export function organizeRun(
+  sql: Sql,
+  plan: { readonly types: readonly TypeChange[]; readonly notes: readonly Placement[] },
+  ctx: Context,
+):
+  | Organized
+  | NeedsApproval
+  | Proposed
+  | Forbidden
+  | Invalid
+  | Exclude<MutationResult, { status: "applied" }> {
+  if (ctx.connection?.level === "propose")
+    return { status: "forbidden", reason: "organize needs a write-level connection." };
+  const run = { ...ctx, runId: ctx.runId ?? ulid(ctx.now) };
+  let manifest: PlanItem | undefined;
+  const action: Action = { op: "batch", mutations: [] };
+  try {
+    return judged(
+      sql,
+      run,
+      "organize",
+      action,
+      undefined,
+      (started): Organized => {
+        const typed = changeTypes(sql, plan.types, run, run.runId);
+        if ("issues" in typed) throw new Held({ status: "invalid", issues: typed.issues });
+        manifest = typed.item;
+        const step = (mutation: Mutation) => {
+          const result = applyOne(sql, started, mutation, run);
+          if (result.status !== "applied") throw new Refused(result);
+          return result.rev;
+        };
+        const notes = plan.notes.map(({ noteId, rev, ops, path }) => {
+          let at = ops.length > 0 ? step({ op: "patch", noteId, baseRev: rev, ops }) : rev;
+          if (path !== undefined) at = step({ op: "move", noteId, baseRev: at, path });
+          const note = getNote(sql, noteId);
+          if (note && note.class === "normal" && areaClass(note.path) === "sensitive")
+            at = step({ op: "classify", noteId, baseRev: at, class: "sensitive" });
+          return { noteId, rev: at };
+        });
+        const broken = brokenNotes(sql, typed, run.connection);
+        if (broken.length > 0) throw new Held({ status: "invalid", issues: broken });
+        return { status: "applied", runId: run.runId, notes, types: typed.types };
+      },
+      () => (manifest ? [manifest] : []),
+    );
   } catch (error) {
     if (error instanceof Refused) return error.result;
     throw error;
@@ -771,175 +862,199 @@ function undoing(
   // An undo is a run of its own, so it can be undone too; never inside the run it undoes.
   const undoRunId = ctx.runId !== undefined && ctx.runId !== runId ? ctx.runId : ulid(ctx.now);
   const undo = { ...ctx, runId: undoRunId };
-  return judged(sql, undo, "undo", action, released, (started): UndoResult | Forbidden | Invalid => {
-    // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
-    // part; keep whole runs if people undo month-old runs.
-    const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
-      `SELECT revisions.noteId, revisions.patch, revisions.raw FROM revisions
+  let manifest: PlanItem | undefined;
+  return judged(
+    sql,
+    undo,
+    "undo",
+    action,
+    released,
+    (started): UndoResult | Forbidden | Invalid => {
+      // shortcut: revisions expire one by one after 30 days, so a run older than that undoes only its newer
+      // part; keep whole runs if people undo month-old runs.
+      const revisions = sql.all<{ noteId: string; patch: string; raw: string }>(
+        `SELECT revisions.noteId, revisions.patch, revisions.raw FROM revisions
        JOIN changes ON changes.noteId = revisions.noteId AND changes.rev = revisions.rev
        WHERE revisions.runId = ? AND changes.seq <= ? ORDER BY changes.seq DESC`,
-      runId,
-      upTo,
-    );
-    // Its conflicts would show the note's current values: a connection can't undo into a note it can't see.
-    const hidden = revisions.some((revision) => {
-      const note = getNote(sql, revision.noteId);
-      return note !== undefined && !canSee(ctx.connection, note);
-    });
-    if (hidden) return { status: "forbidden", reason: "This run changed notes this connection can't see." };
-    const stuck = movesBack(sql, revisions);
-    if (stuck)
-      return {
-        status: "invalid",
-        issues: [
-          {
-            field: "run",
-            message: `Nothing was undone: this run moved a note to ${stuck.after}, and it can't go back to ${stuck.before} now (that place is taken, or the note moved or was deleted since).`,
-          },
-        ],
-      };
-    const undone = new Set<string>();
-    // Notes the run created or restored: undoing deletes them, so their class stays as it is (a sensitive one
-    // stays so, never a normal tombstone made from it).
-    const created = new Set(
-      revisions.filter((r) => (JSON.parse(r.patch) as Diff).live?.before === false).map((r) => r.noteId),
-    );
-    // One pending conflict per note. Once a field, the body or the note's existence is in it, older steps
-    // only move the conflict's target back; they never touch the note, so no later edit is rolled back.
-    const pending = new Map<
-      string,
-      { fields: Record<string, Change<unknown>>; body?: Change<string>; live?: Change<boolean> }
-    >();
-    const hold = (noteId: string, d: Diff) => {
-      const p = pending.get(noteId) ?? { fields: {} };
-      for (const [key, change] of Object.entries(d.fields)) {
-        const held = p.fields[key];
-        p.fields[key] = held
-          ? {
-              ...side("before", Object.hasOwn(held, "before"), held.before),
-              ...side("after", Object.hasOwn(change, "after"), change.after),
-            }
-          : change;
-      }
-      if (d.body) p.body = { before: (p.body ?? d.body).before ?? "", after: d.body.after ?? "" };
-      if (d.live) p.live = { before: (p.live ?? d.live).before ?? false, after: d.live.after ?? false };
-      pending.set(noteId, p);
-    };
-
-    for (const revision of revisions) {
-      const note = getNote(sql, revision.noteId);
-      if (!note) continue; // purged with its tombstone
-      const d: Diff = JSON.parse(revision.patch);
-      const now = stateOf(note);
-      const held = pending.get(note.id);
-
-      // A class change (it is a revision of its own): a class set since is newer intent, and stays.
-      if (d.class) {
-        if (now.live && note.class === d.class.after && !created.has(note.id)) {
-          write(sql, started, undo, undoRunId, note, { ...note, class: d.class.before }, "classify");
-          undone.add(note.id);
+        runId,
+        upTo,
+      );
+      // Its conflicts would show the note's current values: a connection can't undo into a note it can't see.
+      const hidden = revisions.some((revision) => {
+        const note = getNote(sql, revision.noteId);
+        return note !== undefined && !canSee(ctx.connection, note);
+      });
+      if (hidden) return { status: "forbidden", reason: "This run changed notes this connection can't see." };
+      const stuck = movesBack(sql, revisions);
+      if (stuck)
+        return {
+          status: "invalid",
+          issues: [
+            {
+              field: "run",
+              message: `Nothing was undone: this run moved a note to ${stuck.after}, and it can't go back to ${stuck.before} now (that place is taken, or the note moved or was deleted since).`,
+            },
+          ],
+        };
+      // The run's types go back first, so its notes go back to what their types were. Each step may still meet the
+      // types as the run left them (a note leaving a type the run added), and every note of a type it changed must
+      // meet the restored one at the end.
+      const [left] = sql.all<{ manifest: string }>(
+        "SELECT manifest FROM schema ORDER BY version DESC LIMIT 1",
+      );
+      const typed = revertTypes(sql, runId, undo, undoRunId);
+      if ("issues" in typed) throw new Held({ status: "invalid", issues: typed.issues });
+      manifest = typed.item;
+      const fails = (raw: string, id: string) =>
+        Array.isArray(check(sql, raw, id)) &&
+        (!typed.item || !left || Array.isArray(check(sql, raw, id, left.manifest)));
+      const undone = new Set<string>();
+      // Notes the run created or restored: undoing deletes them, so their class stays as it is (a sensitive one
+      // stays so, never a normal tombstone made from it).
+      const created = new Set(
+        revisions.filter((r) => (JSON.parse(r.patch) as Diff).live?.before === false).map((r) => r.noteId),
+      );
+      // One pending conflict per note. Once a field, the body or the note's existence is in it, older steps
+      // only move the conflict's target back; they never touch the note, so no later edit is rolled back.
+      const pending = new Map<
+        string,
+        { fields: Record<string, Change<unknown>>; body?: Change<string>; live?: Change<boolean> }
+      >();
+      const hold = (noteId: string, d: Diff) => {
+        const p = pending.get(noteId) ?? { fields: {} };
+        for (const [key, change] of Object.entries(d.fields)) {
+          const held = p.fields[key];
+          p.fields[key] = held
+            ? {
+                ...side("before", Object.hasOwn(held, "before"), held.before),
+                ...side("after", Object.hasOwn(change, "after"), change.after),
+              }
+            : change;
         }
-        continue;
-      }
+        if (d.body) p.body = { before: (p.body ?? d.body).before ?? "", after: d.body.after ?? "" };
+        if (d.live) p.live = { before: (p.live ?? d.live).before ?? false, after: d.live.after ?? false };
+        pending.set(noteId, p);
+      };
 
-      // Created by the run: undoing deletes it, unless it was edited since.
-      if (d.live?.before === false) {
-        // Already gone: whatever undoing the run's later steps asked of this note is moot.
-        if (!now.live) {
-          pending.delete(note.id);
+      for (const revision of revisions) {
+        const note = getNote(sql, revision.noteId);
+        if (!note) continue; // purged with its tombstone
+        const d: Diff = JSON.parse(revision.patch);
+        const now = stateOf(note);
+        const held = pending.get(note.id);
+
+        // A class change (it is a revision of its own): a class set since is newer intent, and stays.
+        if (d.class) {
+          if (now.live && note.class === d.class.after && !created.has(note.id)) {
+            write(sql, started, undo, undoRunId, note, { ...note, class: d.class.before }, "classify");
+            undone.add(note.id);
+          }
           continue;
         }
-        const then = parseNote(revision.raw);
-        if (!held && deepEqual(now.data, then.data) && now.body === then.body) {
-          write(sql, started, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
-          undone.add(note.id);
-        } else hold(note.id, inverseFrom(now, d));
-        continue;
-      }
 
-      // Deleted by the run: undoing restores it, if its path is still free.
-      if (d.live?.before === true) {
-        if (now.live && !held?.live) continue;
-        if (held?.live || findClash(livePaths(sql), note.path) !== undefined)
+        // Created by the run: undoing deletes it, unless it was edited since.
+        if (d.live?.before === false) {
+          // Already gone: whatever undoing the run's later steps asked of this note is moot.
+          if (!now.live) {
+            pending.delete(note.id);
+            continue;
+          }
+          const then = parseNote(revision.raw);
+          if (!held && deepEqual(now.data, then.data) && now.body === then.body) {
+            write(sql, started, undo, undoRunId, note, { ...note, deletedAt: ctx.now }, "delete");
+            undone.add(note.id);
+          } else hold(note.id, inverseFrom(now, d));
+          continue;
+        }
+
+        // Deleted by the run: undoing restores it, if its path is still free.
+        if (d.live?.before === true) {
+          if (now.live && !held?.live) continue;
+          if (held?.live || findClash(livePaths(sql), note.path) !== undefined)
+            hold(note.id, inverseFrom(now, d));
+          else {
+            write(sql, started, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
+            undone.add(note.id);
+          }
+          continue;
+        }
+
+        // Changed by the run, deleted since: nothing to put the values back on.
+        if (!now.live || held?.live) {
           hold(note.id, inverseFrom(now, d));
-        else {
-          write(sql, started, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
+          continue;
+        }
+
+        const ops: PatchOp[] = [];
+        const clash: Diff = { fields: {} };
+        const into = (key: string, change: Change<unknown>) =>
+          Object.assign(clash.fields, {
+            [key]: {
+              ...side("before", Object.hasOwn(now.data, key), now.data[key]),
+              ...side("after", Object.hasOwn(change, "before"), change.before),
+            },
+          });
+        for (const [key, change] of Object.entries(d.fields)) {
+          const has = Object.hasOwn(now.data, key);
+          const atAfter = has === Object.hasOwn(change, "after") && deepEqual(now.data[key], change.after);
+          if (held?.fields[key] || !atAfter) into(key, change);
+          else {
+            ops.push(
+              Object.hasOwn(change, "before")
+                ? { op: "set", path: [key], value: change.before as YamlValue }
+                : { op: "unset", path: [key] },
+            );
+          }
+        }
+        let raw = patch(note.raw, ops);
+        // A move always goes back: `movesBack` checked before anything was undone.
+        const path = d.path ? d.path.before : note.path;
+        const bodyClash = d.body && (held?.body !== undefined || now.body !== d.body.after);
+        if (d.body && !bodyClash) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.before ?? "");
+        // Part of an undo can leave a note failing its type (a required field removed while the field that made
+        // it required stays): the whole step's values then wait for the person instead.
+        const failing = raw !== note.raw && fails(raw, note.id);
+        if (failing) {
+          hold(note.id, inverseFrom(now, d));
+          raw = note.raw;
+        }
+        if (raw !== note.raw || path !== note.path) {
+          write(
+            sql,
+            started,
+            undo,
+            undoRunId,
+            note,
+            { ...note, raw, path },
+            path !== note.path ? "move" : "update",
+          );
           undone.add(note.id);
         }
-        continue;
+        if (failing) continue;
+        const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
+        if (Object.keys(clash.fields).length > 0 || body) hold(note.id, { ...clash, ...(body && { body }) });
       }
 
-      // Changed by the run, deleted since: nothing to put the values back on.
-      if (!now.live || held?.live) {
-        hold(note.id, inverseFrom(now, d));
-        continue;
-      }
+      const broken = brokenNotes(sql, typed, ctx.connection);
+      if (broken.length > 0) throw new Held({ status: "invalid", issues: broken });
 
-      const ops: PatchOp[] = [];
-      const clash: Diff = { fields: {} };
-      const into = (key: string, change: Change<unknown>) =>
-        Object.assign(clash.fields, {
-          [key]: {
-            ...side("before", Object.hasOwn(now.data, key), now.data[key]),
-            ...side("after", Object.hasOwn(change, "before"), change.before),
-          },
-        });
-      for (const [key, change] of Object.entries(d.fields)) {
-        const has = Object.hasOwn(now.data, key);
-        const atAfter = has === Object.hasOwn(change, "after") && deepEqual(now.data[key], change.after);
-        if (held?.fields[key] || !atAfter) into(key, change);
-        else {
-          ops.push(
-            Object.hasOwn(change, "before")
-              ? { op: "set", path: [key], value: change.before as YamlValue }
-              : { op: "unset", path: [key] },
-          );
-        }
+      // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
+      // and is dropped.
+      const conflicts: UndoConflict[] = [];
+      for (const [noteId, p] of pending) {
+        const same = <T>(c: Change<T>) =>
+          Object.hasOwn(c, "before") === Object.hasOwn(c, "after") && deepEqual(c.before, c.after);
+        const fields = Object.fromEntries(Object.entries(p.fields).filter(([, c]) => !same(c)));
+        const d: Diff = {
+          fields,
+          ...(p.body && !same(p.body) && { body: p.body }),
+          ...(p.live && !same(p.live) && { live: p.live }),
+        };
+        if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
+        conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
       }
-      let raw = patch(note.raw, ops);
-      // A move always goes back: `movesBack` checked before anything was undone.
-      const path = d.path ? d.path.before : note.path;
-      const bodyClash = d.body && (held?.body !== undefined || now.body !== d.body.after);
-      if (d.body && !bodyClash) raw = raw.slice(0, splitNote(raw).bodyStart) + (d.body.before ?? "");
-      // Part of an undo can leave a note failing its type (a required field removed while the field that made
-      // it required stays): the whole step's values then wait for the person instead.
-      const failing = raw !== note.raw && Array.isArray(check(sql, raw, note.id));
-      if (failing) {
-        hold(note.id, inverseFrom(now, d));
-        raw = note.raw;
-      }
-      if (raw !== note.raw || path !== note.path) {
-        write(
-          sql,
-          started,
-          undo,
-          undoRunId,
-          note,
-          { ...note, raw, path },
-          path !== note.path ? "move" : "update",
-        );
-        undone.add(note.id);
-      }
-      if (failing) continue;
-      const body = bodyClash ? { before: now.body, after: d.body?.before ?? "" } : undefined;
-      if (Object.keys(clash.fields).length > 0 || body) hold(note.id, { ...clash, ...(body && { body }) });
-    }
-
-    // A conflict whose target is where the note already is (undoing a run twice) asks nothing of the person
-    // and is dropped.
-    const conflicts: UndoConflict[] = [];
-    for (const [noteId, p] of pending) {
-      const same = <T>(c: Change<T>) =>
-        Object.hasOwn(c, "before") === Object.hasOwn(c, "after") && deepEqual(c.before, c.after);
-      const fields = Object.fromEntries(Object.entries(p.fields).filter(([, c]) => !same(c)));
-      const d: Diff = {
-        fields,
-        ...(p.body && !same(p.body) && { body: p.body }),
-        ...(p.live && !same(p.live) && { live: p.live }),
-      };
-      if (Object.keys(fields).length === 0 && !d.body && !d.live) continue;
-      conflicts.push({ noteId, proposalId: propose(sql, noteId, d, ctx), diff: d });
-    }
-    return { status: "applied", runId: undoRunId, undone: [...undone], conflicts };
-  });
+      return { status: "applied", runId: undoRunId, undone: [...undone], conflicts };
+    },
+    () => (manifest ? [manifest] : []),
+  );
 }

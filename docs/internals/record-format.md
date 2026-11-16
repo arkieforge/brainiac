@@ -7,7 +7,7 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 ```
 ~/brainiac/                                one record = one OKF bundle
 ├── okf-base.yaml                      manifest: schema_version, types (versioned), relations, headlines
-├── me.md                              summary Claude reads first (generated part + your part)
+├── me.md                              who you are in your own words; describe puts a summary from the record before it
 ├── profile.md
 ├── facts/
 │   ├── education/   bsc-northvale.md
@@ -33,7 +33,7 @@ Each record is an **OKF bundle** (Open Knowledge Format v0.2): markdown files, f
 
 - **No file stands alone**: every PDF, scan or photo has a sidecar note (Document or Photo) saying what it is, who issued it, when it expires and which fields it proves.
 - **How a sidecar names its file**: `file:` is a path relative to the note, like a relation (`files/transcript-bsc.pdf` in `documents/`). The cloud finds the stored file by the path that resolves to (`files.path`), and a laptop copy keeps the file at that same path, so both mean one file. An upload gets its place and its sidecar in the same transaction: `unorganized/files/upload-<day>-<id>.<ext>` beside `unorganized/upload-<day>-<id>.md`, named for the upload and never for the person's filename, which can print a secret (`Passport_A1234567.pdf`). The filename is kept on the file for the person and never written into a note, so no agent sees it. The sidecar starts sensitive, titled "Uploaded document", with no `kind` until the person says what the file is. Uploading the same bytes again never makes a second sidecar. A laptop copy never writes an unclassified or vault file to disk, only its sidecar. `unorganized/` is where uploads wait to be filed: moving a sidecar moves its file to the path its unchanged `file:` resolves to from there (`files/` beside it), so the cloud and a copy agree on what's still unorganized by the note's path alone.
-- **Relations are relative paths** in front-matter (readable, Obsidian-friendly, valid OKF). Every note also has a ULID `id` for sync. When a note moves (by you, an agent or `organize`), the DO rewrites every reference to it, in front-matter and in body links, and its own relations to live notes, in the same run, and every copy receives the rewritten notes; undoing the run moves it back. A relation by id needs no rewriting. A laptop daemon moves the note's file to follow; a note the person moved on disk stays where they put it, since the protocol doesn't carry a disk move to the record yet (#38).
+- **Relations are relative paths** in front-matter (readable, Obsidian-friendly, valid OKF). Every note also has a ULID `id` for sync. When a note moves (by you, an agent or `organize`), the DO rewrites every reference to it, in front-matter and in body links, and its own relations to live notes, in the same run, and every copy receives the rewritten notes; undoing the run moves it back. A relation by id needs no rewriting. A laptop daemon moves the note's file to follow; a note the person moved on disk stays where they put it, since the protocol doesn't carry a disk move to the record yet (#165).
 - **Headlines and keys**: a type's `headline` template (`"{degree} · {institution} · {end|year}"`) is its one
   line in the overview; a part whose value is missing is left out, never guessed. Its `key` lists the fields that
   name one item (`[test, date]`), so two notes with the same key values are one item: a conflict if they
@@ -134,9 +134,9 @@ When something worth keeping fits no type (travel history for a visa, a patent, 
 
 1. **Fits an existing type?** Use it.
 1. **A variant?** Add a `kind` value or one optional field, not a new type.
-1. **In the shared catalog?** Reuse it (`catalog: trip@2`): vetted fields, relations and a headline template.
-1. **Truly new?** Only with 3+ fields of its own, or its own dates and status. Otherwise it stays a Fact with tags.
-1. **Place it** in the matching area with that area's privacy class.
+1. **In the shared catalog?** Reuse it (`catalog: trip@2`): vetted fields, relations and a headline template (`packages/core/src/growth.ts`, `CATALOG`; an entry changes only by adding the next version).
+1. **Truly new?** Only with 3+ fields of its own (title, tags, sources and the like don't count), or its own dates and a status, and a folder outside what Brainiac keeps (`inbox/`, `questions/`, `unorganized/`, `settings/`). Otherwise it stays a `Fact` with tags, a built-in type. A name the catalog has must come from the catalog.
+1. **Place it** in the matching area with that area's privacy class: a note `organize` places in a sensitive area becomes sensitive in the same run.
 
 ```
 "For the Schengen visa I need my travel history: Japan, March 2024 for ACL; Thailand, Dec 2023."
@@ -147,6 +147,8 @@ Notes      jp-2024-03-acl.md, th-2023-12.md;  convert 2 Facts that look like tri
 Unlocks    Schengen requirement "travel history, last 10 years" now checks
 ```
 
-- **Versioned schemas**: every type has a version and every schema change is a mutation. Additive changes from two devices merge. Incompatible ones (same name, different field types or meaning) become a conflict you resolve, never a silent union.
-- **What follows on its own**: site forms and views, search fields, `describe` output, and the manifest plus folders on every local copy.
+- **Versioned schemas**: every type has a version, and every change to the manifest is a new `schema` row in the run that made it (`packages/base/src/organize.ts`), only through `organize`, signed by the person whole with the notes it moves or converts. A change names the version it was made from. Made from an older one, it merges with what changed since, setting by setting and field by field (`mergeType`): two agents adding different fields both land. When both changed the same field or setting (same name, another kind or other values) nothing merges, and the agent reads the schema again and plans from there: never a silent union. A change that would leave any note failing its type is refused, naming the notes the caller can see. Comments in `okf-base.yaml` survive, though the YAML library may move one onto its own line.
+- **Undo per run**: `undo` takes back an organize run's notes, then its types, with the person's signature; a type changed again since keeps the whole undo from applying.
+- **Self-test**: after each organize, a question from the record (a placed note's type and title, asked as `ask` asks it) must find that note in its first 8 hits, as the caller, over what it may see. A miss is in the answer with the run's undo.
+- **What follows on its own**: site forms, search fields and `describe` output. The site and a laptop copy get the new manifest the next time they load it (a site visit, the daemon's next connect); pushing it live is #164.
 - **Tidy on request**: folder splits, merges and misfile fixes are suggestions inside `organize`, not a background job.

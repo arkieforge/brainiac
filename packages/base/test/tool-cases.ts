@@ -49,14 +49,14 @@ const PATHS = {
 type Ids = Record<keyof typeof PATHS, string>;
 
 let signatures = 0;
-const signature = () => ({
+export const signature = () => ({
   credentialId: "passkey-1",
   counter: ++signatures,
   assertion: `{"n":${signatures}}`,
 });
 
 /** The whole fixture record with its manifest, as the person made it; test scores are sensitive. */
-function record(sql: Sql, fixtures: readonly Fixture[]): Ids {
+export function record(sql: Sql, fixtures: readonly Fixture[]): Ids {
   migrate(sql);
   const raw = (path: string) => {
     const found = fixtures.find((f) => f.path === path);
@@ -83,7 +83,10 @@ function record(sql: Sql, fixtures: readonly Fixture[]): Ids {
 }
 
 /** A CLI connection with the grants the person signed for; the floor (propose, no sensitive scope) by default. */
-function connection(sql: Sql, grants: Partial<Pick<Connection, "level" | "sensitive" | "holdDays">> = {}) {
+export function connection(
+  sql: Sql,
+  grants: Partial<Pick<Connection, "level" | "sensitive" | "holdDays">> = {},
+) {
   const made = connect(sql, { kind: "cli" }, T0);
   if (Object.keys(grants).length === 0) return made;
   const result = grant(sql, { ...made, connectionId: made.id, ...grants }, signature());
@@ -91,7 +94,7 @@ function connection(sql: Sql, grants: Partial<Pick<Connection, "level" | "sensit
   return result.connection;
 }
 
-const as = (made: Connection, now = T0): Context => ({
+export const as = (made: Connection, now = T0): Context => ({
   actor: `connection:${made.id}`,
   connection: made,
   now,
@@ -100,7 +103,7 @@ const as = (made: Connection, now = T0): Context => ({
 const PERSON_CTX: Context = { actor: "human", now: T0 };
 
 /** A tool's answer, which must be one (not a refused call). */
-function call(
+export function call(
   sql: Sql,
   ctx: ToolContext,
   name: string,
@@ -133,7 +136,7 @@ const ids = (sql: Sql, ctx: Context, args: Record<string, unknown>) =>
 const revOf = (sql: Sql, id: string) => getNote(sql, id)?.rev ?? -1;
 
 /** Every live note in the search index, as the jobs after each change leave it on a laptop: keyword only. */
-const indexed = (sql: Sql) => {
+export const indexed = (sql: Sql) => {
   for (const note of listNotes(sql)) putChunks(sql, note.id, note.rev, chunkNote(note));
 };
 

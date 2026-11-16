@@ -386,6 +386,14 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     `CREATE TRIGGER proposals_changed AFTER UPDATE ON proposals
      BEGIN UPDATE meta SET value = value + 1 WHERE key = 'proposals'; END`,
   ],
+  // Each manifest version's run and actor (organize.ts), so undoing a run takes its type changes back with its notes.
+  // Versions from before belong to no run.
+  [
+    "ALTER TABLE schema ADD COLUMN runId TEXT",
+    "ALTER TABLE schema ADD COLUMN actor TEXT",
+    "ALTER TABLE schema ADD COLUMN at INTEGER",
+    "CREATE INDEX schema_run ON schema (runId) WHERE runId IS NOT NULL",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

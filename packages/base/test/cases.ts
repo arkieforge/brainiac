@@ -32,6 +32,7 @@ import { ingestCases } from "./ingest-cases.ts";
 import { linksCases } from "./links-cases.ts";
 import { mutateCases } from "./mutate-cases.ts";
 import { orcidCases } from "./orcid-cases.ts";
+import { organizeCases } from "./organize-cases.ts";
 import { papersCases } from "./papers-cases.ts";
 import { privacyCases } from "./privacy-cases.ts";
 import { profilesCases } from "./profiles-cases.ts";
@@ -155,6 +156,7 @@ export const cases: Record<string, Case> = {
   ...githubCases,
   ...orcidCases,
   ...importCases,
+  ...organizeCases,
   "a new record migrates to the latest version": (sql) => {
     same(migrate(sql), { from: 0, to: SCHEMA_VERSION });
     equal(schemaVersion(sql), SCHEMA_VERSION);
@@ -614,7 +616,7 @@ export const cases: Record<string, Case> = {
     // Back to the version before the tokenizer migration, without what the ones after it added (the leases' rev,
     // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names, the audit
     // rows' background mark, the ORCID works proposed, the files' upload times and shares, the expiry reminders, the
-    // proposals counter).
+    // proposals counter, the manifest's runs).
     sql.all("ALTER TABLE inbox_leases DROP COLUMN rev");
     sql.all("DROP TABLE fills");
     sql.all("ALTER TABLE clients DROP COLUMN actor");
@@ -630,11 +632,13 @@ export const cases: Record<string, Case> = {
     sql.all("DROP TABLE reminders");
     sql.all("DROP TRIGGER proposals_added");
     sql.all("DROP TRIGGER proposals_changed");
+    sql.all("DROP INDEX schema_run");
+    for (const column of ["runId", "actor", "at"]) sql.all(`ALTER TABLE schema DROP COLUMN ${column}`);
     sql.all("INSERT INTO audit (at, actor, tool, noteIds) VALUES (1, 'connection:old', 'get', '[]')");
-    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 11));
+    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 12));
     // The bug: a fragment matched inside other words.
     same(hitIds(search(sql, AGENT, "কম")), [id]);
-    same(migrate(sql), { from: SCHEMA_VERSION - 11, to: SCHEMA_VERSION });
+    same(migrate(sql), { from: SCHEMA_VERSION - 12, to: SCHEMA_VERSION });
     // A row from before the background mark reads as a foreground call.
     same(sql.all("SELECT background FROM audit"), [{ background: 0 }]);
     same(hitIds(search(sql, AGENT, "কম্পিউটার")), [id]);

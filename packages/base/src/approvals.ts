@@ -183,13 +183,15 @@ export const planOf = (effects: readonly Effect[]): PlanItem[] =>
  * Lets a transaction's effects stand, or says what must be signed. An approval covers one plan once: it is used
  * up here, in the transaction that applies it. A review session covers edits (and, for an undo, restores and
  * deletes) to the notes it showed, until it expires. `signed` means the person's signature let it through, which
- * also releases it from the hold window.
+ * also releases it from the hold window. `extra` is what the transaction did besides notes (a manifest change,
+ * organize.ts): it always needs its own plan-hash signature, and so does every `organize` run (contract §4).
  */
 export function settle(
   sql: Sql,
   effects: readonly Effect[],
   ctx: Grant & { readonly actor: string; readonly now: number; readonly connection?: object },
-  scope: "change" | "undo",
+  scope: "change" | "undo" | "organize",
+  extra: readonly PlanItem[] = [],
 ): NeedsApproval | "signed" | undefined {
   const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
   // A connection's deletes over the last day count together, so deleting one note per call doesn't get around the
@@ -209,10 +211,14 @@ export function settle(
   const loosening = effects.some(loosens);
   // A change to more than 20 notes needs a signature too; a review session that showed them all covers it.
   const wide = scope === "change" && effects.length > BULK_UPDATE;
+  // A structural change (an organize run, a manifest change) is signed whole, and no review session covers it.
+  const structural = scope === "organize" || extra.length > 0;
   const needing =
-    bulk || loosening || wide ? effects : effects.filter((effect) => needsApproval(sql, effect));
-  if (needing.length === 0) return undefined;
-  const items = planOf(effects);
+    bulk || loosening || wide || structural
+      ? effects
+      : effects.filter((effect) => needsApproval(sql, effect));
+  if (needing.length === 0 && extra.length === 0) return undefined;
+  const items = [...planOf(effects), ...extra];
   const hash = planHash(items);
   if (ctx.approvalId !== undefined) {
     const [approval] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ?", ctx.approvalId);
@@ -230,7 +236,8 @@ export function settle(
       review.assertion !== "" &&
       review.expiresAt > ctx.now &&
       !bulk &&
-      !loosening
+      !loosening &&
+      !structural
     ) {
       const shown = new Set<string>(JSON.parse(review.items));
       // The edges an edit moves count as items too: a session can't redirect one into a note it didn't show.
