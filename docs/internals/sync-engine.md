@@ -38,6 +38,7 @@ changes  { from, to, items }            // each note changed after `from`, as it
 result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?: { planHash, items }, error? }
 gap      { clientId, highWater }        // resend from highWater + 1
 reset    { clientId, clientSeq?, reason } // two machines share this id; no clientSeq: another actor owns it
+proposals {}                            // the person's sockets only: the open proposals changed, so the site asks /api/proposals again
 ```
 
 The DO computes each mutation's digest itself. A result names the `changeId` it answers, so a copy that
