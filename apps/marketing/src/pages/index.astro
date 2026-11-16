@@ -84,7 +84,7 @@ const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
                   <div><dt>writing</dt><dd><span>7.0</span><span class="chip ok">verified · trf p1</span></dd></div>
                   <div><dt>expires</dt><dd><span>2028-11-02</span><span class="chip warn">unverified</span></dd></div>
                 </dl>
-                <div class="excerpt"><div class="cap">IELTS test report form · page 1</div>Overall band <mark>8.0</mark> · Writing <mark>7.0</mark> · Test date 2 November 2026</div>
+                <div class="excerpt"><div class="cap">IELTS test report form · page 1</div><div class="xr"><span>Overall band</span><mark>8.0</mark><span class="chip ok">→ overall</span></div><div class="xr"><span>Writing</span><mark>7.0</mark><span class="chip ok">→ writing</span></div></div>
               </div>
               <div class="side">
                 <div class="sideh">TUM MSc Informatics · checks</div>
@@ -104,10 +104,10 @@ const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
         </div>
 
         <div class="points">
-            <div><b><Fragment set:html={check} />Your own Claude does the work</b><span>Through MCP, on your subscription. Brainiac runs no model.</span></div>
-            <div><b><Fragment set:html={check} />Risky changes wait for you</b><span>A changed grade or a looser privacy setting needs your passkey.</span></div>
-            <div><b><Fragment set:html={check} />One database per person</b><span>Markdown you can export, synced to your laptop if you like.</span></div>
-          </div>
+          <div><b><Fragment set:html={check} />Every value cites its page</b><span>A score points at the line of the report it came from.</span></div>
+          <div><b><Fragment set:html={check} />Works on your laptop, offline too</b><span>A synced folder your Claude can read and search without the cloud.</span></div>
+          <div><b><Fragment set:html={check} />Yours to take anywhere</b><span>Plain markdown notes you can export whenever you like.</span></div>
+        </div>
 
         <div class="works reveal" aria-label="Works with"><span>Works with</span><b>Claude Code</b><b>claude.ai</b><b>T3 Code</b><b>Codex</b><b>any MCP client</b></div>
       </div>
@@ -142,7 +142,7 @@ const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
             <div class="panel" role="region" id="p-check" aria-labelledby="t-check" data-panel="check" hidden>
               <div class="cap">applications/tum-msc-informatics-2027 · requirements</div>
               <div class="claims">
-                <div><span>IELTS academic, overall at least 6.5, valid on the deadline</span><span class="v">8.0</span><span class="chip ok">met</span></div>
+                <div><span>IELTS academic, overall at least 6.5, valid on the deadline</span><span class="v">8.0</span><span class="chip warn">expiry unverified</span></div>
                 <div><span>Bachelor transcript</span><span class="v">1</span><span class="chip ok">met</span></div>
                 <div><span>Two letters, received</span><span class="v">0 of 2</span><span class="chip no">missing</span></div>
                 <div><span>Motivation, question 4</span><span class="v">manual</span><span class="chip warn">to tick</span></div>
@@ -169,7 +169,7 @@ const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
     <section class="block" id="features">
       <div class="wrap">
         <span class="eyebrow"><b>02.</b> What your Claude gets</span>
-        <h2 class="h2 reveal">Tools that keep it honest, and rules it can&rsquo;t talk its way around.</h2>
+        <h2 class="h2 reveal">Every claim checked. <span class="serif">Every</span> change yours.</h2>
         <div class="bento">
           <span class="cross tl"></span><span class="cross tr"></span><span class="cross bl"></span><span class="cross br"></span>
           <div class="w4 reveal">
@@ -196,7 +196,7 @@ const arrow = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
             <div class="demo"><div class="timeline">
               <span class="tick" style="left:12%"><span>60</span><i></i></span>
               <span class="tick" style="left:42%"><span>30</span><i></i></span>
-              <span class="tick hot" style="left:72%"><span>7</span><i></i></span>
+              <span class="tick hot" style="left:72%"><span>7 days · IELTS</span><i></i></span>
               <span class="tick" style="left:92%"><span>0</span><i></i></span>
             </div></div>
           </div>

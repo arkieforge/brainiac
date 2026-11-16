@@ -1237,3 +1237,96 @@ footer {
     text-align: center;
   }
 }
+
+/* Council round 2 (#52). */
+.h2,
+.close .h2 {
+  text-wrap: balance;
+}
+.claims div > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.claims .v,
+.claims .chip {
+  white-space: nowrap;
+}
+.bento p {
+  max-width: none;
+}
+.timeline .tick {
+  font-size: 12px;
+}
+.show {
+  min-height: 0;
+}
+.step {
+  position: relative;
+}
+.step::after {
+  content: "+";
+  position: absolute;
+  right: 6px;
+  top: 18px;
+  font: 16px var(--mono);
+  color: var(--faint);
+}
+.step[aria-expanded="true"]::after {
+  content: "\2212";
+  color: var(--accent);
+}
+@media (max-width: 640px) {
+  .works {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .works > span:first-child {
+    flex-basis: auto;
+    text-align: left;
+  }
+  .term {
+    overflow-x: auto;
+  }
+  .term .row {
+    white-space: pre;
+  }
+  .term .who {
+    display: inline;
+    width: auto;
+  }
+}
+
+/* Council round 2, Sol. */
+.excerpt {
+  border: 1px solid var(--line-2);
+  box-shadow:
+    0 1px 0 var(--line),
+    0 6px 18px -12px rgb(60 45 20 / 0.25);
+}
+.excerpt .xr {
+  display: grid;
+  grid-template-columns: 110px 60px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.excerpt .xr .chip {
+  justify-self: start;
+}
+@media (max-width: 640px) {
+  .hero {
+    padding-top: 40px;
+  }
+  .stage {
+    margin-top: 28px;
+  }
+  .bento > div {
+    min-height: 0;
+  }
+}
