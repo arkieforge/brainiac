@@ -48,6 +48,28 @@ async function create(base: DurableObjectStub<TestBase>) {
 }
 
 describe("Base DO", () => {
+  it("a record from before a migration arms its alarm for what the migration added the first time it wakes", async () => {
+    const base = await record("migrated");
+    // A certificate expiring in 90 days, saved before expiry reminders existed.
+    const expires = new Date(Date.now() + 90 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const created = await base().mutate(
+      {
+        op: "create",
+        path: "documents/aps-certificate.md",
+        raw: `---\nid: 01M7AAAAAAAAAAAAAAAAAAAAAA\ntype: Document\ntitle: APS certificate\nexpires: ${expires}\n---\n`,
+        class: "normal",
+      },
+      human,
+    );
+    expect(created.status).toBe("applied");
+    await base().beforeReminders();
+    expect(await base().alarmAt()).toBeNull();
+    await expect(base().crash()).rejects.toThrow();
+    // Any wake migrates it (the weekly questions email wakes every record), and the alarm waits for its first
+    // reminder, at the start of the day 60 days before it expires.
+    expect(await base().alarmAt()).toBe(Date.parse(`${expires}T00:00:00Z`) - 60 * 24 * 60 * 60_000);
+  });
+
   it("dispatches a job committed before a crash, once it is back", async () => {
     const base = await record("crash");
     // The commit arms the alarm, which the runtime keeps across a crash.
