@@ -57,18 +57,17 @@ export function check(c: Case, run: Outcome): string | undefined {
   // A question it asked alongside the note is fine; any other note is the same news filed somewhere else.
   const stray = run.filed.find((note) => note.type !== c.files.type && note.type !== "Question");
   if (stray) return `filed a ${stray.type || "note with no type"} at ${stray.path}`;
-  const note = run.filed.find((n) => n.type === c.files.type && matches(c.files.fields, n.fields));
-  if (!note) {
-    // Asking isn't filing: no case here leaves the model anything it must ask before it can file.
-    const asked = run.calls.some((call) => named(call, "request_info") && !call.failed);
-    return asked
-      ? `asked instead of filing a ${c.files.type}`
-      : `filed no ${c.files.type} with ${JSON.stringify(c.files.fields)}`;
-  }
   const folder = TYPES[c.files.type]?.folder;
-  return folder === undefined || note.path.startsWith(`${folder}/`)
-    ? undefined
-    : `filed the ${c.files.type} at ${note.path}, outside ${folder}/`;
+  const misplaced = run.filed.find(
+    (n) => n.type === c.files.type && folder !== undefined && !n.path.startsWith(`${folder}/`),
+  );
+  if (misplaced) return `filed the ${c.files.type} at ${misplaced.path}, outside ${folder}/`;
+  if (run.filed.some((n) => n.type === c.files.type && matches(c.files.fields, n.fields))) return undefined;
+  // Asking isn't filing: no case here leaves the model anything it must ask before it can file.
+  const asked = run.calls.some((call) => named(call, "request_info") && !call.failed);
+  return asked
+    ? `asked instead of filing a ${c.files.type}`
+    : `filed no ${c.files.type} with ${JSON.stringify(c.files.fields)}`;
 }
 
 /** The prompt's ending: the person wants it kept, not discussed. */

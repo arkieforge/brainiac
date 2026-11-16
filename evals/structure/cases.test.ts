@@ -100,6 +100,10 @@ describe("structure eval", () => {
     expect(graded("new-role", [{ ...role, path: "roles/research-assistant.md" }])).toBe(
       "filed the Role at roles/research-assistant.md, outside facts/roles/",
     );
+    // A second copy elsewhere fails too, in either order.
+    const copy = { ...role, id: "copy", path: "roles/research-assistant.md" };
+    expect(graded("new-role", [role, copy])).toMatch(/outside facts\/roles\//);
+    expect(graded("new-role", [copy, role])).toMatch(/outside facts\/roles\//);
     // A folder whose name starts like the type's isn't it.
     expect(graded("new-role", [{ ...role, path: "facts/roles-old/research-assistant.md" }])).toMatch(
       /outside facts\/roles\//,
