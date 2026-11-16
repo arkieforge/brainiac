@@ -51,6 +51,12 @@ describe("drafts eval", () => {
     expect(check("cover-letter-internship", `${LETTER} I led a team of 12.`)).toMatch(/12/);
     expect(check("cover-letter-internship", `${LETTER} My GPA is strong.`)).toMatch(/house rules/);
     expect(check("essay-proud", "I graduated with a 3.82.")).toMatch(/house rules/);
+    expect(check("essay-proud", "I can't write this essay.")).toBe(
+      "doesn't mention any fact from the record",
+    );
+    expect(check("essay-proud", LETTER, [{ ...DRAFT, failed: true }, verified("ok")])).toBe(
+      "never called draft",
+    );
     expect(check("sop-tum", LETTER)).toBe("doesn't mention TUM");
   });
 

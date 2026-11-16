@@ -36,7 +36,8 @@ const lastVerify = (calls: readonly Call[]) =>
 
 /** What every draft must do: start from `draft`, end on a clean verify, invent no value, follow the house rules. */
 function drafted(run: Drafted): string | undefined {
-  if (!run.calls.some((call) => call.tool === "mcp__brainiac__draft")) return "never called draft";
+  if (!run.calls.some((call) => call.tool === "mcp__brainiac__draft" && !call.failed))
+    return "never called draft";
   const verify = lastVerify(run.calls);
   if (!verify) return "never verified the draft";
   const status =
@@ -79,7 +80,7 @@ export const CASES: readonly Case[] = [
     kind: "control",
     prompt:
       "Write a short essay for my application on a piece of work I'm proud of. Reply with only the essay, no notes around it.",
-    check: drafted,
+    check: all(drafted, says(/Swahili|Acme Robotics|Northvale|telemetry/i, "any fact from the record")),
   },
 ];
 

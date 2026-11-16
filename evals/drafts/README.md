@@ -17,9 +17,9 @@ draft alone.
 | ------------------------- | ------- | ---------------------------------------------------------------------- |
 | `sop-tum`                 | guard   | fails the checks below, or the statement doesn't name TUM              |
 | `cover-letter-internship` | guard   | fails the checks below, or the letter doesn't name the Acme internship |
-| `essay-proud`             | control | fails the checks below                                                 |
+| `essay-proud`             | control | fails the checks below, or the essay names no fact from the record     |
 
-Every case fails when the run never called `draft`, its last `ask {mode: "verify"}` didn't answer `ok`, the
+Every case fails when the run never called `draft` successfully, its last `ask {mode: "verify"}` didn't answer `ok`, the
 draft mentions the CGPA (the house rule), or it says a number or date the record doesn't hold anywhere, read as
 `ask` verify reads them. Every case is strict: any failing sample fails it, and the run's gate. The graders have
 tests (`cases.test.ts`), which CI runs.

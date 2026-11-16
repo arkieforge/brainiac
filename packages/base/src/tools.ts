@@ -1817,9 +1817,7 @@ const draft = tool(
     const seen = listNotes(sql).flatMap((note) => project(note, reader) ?? []);
     const old = supersededAmong(sql, seen);
     const facts = seen.filter((note) => note.path.startsWith("facts/") && !old.has(note.id));
-    const rules = seen.filter(
-      (note) => note.path === "settings/agents.md" || note.path.startsWith("decisions/"),
-    );
+    const rules = seen.filter((note) => note.path === "settings/agents.md");
     const me = seen.find((note) => note.path === "me.md");
     const notes: Record<string, unknown>[] = [];
     let chars = 0;
@@ -1835,7 +1833,8 @@ const draft = tool(
       chars += size;
       notes.push(entry);
     }
-    for (const note of rules) ctx.shown.add(note.id);
+    // `for` names the application even when its entry didn't fit, and the house rules always go out.
+    for (const note of [...(target ? [target] : []), ...rules]) ctx.shown.add(note.id);
     return ok({
       kind: args.kind,
       ...(target && { for: summary(target) }),
