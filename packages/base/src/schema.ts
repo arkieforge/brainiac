@@ -367,6 +367,16 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "ALTER TABLE files ADD COLUMN sharedAt INTEGER",
     "ALTER TABLE files ADD COLUMN shares INTEGER NOT NULL DEFAULT 0",
   ],
+  // The expiry reminders already sent (expiry.ts): one row per note, expiry date and mark (60, 30, 7, 0 days).
+  [
+    `CREATE TABLE reminders (
+      noteId TEXT NOT NULL,
+      expires TEXT NOT NULL,
+      days INTEGER NOT NULL,
+      at INTEGER NOT NULL,
+      PRIMARY KEY (noteId, expires, days)
+    ) WITHOUT ROWID`,
+  ],
 ];
 
 /** The SQL schema version this code writes. */

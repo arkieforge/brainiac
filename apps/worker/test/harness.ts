@@ -111,6 +111,13 @@ export class TestBase extends Base {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
   }
 
+  /** The expiry reminders the alarm has sent (or marked sent), as `noteId days`. */
+  reminded(): string[] {
+    return this.sql
+      .all<{ noteId: string; days: number }>("SELECT noteId, days FROM reminders ORDER BY noteId, days")
+      .map((row) => `${row.noteId} ${row.days}`);
+  }
+
   find(principal: Principal, text: string): string[] {
     return search(this.sql, principal, text).hits.map((hit) => ("noteId" in hit ? hit.noteId : hit.fileSha));
   }

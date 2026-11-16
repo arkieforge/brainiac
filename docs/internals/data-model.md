@@ -19,7 +19,7 @@ objects. Migrations are additive for one release, so the previous Worker still r
 each DO migrates itself the first time it wakes after a deploy.
 
 ```
-meta         { key PK, value }                                      // schemaVersion (the SQL schema's), seq (the last one assigned), questionEmails (off when the person turned the weekly email off), dataKey and vaultKeyId (the wrapped data key and which vault key wraps it)
+meta         { key PK, value }                                      // schemaVersion (the SQL schema's), seq (the last one assigned), questionEmails (off when the person turned the weekly email off, which stops expiry reminders too), dataKey and vaultKeyId (the wrapped data key and which vault key wraps it)
 notes        { id ULID, path, raw TEXT, fm JSON (parsed), rev, hash, seq, class, deletedAt?,
                type, title, kind, status, date, deadline, expires }  // the last row generated from fm
 revisions    { noteId, rev, raw, patch, actor, runId, at }         // patch: each field's before and after; undo applies it in reverse
@@ -36,6 +36,7 @@ inbox_leases { itemId, agent, expiresAt, rev }                       // one file
 questions    { id, noteId?, field?, input JSON, suggested JSON?, why, priority, status, class }   // unused: found questions are computed from the notes (questions.ts), asked ones are Question notes
 checks       { id, noteId, field?, detector, evidence JSON, suggestion JSON, status }   // unused: checks are computed on read from the notes (review.ts), so none goes stale
 jobs         { id, kind: index | file, noteId, rev, status, attempts, dispatchedAt }   // transactional outbox; status: pending | dispatched | failed; a file job's noteId is file:<sha256> and its rev the file's
+reminders    { noteId, expires, days, at }   // expiry reminders sent (expiry.ts): one per note, expiry date and mark (60, 30, 7, 0)
 files        { sha256 PK, r2Key, mime, bytes, pages?, class: unclassified | vault | normal | sensitive, encrypted, pipelineVersion,
                checks: clean | found | unreadable, findings JSON, kind?, confirmedAt?, noteId?, rev, uploadedBy?, path? UNIQUE, name? }   // sha256: an HMAC of the bytes under the data key; kind counts only once the person confirms it; rev: bumped by each confirmation; pipelineVersion: the extraction that produced checks (0 while a PDF waits for its first); path: where it sits in the record, which its sidecar's file: resolves to (null for uploads from before #100); name: the uploader's filename, for the person only
 chunks       { id, noteId, rev, family: normal | sensitive, fileSha?, page?, header, text }   // a cleared file's pages: noteId file:<sha256>, the file's, not its sidecar note's

@@ -6,7 +6,7 @@ import { vaultKeyId } from "@brainiac/base";
 import { Client, Pool } from "pg";
 
 import { type AuthConfig, createAuth } from "./auth/config.ts";
-import type { Mailer } from "./auth/email.ts";
+import { mailer } from "./auth/email.ts";
 import { consent } from "./auth/consent.ts";
 import {
   accountPage,
@@ -74,13 +74,6 @@ async function checkVault(env: Env, ctx: ExecutionContext): Promise<Response> {
     ctx.waitUntil(client.end());
   }
 }
-
-const mailer =
-  (env: Env): Mailer =>
-  async ({ to, subject, text }) => {
-    if (!env.EMAIL || !env.EMAIL_FROM) throw new Error("Email isn't set up for this stage (EMAIL_FROM)");
-    await env.EMAIL.send({ from: { name: "Brainiac", email: env.EMAIL_FROM }, to, subject, text });
-  };
 
 /** The record a CLI token names, if that is an id this namespace made at all. */
 const recordById = (env: Env, baseId: string) => {

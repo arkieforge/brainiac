@@ -26,6 +26,7 @@ import {
 import { approvalCases } from "./approval-cases.ts";
 import { fillCases } from "./fill-cases.ts";
 import { connectionCases } from "./connection-cases.ts";
+import { expiryCases } from "./expiry-cases.ts";
 import { githubCases } from "./github-cases.ts";
 import { importCases } from "./import-cases.ts";
 import { ingestCases } from "./ingest-cases.ts";
@@ -85,6 +86,7 @@ const ALL_TABLES = [
   "passkey_keys",
   "proposals",
   "questions",
+  "reminders",
   "results",
   "review_runs",
   "revisions",
@@ -146,6 +148,7 @@ export const cases: Record<string, Case> = {
   ...fillCases,
   ...ingestCases,
   ...linksCases,
+  ...expiryCases,
   ...papersCases,
   ...profilesCases,
   ...toolCases,
@@ -596,7 +599,7 @@ export const cases: Record<string, Case> = {
     putChunks(sql, id, 1, chunkNote(note));
     // Back to the version before the tokenizer migration, without what the ones after it added (the leases' rev,
     // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names, the audit
-    // rows' background mark, the ORCID works proposed, the files' upload times and shares).
+    // rows' background mark, the ORCID works proposed, the files' upload times and shares, the reminders sent).
     sql.all("ALTER TABLE inbox_leases DROP COLUMN rev");
     sql.all("DROP TABLE fills");
     sql.all("ALTER TABLE clients DROP COLUMN actor");
@@ -609,11 +612,12 @@ export const cases: Record<string, Case> = {
     sql.all("ALTER TABLE files DROP COLUMN uploadedAt");
     sql.all("ALTER TABLE files DROP COLUMN sharedAt");
     sql.all("ALTER TABLE files DROP COLUMN shares");
+    sql.all("DROP TABLE reminders");
     sql.all("INSERT INTO audit (at, actor, tool, noteIds) VALUES (1, 'connection:old', 'get', '[]')");
-    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 9));
+    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 10));
     // The bug: a fragment matched inside other words.
     same(hitIds(search(sql, AGENT, "কম")), [id]);
-    same(migrate(sql), { from: SCHEMA_VERSION - 9, to: SCHEMA_VERSION });
+    same(migrate(sql), { from: SCHEMA_VERSION - 10, to: SCHEMA_VERSION });
     // A row from before the background mark reads as a foreground call.
     same(sql.all("SELECT background FROM audit"), [{ background: 0 }]);
     same(hitIds(search(sql, AGENT, "কম্পিউটার")), [id]);

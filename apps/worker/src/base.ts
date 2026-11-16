@@ -54,6 +54,10 @@ import {
   type SecretInput,
   type SecretView,
   type Digest,
+  type DueReminder,
+  markReminded,
+  reminders,
+  remindersDue,
   type FileToken,
   type Extracted,
   type FileView,
@@ -124,9 +128,13 @@ import { decodeClientMessage, type Manifest, type PlanItem, type ServerMessage }
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
+import { Pool } from "pg";
+
 import { checkSignature, type Approver } from "./approvals.ts";
+import { mailer } from "./auth/email.ts";
 import type { Env } from "./env.ts";
 import type { Models } from "./jobs.ts";
+import { sendReminders } from "./reminders.ts";
 
 const RETRY_MS = 60_000;
 
@@ -1025,7 +1033,35 @@ export class Base extends DurableObject<Env> {
         now,
       );
     }
+    const reminding = remindersDue(this.sql, now);
+    if (reminding.length > 0 && !(await this.remind(reminding, now))) {
+      void this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
+      return;
+    }
     this.wake();
+  }
+
+  /**
+   * Emails the expiry reminders due to the record's owner, then marks them sent, also when there was nothing to
+   * say or nowhere to send it, so they never pile up. False when the email failed: the alarm tries again.
+   */
+  private async remind(due: readonly DueReminder[], now: number): Promise<boolean> {
+    const said = reminders(this.sql, due, now);
+    const { EMAIL, EMAIL_FROM, SITE_ORIGIN } = this.env;
+    // A stage without a sending address or a public origin sends no email, as for the weekly one.
+    if (said && EMAIL && EMAIL_FROM && SITE_ORIGIN) {
+      const pool = new Pool({ connectionString: this.env.HYPERDRIVE.connectionString, max: 1 });
+      try {
+        await sendReminders(pool, this.ctx.id.toString(), said, mailer(this.env), SITE_ORIGIN);
+      } catch (error) {
+        console.error("expiry reminder failed", error);
+        return false;
+      } finally {
+        void pool.end().catch((error: unknown) => console.error("closing Neon failed", error));
+      }
+    }
+    markReminded(this.sql, due, now);
+    return true;
   }
 
   /**

@@ -28,6 +28,11 @@ Each person's record lives in **its own Durable Object with its own SQLite datab
   current address, or checked a week ago, written as `connector:links`. Only the first read at an address pays for
   text (treg) and takes a snapshot (Browser Rendering); a snapshot is sealed into R2 before the install, its only
   await, and recorded with its sidecar in the install's transaction.
+- **Expiry reminders aren't jobs**: the alarm wakes at 08:00 UTC on the days an `expires` date is 60, 30, 7 and 0
+  days away, and the DO itself looks its owner's address up in Neon and sends the email (`expiry.ts`, the Worker's
+  `reminders.ts`). A `reminders` row per note, date and mark makes each go out once; it is written after the send,
+  so a crash between them sends one twice, never none. A mark missed by over a week is skipped. Sensitive items
+  are only counted, and the weekly email's switch turns these off too.
 - **No retrieval holes, no stale text**: until new chunks replace them, old chunks are used only to find candidate notes; what's returned (snippets, context) always comes from the note's current revision. A stale snippet is never shown.
 
 ## Caching and file delivery

@@ -83,6 +83,7 @@ export {
 } from "./questions.ts";
 export {
   detect,
+  reminderItems,
   meetsEdges,
   overview,
   requirementsOf,

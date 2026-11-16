@@ -691,6 +691,25 @@ export function usedBy(notes: readonly ReviewNote[], now: number): Map<string, s
   return used;
 }
 
+/**
+ * The notes among `ids` an expiry reminder is about, with the open applications that rely on each: none that a
+ * newer note supersedes, and no document proving a note that carries an expiry of its own, so a passport and
+ * its scan are one reminder.
+ */
+export function reminderItems(notes: readonly ReviewNote[], ids: ReadonlySet<string>, now: number) {
+  const resolve = resolver(notes);
+  const superseded = new Set(notes.flatMap((n) => [resolve(n, n.data["supersedes"])?.id ?? []].flat()));
+  const used = usedBy(notes, now);
+  return notes
+    .filter(
+      (note) =>
+        ids.has(note.id) &&
+        !superseded.has(note.id) &&
+        !listOf(note.data["proves"]).some((p) => resolve(note, p)?.data["expires"] !== undefined),
+    )
+    .map((note) => ({ id: note.id, label: labelOf(note), usedBy: used.get(note.id) ?? [] }));
+}
+
 /** One requirement of an application, judged on the current notes by `requirementsOf`. */
 export interface Requirement {
   readonly need: string;

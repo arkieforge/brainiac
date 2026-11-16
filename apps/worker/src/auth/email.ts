@@ -1,5 +1,15 @@
+import type { Env } from "../env.ts";
+
 /** How auth sends mail. The Worker backs it with Cloudflare Email Service; tests capture it. */
 export type Mailer = (message: { to: string; subject: string; text: string }) => Promise<void>;
+
+/** Sends through this stage's Cloudflare Email Service binding; throws on a stage with none. */
+export const mailer =
+  (env: Pick<Env, "EMAIL" | "EMAIL_FROM">): Mailer =>
+  async ({ to, subject, text }) => {
+    if (!env.EMAIL || !env.EMAIL_FROM) throw new Error("Email isn't set up for this stage (EMAIL_FROM)");
+    await env.EMAIL.send({ from: { name: "Brainiac", email: env.EMAIL_FROM }, to, subject, text });
+  };
 
 export const otpEmail = (to: string, otp: string) => ({
   to,

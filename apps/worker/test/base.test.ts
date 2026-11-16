@@ -246,4 +246,24 @@ describe("Base DO", () => {
     expect(await asked.json()).toEqual({ checking: 0, cached: 1 });
     expect((await base.jobs()).filter((job) => job.kind === "drift")).toEqual([]);
   });
+
+  it("the alarm marks an expiry reminder sent once its day comes, so it never wakes for it again", async () => {
+    const base = (await record("expiry"))();
+    // Tomorrow: its 7-day reminder came today or yesterday at 08:00 UTC, so it is due now.
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const made = await base.mutate(
+      {
+        op: "create",
+        path: "documents/passport.md",
+        raw: `---\nid: 01M6AM78G0STS7TB29G7A10PPT\ntype: Document\ntitle: Passport scan\nkind: id\nexpires: ${tomorrow}\n---\n`,
+        class: "normal",
+      },
+      human,
+    );
+    if (made.status !== "applied") throw new Error(JSON.stringify(made));
+    expect(await base.reminded()).toEqual([]);
+    // This test stage has no email binding, so nothing is sent, but the reminder still counts as gone out.
+    await base.dispatch();
+    expect(await base.reminded()).toEqual([`${made.noteId} 7`]);
+  });
 });

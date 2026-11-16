@@ -2,6 +2,7 @@ import { ulid } from "@brainiac/core";
 
 import { getNote, type NoteRow } from "./notes.ts";
 import { PIPELINE } from "./pages.ts";
+import { nextReminder } from "./expiry.ts";
 import { linksDue, nextLinkCheck } from "./links.ts";
 import { nextLookup, papersDue } from "./papers.ts";
 import { nextProfileCheck, profilesDue } from "./profiles.ts";
@@ -240,6 +241,7 @@ export function nextWake(sql: Sql, now: number): number | null {
     nextLookup(sql, now),
     nextProfileCheck(sql, now),
     nextLinkCheck(sql, now),
+    nextReminder(sql, now),
   ].filter((at) => typeof at === "number");
   return times.length > 0 ? Math.min(...times) : null;
 }
@@ -259,7 +261,7 @@ export function purge(sql: Sql, now: number): void {
       `DELETE FROM vectors WHERE chunkId IN (SELECT id FROM chunks WHERE noteId IN (${expired}))`,
       before,
     );
-    for (const table of ["chunks", "revisions", "jobs", "checks", "questions", "proposals"]) {
+    for (const table of ["chunks", "revisions", "jobs", "checks", "questions", "proposals", "reminders"]) {
       sql.all(`DELETE FROM ${table} WHERE noteId IN (${expired})`, before);
     }
     sql.all(`DELETE FROM edges WHERE fromId IN (${expired}) OR toId IN (${expired})`, before, before);
