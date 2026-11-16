@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./bun": "./src/bun.ts",
+    "./headers": "./src/headers.ts",
     "./node": "./src/node.ts",
     "./mcp": "./src/mcp.ts"
   },

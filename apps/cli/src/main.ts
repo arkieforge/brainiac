@@ -6,19 +6,17 @@ import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { doctor, lockVault, request, restore, watchRequests } from "./commands.ts";
+import type { Answer } from "@brainiac/base";
+
 import { configDir, loadConfig, saveConfig, type Config } from "./config.ts";
-import { Daemon } from "./daemon.ts";
-import { fileable, fileInbox, filer, type Bridge } from "./filing.ts";
-import { refusal, ToolCall } from "./hook.ts";
-import { importSources, readSource, scanReport, type Source } from "./imports.ts";
+import type { Bridge } from "./filing.ts";
+import type { Source } from "./imports.ts";
 import { socketLink } from "./link.ts";
-import { callRecord, serveStdio } from "./mcp.ts";
-import { localCopy, tokenKey } from "./offline.ts";
-import { photosReport } from "./photos.ts";
-import { QUESTIONS_QUERY, questionsReport } from "./questions.ts";
-import { logout, openBrowser, startLogin } from "./login.ts";
+import { serveStdio } from "./mcp.ts";
 import { service } from "./service.ts";
+
+// Each command loads the rest of what it needs when it runs: the record's code (ArkType's schemas above all) is
+// most of a start, and `brainiac mcp serve` online needs none of it.
 
 const USAGE = `brainiac login [--server <url>]
 brainiac logout
@@ -50,6 +48,7 @@ const bridge = (): Bridge => {
 
 /** One filing run with the Claude Code binary at `claude`, reporting what it said at the end. */
 async function fileNow(claude: string): Promise<boolean> {
+  const { fileInbox } = await import("./filing.ts");
   const { code, events } = await fileInbox(bridge(), { claude });
   const result = events.find((event) => event["type"] === "result");
   const said = typeof result?.["result"] === "string" ? `\n${result["result"]}` : "";
@@ -121,6 +120,7 @@ async function main(argv: readonly string[]): Promise<void> {
   if (command === "login") {
     const server = values.server ?? config.server;
     if (!server) fail("brainiac login needs --server <url> once.");
+    const { logout, openBrowser, startLogin } = await import("./login.ts");
     const login = await startLogin(server, hostname());
     console.log(`Opening your browser to connect this computer. If it doesn't open, go to:\n${login.url}`);
     openBrowser(login.url);
@@ -133,6 +133,7 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "logout") {
     if (!saved.server || !saved.token) fail("Not logged in on this computer.");
+    const { logout } = await import("./login.ts");
     try {
       await logout(saved.server, saved.token);
     } catch (error) {
@@ -147,6 +148,12 @@ async function main(argv: readonly string[]): Promise<void> {
 
   if (command === "daemon" && sub === "run") {
     if (!vault || !config.server) fail("brainiac daemon run needs --vault <dir> and --server <url> once.");
+    const [{ lockVault, watchRequests }, { Daemon }, { fileable, filer }, { tokenKey }] = await Promise.all([
+      import("./commands.ts"),
+      import("./daemon.ts"),
+      import("./filing.ts"),
+      import("./offline.ts"),
+    ]);
     let unlock: () => void;
     try {
       unlock = lockVault(dir, vault); // two daemons on one vault would share one client id
@@ -213,13 +220,14 @@ async function main(argv: readonly string[]): Promise<void> {
     // stdout carries the protocol, so nothing else may print there.
     if (!config.server || !token)
       fail("brainiac mcp serve needs --server <url> once, and brainiac login (or BRAINIAC_TOKEN).");
-    const copy = localCopy({
+    const local = {
       vault,
       deviceId: config.deviceId,
       token,
       keepSensitive: config.keepSensitive ?? false,
       ...(values.background && { background: true }),
-    });
+    };
+    let copy: Promise<{ call: (name: string, args: unknown) => Answer }> | undefined;
     try {
       await serveStdio({
         server: config.server,
@@ -227,7 +235,10 @@ async function main(argv: readonly string[]): Promise<void> {
         input: process.stdin,
         write: (line) => process.stdout.write(`${line}\n`),
         ...(values.background && { background: true }),
-        offline: copy.call,
+        offline: async (name, args) => {
+          copy ??= import("./offline.ts").then(({ localCopy }) => localCopy(local));
+          return (await copy).call(name, args);
+        },
       });
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
@@ -241,6 +252,7 @@ async function main(argv: readonly string[]): Promise<void> {
       ...[sub, ...rest].filter((path) => path !== undefined),
       ...(values.vault ? [values.vault] : []),
     ];
+    const { importSources, readSource, scanReport } = await import("./imports.ts");
     let paths = named.map((path) => resolve(path));
     if (command === "scan" && paths.length === 0) fail("brainiac scan <file or folder>...");
     if (paths.length === 0) {
@@ -264,6 +276,7 @@ async function main(argv: readonly string[]): Promise<void> {
     }
     if (!config.server || !token) fail("brainiac import needs brainiac login first.");
     const server = config.server;
+    const { callRecord } = await import("./record.ts");
     try {
       const { lines, failed } = await importSources(sources, (args) =>
         callRecord(server, token, "import", args),
@@ -277,6 +290,10 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "questions") {
     if (!config.server || !token) fail("brainiac questions needs --server <url> once, and brainiac login.");
+    const [{ callRecord }, { QUESTIONS_QUERY, questionsReport }] = await Promise.all([
+      import("./record.ts"),
+      import("./questions.ts"),
+    ]);
     try {
       const answer = await callRecord(config.server, token, "query", QUESTIONS_QUERY);
       if (values.json) return console.log(JSON.stringify(answer, null, 2));
@@ -289,6 +306,10 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "photos") {
     if (!config.server || !token) fail("brainiac photos needs --server <url> once, and brainiac login.");
+    const [{ callRecord }, { photosReport }] = await Promise.all([
+      import("./record.ts"),
+      import("./photos.ts"),
+    ]);
     try {
       const answer = await callRecord(config.server, token, "photos", {});
       if (values.json) return console.log(JSON.stringify(answer, null, 2));
@@ -331,6 +352,7 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (command === "hook") {
     // Claude Code's PreToolUse hook: exit code 2 refuses the call, and the agent reads stderr. No vault, no rules.
+    const { refusal, ToolCall } = await import("./hook.ts");
     const why = vault && refusal(ToolCall.assert(JSON.parse(await Bun.stdin.text())), vault);
     if (why) {
       console.error(why);
@@ -340,6 +362,7 @@ async function main(argv: readonly string[]): Promise<void> {
   }
   if (!vault)
     fail(`No vault yet: start with \`brainiac daemon run --vault <dir> --server <url>\`.\n\n${USAGE}`);
+  const { doctor, request, restore } = await import("./commands.ts");
   if (command === "resume") {
     if (!request(dir, vault, values.undo ? "undo" : "resume"))
       fail("The daemon isn't running: start it with `brainiac daemon run`, then `brainiac resume`.");

@@ -11,7 +11,17 @@ import { PROMPTS, TOOLS } from "@brainiac/base";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Miniflare } from "miniflare";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vite-plus/test";
 
 import { bundleWorker } from "../../../../scripts/bundle-worker.ts";
 import type { TestBase } from "../../test/harness.ts";
@@ -1128,11 +1138,18 @@ describe("MCP clients", () => {
     }
   });
 
-  it("answers over stdio exactly as over remote MCP, at the floor and with the sensitive scope", async () => {
-    const { auth, access, base } = await fixtureStudent();
+  /**
+   * `brainiac mcp serve` with `flags`, run by the pinned Bun with a CLI token for `base`, and a way to call it. It
+   * forwards to this machine's /mcp, answering as the deployed origin would. Each test boots one: two Bun boots in
+   * one test outgrew its 5 s on a loaded runner (#175).
+   */
+  const stdioBridge = async (
+    auth: ReturnType<typeof setup>["auth"],
+    base: DurableObjectStub<TestBase>,
+    ...flags: string[]
+  ) => {
     const cli = await base.addConnection({ kind: "cli" });
     const cliToken = await base.mintToken(cli.id);
-    // This machine's /mcp, for `brainiac mcp serve` to forward to, answering as the deployed origin would.
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -1152,102 +1169,104 @@ describe("MCP clients", () => {
     const { port } = server.address() as AddressInfo;
     // Its own config folder, so the test never touches this machine's.
     const home = mkdtempSync(join(tmpdir(), "brainiac-mcp-"));
-    const children: ReturnType<typeof spawn>[] = [];
-    /** `brainiac mcp serve` with `flags`, and a way to call it. */
-    const bridge = (...flags: string[]) => {
-      const child = spawn(
-        createRequire(import.meta.url).resolve("bun/bin/bun.exe"),
-        [
-          join(import.meta.dirname, "../../../cli/src/main.ts"),
-          "mcp",
-          "serve",
-          "--server",
-          `http://127.0.0.1:${port}`,
-          ...flags,
-        ],
-        {
-          env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, BRAINIAC_TOKEN: cliToken },
-          stdio: ["pipe", "pipe", "inherit"],
-        },
-      );
-      children.push(child);
-      const waiting = new Map<number, (message: { result?: unknown }) => void>();
-      createInterface({ input: child.stdout! }).on("line", (line) => {
-        const message = JSON.parse(line);
-        waiting.get(message.id)?.(message);
-      });
-      let next = 0;
-      return (method: string, params: unknown) =>
-        new Promise<{ result?: unknown }>((resolve) => {
-          const id = ++next;
-          waiting.set(id, resolve);
-          child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-        });
-    };
-    // Both start now, so the background one boots while the other is busy.
-    const stdio = bridge();
-    const background = bridge("--background");
-    const remote = async (method: string, params: unknown) =>
-      (await rpc(auth, access, method, params)).message;
-    try {
-      const init = {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "test", version: "1" },
-      };
-      expect((await stdio("initialize", init)).result).toEqual((await remote("initialize", init)).result);
-      expect((await stdio("tools/list", {})).result).toEqual((await remote("tools/list", {})).result);
-      expect((await stdio("prompts/list", {})).result).toEqual((await remote("prompts/list", {})).result);
-      const calls = [
-        ["describe", {}],
-        ["query", { sort: ["title"], fields: ["title", "kind"] }],
-        ["query", { type: "TestScore", fields: ["overall"] }],
-        [
-          "get",
-          { paths: ["facts/tests/ielts-2026-11.md", "facts/roles/acme-intern-2025.md"], history: true },
-        ],
-        ["query", { type: "Role", bogus: true }],
-        ["search", { text: "IELTS" }],
-        // The test report form, which proves the November score.
-        ["related", { id: "01M6AV2ZR0XCK1MFKF8AQ91WD2", depth: 2 }],
-        ["ask", { mode: "context", question: "What was my IELTS writing score?" }],
-        [
-          "ask",
-          {
-            mode: "verify",
-            text: "Overall 8.0, until 2028-11-02.",
-            claims: [{ note: "facts/tests/ielts-2026-11.md", field: "overall", value: 8 }],
-          },
-        ],
-      ] as const;
-      const same = async () => {
-        for (const [name, args] of calls) {
-          const params = { name, arguments: args };
-          expect((await stdio("tools/call", params)).result, name).toEqual(
-            (await remote("tools/call", params)).result,
-          );
-        }
-      };
-      await same();
-      // Granted the sensitive scope, both see the test scores, still alike.
-      for (const id of [cli.id, (await clientConnection(base)).id])
-        await base.setGrants(id, { level: "propose", sensitive: true, holdDays: 3 });
-      const scores = await stdio("tools/call", { name: "query", arguments: { type: "TestScore" } });
-      expect(JSON.stringify(scores.result)).toContain("IELTS Academic, November 2026");
-      await same();
-      // In the background (the daemon's filer) the same token sees normal notes only, and only proposes.
-      await background("initialize", init);
-      const hidden = await background("tools/call", { name: "query", arguments: { type: "TestScore" } });
-      expect(JSON.stringify(hidden.result)).not.toContain("IELTS");
-      const described = await background("tools/call", { name: "describe", arguments: {} });
-      expect(described.result).toMatchObject({ content: [{ type: "text" }] });
-      const [text] = (described.result as { content: { text: string }[] }).content;
-      expect(JSON.parse(text?.text ?? "{}").you).toEqual({ level: "propose", sensitive: false, holdDays: 3 });
-    } finally {
-      for (const child of children) child.kill();
+    const child = spawn(
+      createRequire(import.meta.url).resolve("bun/bin/bun.exe"),
+      [
+        join(import.meta.dirname, "../../../cli/src/main.ts"),
+        "mcp",
+        "serve",
+        "--server",
+        `http://127.0.0.1:${port}`,
+        ...flags,
+      ],
+      {
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, BRAINIAC_TOKEN: cliToken },
+        stdio: ["pipe", "pipe", "inherit"],
+      },
+    );
+    onTestFinished(() => {
+      child.kill();
       server.close();
       rmSync(home, { recursive: true, force: true });
-    }
+    });
+    const waiting = new Map<number, (message: { result?: unknown }) => void>();
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      const message = JSON.parse(line);
+      waiting.get(message.id)?.(message);
+    });
+    let next = 0;
+    const send = (method: string, params: unknown) =>
+      new Promise<{ result?: unknown }>((resolve) => {
+        const id = ++next;
+        waiting.set(id, resolve);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      });
+    return { cli, send };
+  };
+  const hello = {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1" },
+  };
+
+  it("answers over stdio exactly as over remote MCP, at the floor and with the sensitive scope", async () => {
+    const { auth, access, base } = await fixtureStudent();
+    const { cli, send: stdio } = await stdioBridge(auth, base);
+    const remote = async (method: string, params: unknown) =>
+      (await rpc(auth, access, method, params)).message;
+    /**
+     * Sends every request both ways at once and expects the same answers. The bridge still answers its lines one
+     * at a time, in order, but nothing waits between them, and the remote answers come while Bun boots.
+     */
+    const same = async (requests: readonly (readonly [method: string, params: unknown])[]) => {
+      const answers = await Promise.all(
+        requests.map(([method, params]) => Promise.all([stdio(method, params), remote(method, params)])),
+      );
+      for (const [i, [over, direct]] of answers.entries())
+        expect(over.result, JSON.stringify(requests[i])).toEqual(direct.result);
+    };
+    const calls = [
+      ["describe", {}],
+      ["query", { sort: ["title"], fields: ["title", "kind"] }],
+      ["query", { type: "TestScore", fields: ["overall"] }],
+      ["get", { paths: ["facts/tests/ielts-2026-11.md", "facts/roles/acme-intern-2025.md"], history: true }],
+      ["query", { type: "Role", bogus: true }],
+      ["search", { text: "IELTS" }],
+      // The test report form, which proves the November score.
+      ["related", { id: "01M6AV2ZR0XCK1MFKF8AQ91WD2", depth: 2 }],
+      ["ask", { mode: "context", question: "What was my IELTS writing score?" }],
+      [
+        "ask",
+        {
+          mode: "verify",
+          text: "Overall 8.0, until 2028-11-02.",
+          claims: [{ note: "facts/tests/ielts-2026-11.md", field: "overall", value: 8 }],
+        },
+      ],
+    ].map(([name, args]) => ["tools/call", { name, arguments: args }] as const);
+    await same([["initialize", hello], ["tools/list", {}], ["prompts/list", {}], ...calls]);
+    // Granted the sensitive scope, both see the test scores, still alike.
+    for (const id of [cli.id, (await clientConnection(base)).id])
+      await base.setGrants(id, { level: "propose", sensitive: true, holdDays: 3 });
+    const scores = await stdio("tools/call", { name: "query", arguments: { type: "TestScore" } });
+    expect(JSON.stringify(scores.result)).toContain("IELTS Academic, November 2026");
+    await same(calls);
+  });
+
+  it("answers a --background bridge (the daemon's filer) with normal notes only, and only proposals", async () => {
+    const { auth, base } = await fixtureStudent();
+    const { cli, send: background } = await stdioBridge(auth, base, "--background");
+    // Even with the sensitive scope granted, nobody is there to see them.
+    await base.setGrants(cli.id, { level: "write", sensitive: true, holdDays: 3 });
+    const [, hidden, described] = await Promise.all([
+      background("initialize", hello),
+      background("tools/call", { name: "query", arguments: { type: "TestScore" } }),
+      background("tools/call", { name: "describe", arguments: {} }),
+    ]);
+    expect(JSON.stringify(hidden.result)).not.toContain("IELTS");
+    expect(described.result).toMatchObject({ content: [{ type: "text" }] });
+    const [text] = (described.result as { content: { text: string }[] }).content;
+    expect(JSON.parse(text?.text ?? "{}").you).toEqual({ level: "propose", sensitive: false, holdDays: 3 });
   });
 
   it("never lets an outside service's error text reach the agent", async () => {
