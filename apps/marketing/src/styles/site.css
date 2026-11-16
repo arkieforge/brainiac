@@ -1,4 +1,4 @@
-/* The public site. Tokens follow DESIGN.md: true black, Workbench grays, one blue accent. */
+/* The public site: a warm cream page in ink, one terracotta accent, Claude's terminal the one dark surface. */
 /* Sized to Instrument Serif, so the accent word doesn't shift when the font arrives. */
 @font-face {
   font-family: "Serif Fallback";
@@ -7,26 +7,28 @@
 }
 
 :root {
-  --bg: #000;
-  --raised: #0a0a0b;
-  --input: #111113;
-  --hover: #18181b;
-  --line: #1f1f23;
-  --line-2: #2a2a30;
-  --fg: #fafafa;
-  --muted: #a1a1aa;
-  --faint: #8b8b94;
-  --accent: #6ea8ff;
-  --amber: #ffb000;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --danger: #f87171;
+  --bg: #f5f1e8;
+  --raised: #fbf9f3;
+  --input: #efe9dc;
+  --hover: #ebe4d5;
+  --line: #e0d8c7;
+  --line-2: #d2c8b3;
+  --fg: #1c1a16;
+  --muted: #57514a;
+  --faint: #6b6458;
+  --accent: #b4441c;
+  --amber: #c9761e;
+  --ok: #1f7a43;
+  --warn: #9a5b0b;
+  --danger: #b42318;
+  --ink: #16140f;
+  --paper: #fbf9f3;
   --sans: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", system-ui, sans-serif;
   --serif: "Instrument Serif", "Serif Fallback", Georgia, serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   --ease: cubic-bezier(0.23, 1, 0.32, 1);
   --page: 1180px;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -109,18 +111,18 @@ a {
 }
 .btn:hover {
   background: var(--hover);
-  border-color: #3a3a42;
+  border-color: #bfb49c;
 }
 .btn:active {
   transform: scale(0.97);
 }
 .btn.primary {
-  background: var(--fg);
-  color: #000;
-  border-color: var(--fg);
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
 }
 .btn.primary:hover {
-  background: #e4e4e7;
+  background: #2b2822;
 }
 .btn.sm {
   height: 34px;
@@ -186,7 +188,7 @@ a {
   padding: 6px 6px 6px 14px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgb(10 10 11 / 0.72);
+  background: rgb(251 249 243 / 0.78);
   backdrop-filter: blur(14px) saturate(140%);
 }
 .logo {
@@ -242,7 +244,7 @@ a {
   inset: 0 0 auto;
   height: 760px;
   pointer-events: none;
-  background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1px);
+  background-image: radial-gradient(rgb(28 26 22 / 0.13) 1px, transparent 1px);
   background-size: 18px 18px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%);
 }
@@ -330,9 +332,9 @@ a {
   border: 1px solid var(--line-2);
   border-radius: 14px;
   overflow: hidden;
-  background: #050506;
+  background: var(--paper);
   box-shadow:
-    0 40px 120px -40px rgb(0 0 0 / 0.9),
+    0 40px 120px -40px rgb(60 45 20 / 0.28),
     0 0 0 1px rgb(255 255 255 / 0.02) inset;
 }
 .titlebar {
@@ -349,7 +351,7 @@ a {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: #2a2a30;
+  background: var(--line-2);
 }
 .titlebar .t {
   margin: 0 auto;
@@ -436,7 +438,7 @@ a {
 }
 .chip.ok {
   color: var(--ok);
-  border-color: #1d3b27;
+  border-color: rgb(31 122 67 / 0.3);
   background: rgb(74 222 128 / 0.06);
 }
 .chip.warn {
@@ -446,12 +448,12 @@ a {
 }
 .chip.no {
   color: var(--danger);
-  border-color: #432121;
+  border-color: rgb(180 35 24 / 0.3);
   background: rgb(248 113 113 / 0.06);
 }
 .chip.blue {
   color: var(--accent);
-  border-color: #1d2c47;
+  border-color: rgb(180 68 28 / 0.3);
   background: rgb(110 168 255 / 0.07);
 }
 .side {
@@ -491,7 +493,7 @@ a {
 }
 .term {
   border-top: 1px solid var(--line);
-  background: #030304;
+  background: var(--ink);
   padding: 14px 18px 16px;
   font: 12.5px/1.85 var(--mono);
   color: var(--muted);
@@ -641,7 +643,7 @@ section.block {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px);
+  background-image: radial-gradient(rgb(28 26 22 / 0.08) 1px, transparent 1px);
   background-size: 16px 16px;
   mask-image: linear-gradient(to bottom, #000, transparent 70%);
 }
@@ -681,7 +683,7 @@ section.block {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #000;
+  background: var(--paper);
   font-size: 13.5px;
 }
 .file .grow {
@@ -690,7 +692,7 @@ section.block {
 .ask {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #000;
+  background: var(--paper);
   padding: 14px;
   font-size: 14px;
 }
@@ -716,12 +718,12 @@ section.block {
   border-radius: 999px;
 }
 .opts span.pick {
-  background: var(--fg);
-  color: #000;
+  background: var(--ink);
+  color: var(--paper);
   border-color: var(--fg);
 }
 .doc {
-  background: #fafaf9;
+  background: #fff;
   color: #18181b;
   border-radius: 10px;
   padding: 22px 24px;
@@ -729,7 +731,7 @@ section.block {
     13px/1.55 Georgia,
     "Times New Roman",
     serif;
-  box-shadow: 0 20px 60px -20px #000;
+  box-shadow: 0 20px 50px -24px rgb(60 45 20 / 0.35);
 }
 .doc h5 {
   margin: 0;
@@ -888,14 +890,14 @@ section.block {
   text-decoration: none;
 }
 .sheet .key {
+  background: var(--ink);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   height: 36px;
   border-radius: 9px;
-  background: var(--fg);
-  color: #000;
+  color: var(--paper);
   font-weight: 500;
   font-size: 13.5px;
 }
@@ -926,7 +928,7 @@ section.block {
   height: 9px;
   border-radius: 50%;
   border: 1px solid var(--muted);
-  background: #000;
+  background: var(--paper);
 }
 .timeline .tick.hot i {
   background: var(--amber);
@@ -953,7 +955,7 @@ section.block {
   height: 32px;
   border-radius: 8px;
   border: 1px solid var(--line-2);
-  background: #000;
+  background: var(--paper);
   display: flex;
   align-items: center;
   padding: 0 10px;
@@ -1026,7 +1028,7 @@ section.block {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgb(255 255 255 / 0.08) 1px, transparent 1px);
+  background-image: radial-gradient(rgb(28 26 22 / 0.12) 1px, transparent 1px);
   background-size: 18px 18px;
   mask-image: radial-gradient(ellipse 50% 60% at 50% 55%, #000 20%, transparent 75%);
 }
@@ -1163,4 +1165,14 @@ footer {
   .works {
     gap: 18px;
   }
+}
+
+/* Claude's terminal stays ink on the cream page: the one dark surface, so the calls read as a console. */
+.term {
+  --muted: #bdb5a4;
+  --faint: #918a7b;
+  --fg: #f5f1e8;
+  --accent: #f2a27a;
+  --ok: #86d99a;
+  border-top-color: var(--ink);
 }
