@@ -70,5 +70,6 @@ it("names only normal questions, and its subject says only how many", () => {
   expect(email.text).toContain("2 private questions, shown only when you sign in.");
   expect(email.text).toContain("1 question from background filing, shown only when you sign in.");
   expect(email.text).toContain(`${ORIGIN}/questions`);
+  expect(email.text).toContain(`Turn it off at ${ORIGIN}/emails.`);
   expect(email.text).not.toContain("more wait");
 });

@@ -66,6 +66,9 @@ import {
   connectionOf,
   decide,
   digest,
+  emails,
+  setEmail,
+  type Email,
   pending,
   proposalsRev,
   disconnect,
@@ -77,11 +80,9 @@ import {
   oauthConnection,
   PERSON,
   principalOf,
-  questionEmails,
   releaseDue,
   restrict,
   search,
-  setQuestionEmails,
   withdraw,
   lastCounter,
   openReview,
@@ -364,10 +365,13 @@ export class Base extends DurableObject<Env> {
     return digest(this.sql, Date.now());
   }
 
-  /** Whether the weekly email of questions goes out; only the site's session route changes it. */
-  questionEmails(on?: boolean): boolean {
-    if (on !== undefined) setQuestionEmails(this.sql, on);
-    return questionEmails(this.sql);
+  /**
+   * Which emails go out (packages/base/src/emails.ts), the weekly questions and expiry reminders, after turning
+   * `email` on or off if given. Each has its own switch, and only the site's session route changes one.
+   */
+  emails(email?: Email, on?: boolean): Record<Email, boolean> {
+    if (email !== undefined && on !== undefined) setEmail(this.sql, email, on);
+    return emails(this.sql);
   }
 
   /**

@@ -121,7 +121,8 @@ export {
   type Decided,
   type Pending,
 } from "./proposals.ts";
-export { digest, questionEmails, setQuestionEmails, type Digest } from "./questions.ts";
+export { digest, type Digest } from "./questions.ts";
+export { emailOn, emails, isEmail, setEmail, type Email } from "./emails.ts";
 export { PERSON, project, type Principal } from "./project.ts";
 export { migrate, SCHEMA_VERSION, schemaVersion } from "./schema.ts";
 export {

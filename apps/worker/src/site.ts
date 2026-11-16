@@ -3,7 +3,7 @@
 // goes out. Each one finds the
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
-import type { FileToken } from "@brainiac/base";
+import { isEmail, type FileToken } from "@brainiac/base";
 import type { PlanItem } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
@@ -85,12 +85,14 @@ async function serveApi(
 
   if (pathname === "/api/session" && !post) return json({ user: person.userId });
   if (pathname === "/api/schema" && !post) return json({ manifest: await record.manifest() });
-  // The weekly email of questions: on unless the person turns it off.
-  if (pathname === "/api/questions/email") {
-    if (!post) return json({ on: await record.questionEmails() });
-    const on = typeof body === "object" && body !== null && "on" in body ? body.on : undefined;
-    if (typeof on !== "boolean") return failed(400, "Say whether the weekly email is on.");
-    return json({ on: await record.questionEmails(on) });
+  // What Brainiac emails the person, each on unless they turn it off, on its own.
+  if (pathname === "/api/emails") {
+    if (!post) return json(await record.emails());
+    const ask =
+      typeof body === "object" && body !== null && "email" in body && "on" in body ? body : undefined;
+    if (!isEmail(ask?.email) || typeof ask.on !== "boolean")
+      return failed(400, "Say which email, and whether it's on.");
+    return json(await record.emails(ask.email, ask.on));
   }
   // Drift checks of the person's own profiles: paid, so only the signed-in person starts one.
   if (pathname === "/api/profiles/check" && post) return json(await record.checkProfiles());

@@ -1,9 +1,10 @@
 import { askNow, show, type Question, type YamlValue } from "@brainiac/core";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { answer, questionsOf } from "../questions.ts";
-import { api, saveOnline, useRecord } from "../record.ts";
+import { saveOnline, useRecord } from "../record.ts";
+import { useEmails } from "./Emails.tsx";
 
 /** What the person typed, as the value the answer stores, or what's wrong with it. */
 function valueOf(
@@ -119,30 +120,14 @@ function Card({ question }: { readonly question: Question }) {
   );
 }
 
-/** Whether the weekly email of questions goes out, from the record; offline it shows nothing. */
+/** Whether the weekly email of questions goes out, from the record; its switch is on /emails. Offline, nothing. */
 function WeeklyEmail() {
-  const [on, setOn] = useState<boolean>();
-  useEffect(() => {
-    void api("/api/questions/email")
-      .then((res) => (res.ok ? res.json() : undefined))
-      .then((body) => typeof body?.on === "boolean" && setOn(body.on))
-      .catch(() => {});
-  }, []);
+  const on = useEmails()[0]?.questions;
   if (on === undefined) return null;
-  const toggle = async (next: boolean) => {
-    const res = await api("/api/questions/email", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ on: next }),
-    }).catch(() => undefined);
-    if (res?.ok) setOn((await res.json()).on);
-  };
   return (
-    <label className="small muted weekly">
-      <input type="checkbox" checked={on} onChange={(e) => void toggle(e.currentTarget.checked)} /> Email me a
-      link to these once a week (sensitive and background filing questions are only counted, never written
-      out)
-    </label>
+    <p className="small muted weekly">
+      Weekly email: {on ? "on" : "off"}. <Link to="/emails">Change your emails</Link>
+    </p>
   );
 }
 

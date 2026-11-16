@@ -19,7 +19,7 @@ import {
   putNote,
   recordApproval,
   releaseDue,
-  setQuestionEmails,
+  setEmail,
   SCAN_LIMIT,
   getConnection,
   INBOX_LEASE_MS,
@@ -580,9 +580,9 @@ export const toolCases: Record<string, Case> = {
       more: 0,
     });
     ok(!JSON.stringify(email).includes("8.0") && !JSON.stringify(email).includes("father"));
-    setQuestionEmails(sql, false);
+    setEmail(sql, "questions", false);
     equal(digest(sql, T0), undefined);
-    setQuestionEmails(sql, true);
+    setEmail(sql, "questions", true);
     ok(digest(sql, T0));
   },
 

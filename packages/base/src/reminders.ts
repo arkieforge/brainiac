@@ -2,9 +2,12 @@
 // it expires, and on the day. The record's alarm wakes at the start of each of those days (UTC); every item that
 // reached a reminder it hasn't had waits in `reminders` until one `remind` job takes them out in one email, which
 // the Worker sends to the record's owner (apps/worker/src/reminders.ts). The email names only normal notes: a
-// sensitive one (a passport, a test score) is only counted, since the contract keeps its values out of email.
+// sensitive one (a passport, a test score) is only counted, since the contract keeps its values out of email. The
+// person can turn them off (emails.ts): a reminder reached while they're off counts as had, so turning them on
+// again brings the next one, not a backlog.
 import { expiresIn, nextStageAt, remindable, stageOf, type Stage } from "@brainiac/core";
 
+import { emailOn } from "./emails.ts";
 import { DAY_MS } from "./hold.ts";
 import { finishJob } from "./jobs.ts";
 import { listNotes } from "./notes.ts";
@@ -56,15 +59,17 @@ function sendAt(sql: Sql, now: number): number | undefined {
  * should go out for what waits. A failed one goes first: the new job replaces it.
  */
 export function remindersDue(sql: Sql, now: number): boolean {
+  const sent = emailOn(sql, "reminders") ? 0 : 1;
   for (const row of expiring(sql)) {
     const stage = reached(row, now);
     if (stage !== undefined)
       sql.all(
-        `INSERT INTO reminders (noteId, expires, stage, sent) VALUES (?, ?, ?, 0)
-         ON CONFLICT (noteId) DO UPDATE SET expires = excluded.expires, stage = excluded.stage, sent = 0`,
+        `INSERT INTO reminders (noteId, expires, stage, sent) VALUES (?, ?, ?, ?)
+         ON CONFLICT (noteId) DO UPDATE SET expires = excluded.expires, stage = excluded.stage, sent = excluded.sent`,
         row.id,
         row.expires,
         stage,
+        sent,
       );
   }
   const at = sendAt(sql, now);
@@ -103,6 +108,8 @@ export interface Reminder {
 
 export function reminderWork(sql: Sql, now: number): Reminder {
   const covered = sql.all<Waiting>("SELECT noteId, expires, stage FROM reminders WHERE sent = 0");
+  // Turned off after the job was queued: it says nothing, so no email goes, and what it covered counts as had.
+  if (!emailOn(sql, "reminders")) return { lines: [], private: 0, covered };
   const notes = listNotes(sql).map((note) => ({
     id: note.id,
     path: note.path,

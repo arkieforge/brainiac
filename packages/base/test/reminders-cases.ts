@@ -5,7 +5,9 @@ import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 
 import {
   DAY_MS,
+  digest,
   dueJobs,
+  emails,
   getNote,
   installReminders,
   jobInput,
@@ -16,6 +18,7 @@ import {
   nextReminder,
   nextWake,
   reminderWork,
+  setEmail,
   type Context,
   type Sql,
 } from "../src/index.ts";
@@ -161,5 +164,34 @@ export const remindersCases: Record<string, Case> = {
     equal(again.reminder.covered.length, second.reminder.covered.length);
     equal(installReminders(sql, again.id, again.reminder.covered), "installed");
     same(reminds(sql, day("2026-11-21") + MAX_ATTEMPTS + 1), []);
+  },
+
+  "turning reminders off stops them and leaves the weekly email on, and the reverse": (sql, fixtures) => {
+    record(sql, fixtures);
+    setEmail(sql, "reminders", false);
+    same(emails(sql), { questions: true, reminders: false });
+    // Both items reach their 60-day reminder, and no email goes; the record doesn't keep waking for it either.
+    same(reminds(sql, T0), []);
+    equal(nextReminder(sql, T0 + 1), day("2026-11-20"));
+
+    // On again: the next reminder comes, not the one reached while off.
+    setEmail(sql, "reminders", true);
+    same(reminds(sql, T0 + 1), []);
+    const thirty = send(sql, day("2026-11-20"));
+    same(thirty.reminder.lines, ["APS certificate expires 2026-12-20, in 30 days"]);
+    equal(thirty.reminder.private, 1);
+    // Turned off after the job was queued: it says nothing, so no email goes, and what it covered counts as had.
+    setEmail(sql, "reminders", false);
+    same(reminderWork(sql, day("2026-11-20")), { lines: [], private: 0, covered: thirty.reminder.covered });
+    equal(installReminders(sql, thirty.id, thirty.reminder.covered), "installed");
+    same(reminds(sql, day("2026-11-20") + 1), []);
+
+    // The reverse: the weekly email off leaves reminders on.
+    setEmail(sql, "reminders", true);
+    setEmail(sql, "questions", false);
+    same(emails(sql), { questions: false, reminders: true });
+    equal(digest(sql, day("2026-12-13")), undefined);
+    const seven = send(sql, day("2026-12-13"));
+    same(seven.reminder.lines, ["APS certificate expires 2026-12-20, in 7 days"]);
   },
 };

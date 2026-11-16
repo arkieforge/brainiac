@@ -33,7 +33,9 @@ Each person's record lives in **its own Durable Object with its own SQLite datab
   waits in `reminders` (an item saved already inside a window gets that window's once; a changed expiry starts
   again), and one `remind` job carries all of them out in one email that names normal notes and only counts
   sensitive ones. The Worker finds the owner's verified address in Neon and sends it; a send that fails every
-  attempt waits a day. A laptop copy sends nothing: its review shows the same `expiring` flags.
+  attempt waits a day. A laptop copy sends nothing: its review shows the same `expiring` flags. The person can turn
+  reminders off on `/emails` without touching the weekly questions email; a reminder reached while they're off
+  counts as had, so turning them back on brings the next one, not a backlog.
 - **No retrieval holes, no stale text**: until new chunks replace them, old chunks are used only to find candidate notes; what's returned (snippets, context) always comes from the note's current revision. A stale snippet is never shown.
 
 ## Caching and file delivery

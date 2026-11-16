@@ -741,6 +741,27 @@ describe("deciding proposals on the site", () => {
   });
 });
 
+describe("the person's emails, on the site", () => {
+  it("each email has its own switch, and only the person's session turns one", async () => {
+    const user = "emails";
+    const base = await record(user);
+    const emails = async () => (await siteCall(user, "/api/emails")).json();
+    expect(await emails()).toEqual({ questions: true, reminders: true });
+    const off = await siteCall(user, "/api/emails", { email: "reminders", on: false });
+    expect(await off.json()).toEqual({ questions: true, reminders: false });
+    expect(await emails()).toEqual({ questions: true, reminders: false });
+    await siteCall(user, "/api/emails", { email: "questions", on: false });
+    await siteCall(user, "/api/emails", { email: "reminders", on: true });
+    expect(await emails()).toEqual({ questions: false, reminders: true });
+    for (const body of [{ email: "marketing", on: false }, { email: "reminders" }, { on: false }])
+      expect((await siteCall(user, "/api/emails", body)).status).toBe(400);
+    // An agent's or laptop's token is not the person's session.
+    const { token } = await cliToken(base);
+    const agent = await mf.dispatchFetch(`${ORIGIN}/api/emails`, { headers: bearer(token) });
+    expect(agent.status).toBe(401);
+  });
+});
+
 /** A plan waiting for the person, as `GET /api/approvals` lists it. */
 interface Waiting {
   readonly approvalId: string;
