@@ -87,5 +87,13 @@ const worker = yield* Cloudflare.Worker("worker", {
 // all of it under RemovalPolicy.protect() in prod
 ```
 
+The Worker's top-level code (everything its entry imports statically, the `Base` DO included) must finish in
+1 s of CPU, or Cloudflare refuses the deploy with `ScriptStartupError`. Cloudflare's own `startup_time_ms` for a
+deploy swings by up to 2x, so the median must stay well under half of that. Libraries only some requests use
+(Better Auth, the MCP SDK, SimpleWebAuthn) load with `import()` on first use. That cut the median from about
+405 ms to 311 ms (#162). Most of what's left is ArkType building its scope on import (about 180 ms by itself),
+which the `Base` DO needs at load. A chunk that is uploaded but not imported at startup costs nothing. Measure a
+bundle with `wrangler check startup`, or read a deployed version's `startup_time_ms` from the Workers versions API.
+
 In prod a plan that would replace or delete any resource fails before it applies, and every CI deploy shows
 its plan. [infra/README.md](../../infra/README.md) has the stages, secrets and guards.

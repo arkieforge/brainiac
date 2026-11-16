@@ -3,7 +3,7 @@
 import type { AuditCall, Connection } from "@brainiac/base";
 
 import type { ConnectedApp } from "./connected-apps.ts";
-import { canApprove, type ApprovingPasskey } from "./recovery.ts";
+import { canApprove, type ApprovingPasskey } from "./approving.ts";
 
 /** What the account page asks for next: a first passkey is required, a second strongly suggested. */
 export const nextPasskeyStep = (passkeys: readonly unknown[]) =>

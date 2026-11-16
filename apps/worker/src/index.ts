@@ -1,13 +1,8 @@
-import {
-  oauthProviderAuthServerMetadata,
-  oauthProviderOpenIdConfigMetadata,
-} from "@better-auth/oauth-provider";
 import { vaultKeyId } from "@brainiac/base";
 import { Client, Pool } from "pg";
 
-import { type AuthConfig, createAuth } from "./auth/config.ts";
+import type { AuthConfig, createAuth } from "./auth/config.ts";
 import type { Mailer } from "./auth/email.ts";
-import { consent } from "./auth/consent.ts";
 import {
   accountPage,
   landing,
@@ -16,10 +11,9 @@ import {
   type GithubSection,
   type OrcidSection,
 } from "./auth/pages.ts";
-import { vouchedUntil, type ApprovingPasskey } from "./auth/recovery.ts";
+import { vouchedUntil, type ApprovingPasskey } from "./auth/approving.ts";
 import type { JobMessage } from "./base.ts";
 import type { Env } from "./env.ts";
-import { serveDev } from "./dev.ts";
 import { DIGEST_CRON, sendDigests } from "./digest.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
 import { remind } from "./reminders.ts";
@@ -36,7 +30,7 @@ import {
   type Deps,
 } from "./connectors/github.ts";
 import { callback as orcidCallback, linkUrl as orcidLinkUrl, orcidApp } from "./connectors/orcid.ts";
-import { serveMcp, type Records } from "./mcp/handler.ts";
+import type { Records } from "./mcp/handler.ts";
 import { baseOf } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
 import { rewrapRecords, VAULT_SWEEP_CRON, waitingToRewrap } from "./vault-rotation.ts";
@@ -146,7 +140,10 @@ const withAuth = <T>(
   ctx: ExecutionContext,
   use: (auth: ReturnType<typeof createAuth>, pool: Pool) => Promise<T>,
 ) =>
-  withAuthConfig(request, env, ctx, (config, keepOpen, pool) => {
+  withAuthConfig(request, env, ctx, async (config, keepOpen, pool) => {
+    // Better Auth, the MCP SDK and their plugins load on the first request that needs them, never at startup:
+    // Cloudflare refuses a deploy whose top-level code takes over a second of CPU (docs/internals/architecture.md).
+    const { createAuth } = await import("./auth/config.ts");
     const auth = createAuth(config);
     // Better Auth starts its setup (seeding the /mcp resource) as soon as it's made; a quick answer, like /mcp's
     // 401, mustn't end the pool under it. After an isolate's first seed this is no Neon read (config.ts).
@@ -374,22 +371,32 @@ export default {
       // Dev sign-in (dev.ts) exists only where the token is bound, and never on prod even if it were.
       const token = env.DEV_SIGN_IN_TOKEN;
       if (!token || env.STAGE === "prod") return new Response("Not found", { status: 404 });
+      const { serveDev } = await import("./dev.ts");
       return withAuthConfig(request, env, ctx, (config) => serveDev(request, config, token));
     }
-    if (AUTH_SERVER_METADATA.has(pathname))
+    if (AUTH_SERVER_METADATA.has(pathname)) {
+      const { oauthProviderAuthServerMetadata } = await import("@better-auth/oauth-provider");
       return withAuth(request, env, ctx, (auth) => oauthProviderAuthServerMetadata(auth)(request));
-    if (OPENID_METADATA.has(pathname))
+    }
+    if (OPENID_METADATA.has(pathname)) {
+      const { oauthProviderOpenIdConfigMetadata } = await import("@better-auth/oauth-provider");
       return withAuth(request, env, ctx, (auth) => oauthProviderOpenIdConfigMetadata(auth)(request));
+    }
     // The protected-resource metadata (RFC 9728) for /mcp, which the mcp() plugin serves.
     if (pathname.startsWith("/api/auth/") || pathname.startsWith("/.well-known/oauth-protected-resource"))
       return withAuth(request, env, ctx, (auth) => auth.handler(request));
-    if (pathname === "/mcp")
+    if (pathname === "/mcp") {
+      const { serveMcp } = await import("./mcp/handler.ts");
       return withAuth(request, env, ctx, (auth, pool) =>
         serveMcp(auth, request, records(env, pool), {
           devTokens: Boolean(env.DEV_SIGN_IN_TOKEN) && env.STAGE !== "prod",
         }),
       );
-    if (pathname === "/consent") return withAuth(request, env, ctx, (auth) => consent(request, auth));
+    }
+    if (pathname === "/consent") {
+      const { consent } = await import("./auth/consent.ts");
+      return withAuth(request, env, ctx, (auth) => consent(request, auth));
+    }
     if (pathname.startsWith("/connectors/github/")) return routeGithub(request, env, ctx, url);
     if (pathname.startsWith("/connectors/orcid/")) return routeOrcid(request, env, ctx, url);
     if (pathname === "/account") {

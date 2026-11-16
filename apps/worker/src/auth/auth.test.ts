@@ -19,7 +19,7 @@ import { serveMcp, type Records } from "../mcp/handler.ts";
 import { createAuth } from "./config.ts";
 import { consent } from "./consent.ts";
 import { nextPasskeyStep } from "./pages.ts";
-import { type ApprovingPasskey, canApprove, RECOVERY_WAIT_MS, SIGN_UP_MS, VOUCH_MS } from "./recovery.ts";
+import { type ApprovingPasskey, canApprove, RECOVERY_WAIT_MS, SIGN_UP_MS, VOUCH_MS } from "./approving.ts";
 import { createAuthenticator } from "./test-authenticator.ts";
 
 const ORIGIN = "https://brainiac.test";
