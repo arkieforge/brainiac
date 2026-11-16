@@ -246,7 +246,7 @@ export default Alchemy.Stack(
       });
       // The public site (apps/marketing): static pages on an assets-only Worker, linking to the app's origin. It has
       // its workers.dev URL until the domain decision (#47) gives it one of its own.
-      const marketing = yield* Command.Build("marketing", {
+      const marketing = yield* Command.Build("marketing-pages", {
         command: "pnpm run build",
         cwd: "apps/marketing",
         outdir: "dist",
