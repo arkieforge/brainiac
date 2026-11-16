@@ -69,7 +69,7 @@ brainiac/
 │   ├── web/                 the site: TanStack Start in SPA mode, built to static files
 │   ├── marketing/           the public Astro site
 │   ├── cli/                 brainiac CLI, daemon, stdio MCP, Claude Code hook (bun build --compile)
-│   └── extension/           browser extension: fill + save link
+│   └── extension/           browser extension (Chrome MV3): fills a form an agent asked for; save link later
 ├── evals/                   model evals, T3 Code's layout
 └── fixtures/                the fictional student's record + golden questions
 ```

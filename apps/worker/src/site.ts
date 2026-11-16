@@ -4,7 +4,7 @@
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import { isEmail, type FileToken } from "@brainiac/base";
-import type { PlanItem } from "@brainiac/core";
+import { EXTENSION_ORIGIN, type PlanItem } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 import type { Approver } from "./approvals.ts";
@@ -43,11 +43,18 @@ const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
 const failed = (status: number, error: string) => json({ error }, status);
 
+/** The person pressing Fill or Dismiss on a fill an agent asked for, in the browser extension or on the site. */
+const FILL = /^\/api\/fills\/([0-9A-HJKMNP-TV-Z]{26})(\/dismiss)?$/;
+
 /**
  * A browser sends the session cookie with any request to this site, including one a page on the usercontent
- * origin makes: only this origin's own pages may change anything.
+ * origin makes: only this origin's own pages may change anything, and the browser extension may press Fill or
+ * Dismiss. Its origin gets no other route, so saving a secret or approving a plan stays on the site.
  */
-const sameOrigin = (request: Request) => request.headers.get("origin") === new URL(request.url).origin;
+const trusted = (request: Request, pathname: string) => {
+  const origin = request.headers.get("origin");
+  return origin === new URL(request.url).origin || (origin === EXTENSION_ORIGIN && FILL.test(pathname));
+};
 
 /**
  * The routes for files and the site's data, or `undefined` for a request that isn't one. The usercontent origin
@@ -72,7 +79,7 @@ async function serveApi(
   pathname: string,
 ): Promise<Response> {
   const post = request.method === "POST";
-  if (post ? !sameOrigin(request) : request.method !== "GET") return failed(403, "Forbidden");
+  if (post ? !trusted(request, pathname) : request.method !== "GET") return failed(403, "Forbidden");
   const file = /^\/api\/files\/([^/]+)\/(token|kind|share)$/.exec(pathname);
   const token = post && file?.[2] === "token";
   // Every POST but an upload is JSON.
@@ -313,7 +320,7 @@ async function serveSecrets(
     const fills = await record.fills(searchParams.get("url") ?? "", PERSON);
     return "status" in fills ? refusal(fills) : json({ fills });
   }
-  const fill = /^\/api\/fills\/([0-9A-HJKMNP-TV-Z]{26})(\/dismiss)?$/.exec(pathname);
+  const fill = FILL.exec(pathname);
   const id = fill?.[1];
   if (!post || id === undefined) return failed(404, "Not found");
   if (fill?.[2]) {

@@ -20,6 +20,8 @@
     "apps/cli": { "entry": ["test/bun.ts"] },
     // vite is there for its `vite/client` types (tsconfig "types"), which the PDF viewer's `?url` imports need.
     "packages/render": { "ignoreDependencies": ["vite"] },
+    // Chrome's types are loaded through tsconfig "types".
+    "apps/extension": { "ignoreDependencies": ["@types/chrome"] },
     // TanStack Start loads its routes by file name.
     "apps/web": { "entry": ["src/routes/**/*.tsx"] },
     // workers-types is loaded through tsconfig "types"; tests start the Worker through scripts/ocr-worker.ts.

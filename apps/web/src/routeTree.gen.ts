@@ -11,9 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as EmailsRouteImport } from './routes/emails'
+import { Route as FillRouteImport } from './routes/fill'
 import { Route as ProposalsRouteImport } from './routes/proposals'
 import { Route as QuestionsRouteImport } from './routes/questions'
 import { Route as ReviewRouteImport } from './routes/review'
+import { Route as SecretsRouteImport } from './routes/secrets'
 import { Route as ApprovalsIndexRouteImport } from './routes/approvals.index'
 import { Route as ApprovalsApprovalIdRouteImport } from './routes/approvals.$approvalId'
 import { Route as FilesFileIdRouteImport } from './routes/files.$fileId'
@@ -29,6 +31,11 @@ const EmailsRoute = EmailsRouteImport.update({
   path: '/emails',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillRoute = FillRouteImport.update({
+  id: '/fill',
+  path: '/fill',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProposalsRoute = ProposalsRouteImport.update({
   id: '/proposals',
   path: '/proposals',
@@ -42,6 +49,11 @@ const QuestionsRoute = QuestionsRouteImport.update({
 const ReviewRoute = ReviewRouteImport.update({
   id: '/review',
   path: '/review',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SecretsRoute = SecretsRouteImport.update({
+  id: '/secrets',
+  path: '/secrets',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApprovalsIndexRoute = ApprovalsIndexRouteImport.update({
@@ -68,9 +80,11 @@ const NNoteIdRoute = NNoteIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/emails': typeof EmailsRoute
+  '/fill': typeof FillRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/secrets': typeof SecretsRoute
   '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
@@ -79,9 +93,11 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/emails': typeof EmailsRoute
+  '/fill': typeof FillRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/secrets': typeof SecretsRoute
   '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
@@ -91,9 +107,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/emails': typeof EmailsRoute
+  '/fill': typeof FillRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/secrets': typeof SecretsRoute
   '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
@@ -104,9 +122,11 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/emails'
+    | '/fill'
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/secrets'
     | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
@@ -115,9 +135,11 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/emails'
+    | '/fill'
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/secrets'
     | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
@@ -126,9 +148,11 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/emails'
+    | '/fill'
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/secrets'
     | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
@@ -138,9 +162,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   EmailsRoute: typeof EmailsRoute
+  FillRoute: typeof FillRoute
   ProposalsRoute: typeof ProposalsRoute
   QuestionsRoute: typeof QuestionsRoute
   ReviewRoute: typeof ReviewRoute
+  SecretsRoute: typeof SecretsRoute
   ApprovalsApprovalIdRoute: typeof ApprovalsApprovalIdRoute
   FilesFileIdRoute: typeof FilesFileIdRoute
   NNoteIdRoute: typeof NNoteIdRoute
@@ -163,6 +189,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmailsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill': {
+      id: '/fill'
+      path: '/fill'
+      fullPath: '/fill'
+      preLoaderRoute: typeof FillRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/proposals': {
       id: '/proposals'
       path: '/proposals'
@@ -182,6 +215,13 @@ declare module '@tanstack/react-router' {
       path: '/review'
       fullPath: '/review'
       preLoaderRoute: typeof ReviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/secrets': {
+      id: '/secrets'
+      path: '/secrets'
+      fullPath: '/secrets'
+      preLoaderRoute: typeof SecretsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/approvals/': {
@@ -218,9 +258,11 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   EmailsRoute: EmailsRoute,
+  FillRoute: FillRoute,
   ProposalsRoute: ProposalsRoute,
   QuestionsRoute: QuestionsRoute,
   ReviewRoute: ReviewRoute,
+  SecretsRoute: SecretsRoute,
   ApprovalsApprovalIdRoute: ApprovalsApprovalIdRoute,
   FilesFileIdRoute: FilesFileIdRoute,
   NNoteIdRoute: NNoteIdRoute,

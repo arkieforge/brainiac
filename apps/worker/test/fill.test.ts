@@ -1,6 +1,7 @@
 // Form filling through the real Base DO and site routes in workerd, with a real Secrets Store vault key and real
 // WebAuthn assertions from a software passkey: an agent's fill_form answer never holds a secret's value, and the
 // value leaves only to the person's own session, on the saved domain, after their passkey for an `ask` secret.
+import { EXTENSION_ORIGIN } from "@brainiac/core";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -36,9 +37,11 @@ async function record(name: string) {
   return namespace.get(namespace.idFromName(name)) as unknown as DurableObjectStub<TestBase>;
 }
 
-/** The person's passkey and a signed-in tab of theirs; Neon's copy of the passkey rides in the fake session. */
-function person(user: string) {
-  const authenticator = createAuthenticator(SITE);
+/**
+ * The person's passkey and a signed-in tab of theirs (or their browser extension, by `origin`); Neon's copy of the
+ * passkey rides in the fake session.
+ */
+function person(user: string, origin = SITE, authenticator = createAuthenticator(SITE)) {
   const neon = {
     credentialId: authenticator.id,
     publicKey: authenticator.publicKey,
@@ -48,7 +51,7 @@ function person(user: string) {
   };
   const headers = {
     cookie: `user=${user}`,
-    origin: SITE,
+    origin,
     "content-type": "application/json",
     "x-test-passkey": JSON.stringify(neon),
   };
@@ -166,6 +169,43 @@ describe("form filling", () => {
     expect(await you.get(`/api/fills?url=${encodeURIComponent(PAGE)}`)).toMatchObject({
       fills: [{ id: fill }],
     });
+  });
+
+  it("the browser extension presses Fill and Dismiss with the person's cookie, and reaches no other route", async () => {
+    const base = await record("extension");
+    const you = person("extension");
+    const extension = person("extension", EXTENSION_ORIGIN, you.authenticator);
+    await you.post("/api/secrets", { name: "portal.tum", value: PASSWORD, domain: "campus.tum.de" });
+    const fillForm = await agentOf(base);
+    const fill = fillOf(await fillForm({ url: PAGE, fields: FIELDS }));
+    const other = fillOf(await fillForm({ url: PAGE, fields: FIELDS }));
+
+    // The ask comes back to the extension; the site's page signs it (extensions can't assert for its rpId).
+    const ask = await extension.post(`/api/fills/${fill}`, { url: PAGE });
+    expect(ask).toMatchObject({ status: 409, body: { needsApproval: true, host: "campus.tum.de" } });
+    const filled = await extension.post(`/api/fills/${fill}`, {
+      url: PAGE,
+      response: you.authenticator.authenticate({ challenge: String(ask.body["challenge"]) }),
+    });
+    expect(filled.body).toMatchObject({ fields: [{}, { field: "Password", value: PASSWORD }] });
+    expect((await extension.post(`/api/fills/${other}/dismiss`, {})).body).toEqual({ dismissed: true });
+
+    // Saving or forgetting a secret, or anything else that changes the record, stays on the site.
+    for (const [path, body] of [
+      ["/api/secrets", { name: "portal.tum", policy: "allow" }],
+      ["/api/secrets", { name: "portal.tum", forget: true }],
+      ["/api/emails", { email: "questions", on: false }],
+      ["/api/approve", { approvalId: "x" }],
+    ] as const)
+      expect((await extension.post(path, body)).status, path).toBe(403);
+    expect(await you.get("/api/secrets")).toEqual({
+      secrets: [{ name: "portal.tum", domain: "campus.tum.de", policy: "ask" }],
+    });
+    // Another extension's origin is any other page's.
+    const stranger = person("extension", "chrome-extension://abcdefghijklmnopabcdefghijklmnop");
+    const third = fillOf(await fillForm({ url: PAGE, fields: FIELDS }));
+    expect((await stranger.post(`/api/fills/${third}`, { url: PAGE })).status).toBe(403);
+    expect((await stranger.post(`/api/fills/${third}/dismiss`, {})).status).toBe(403);
   });
 
   it("making a secret fill without asking takes the passkey; then Fill needs none, and dismiss turns one down", async () => {

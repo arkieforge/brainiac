@@ -1,6 +1,7 @@
 // OKF notes kept as raw markdown: parse, patch without reformatting, validate against the manifest.
 export { parsePassport, scan, type Finding, type Passport } from "./checks.ts";
 export { pageHost, placement, savedDomain, type Placement } from "./domains.ts";
+export { EXTENSION_ORIGIN } from "./extension.ts";
 export { areaClass, CATALOG, mergeType, newTypeIssues, type TypeDraft } from "./growth.ts";
 export { isUlid, ulid } from "./ids.ts";
 export { aboutYou } from "./me.ts";

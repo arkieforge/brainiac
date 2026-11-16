@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Brainiac",
+  "version": "0.1.0",
+  "description": "Fill a form your Claude asked for with one click, from your Brainiac vault, only on the site it's saved for.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx/iceABfWDdKeOz7ci1R/XILPtT3gp1H7qmKAN/PbXVyxqUBSTpIpeYvAg4wTmlKxNNjPTaAA5891JOLpjsyVaqnl11hy9xmhZml6MThluDhAQxH94RkVJ3fgBpl5LxDCc6eU8MIYpfvlbhBRLzasf8Y9x2U2S1KKOXT/Ja4RoVhZ6wsZZRCixgHJ9PJcUiyTnCpUPRNW8FT4gR0A0/V1hW/X1gE8W/Q26B5j0iFj6DT3pIjHMWJAFU53Y+wNT4t6NKwpVSvIYFOq5oeR8fRQkUo58j46U0y83dUmPGjOvIfw+raqnH+d7rfMC5X0PWlAD66qwU1mr+Z9dI7YPtHjwIDAQAB",
+  "minimum_chrome_version": "116",
+  "action": { "default_popup": "popup.html", "default_title": "Brainiac" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*"]
+}
