@@ -1230,6 +1230,39 @@ export const toolCases: Record<string, Case> = {
     match(refused(sql, floor, "ask", { mode: "context", question: "x", text: "y" }), /verify/);
   },
 
+  "draft hands over the current facts the connection may see, the application, an outline and the person's house rules":
+    (sql, fixtures) => {
+      const n = record(sql, fixtures);
+      const rules = mutate(
+        sql,
+        {
+          op: "create",
+          path: "settings/agents.md",
+          raw: "---\nid: 01M6AM78G0STS7TB29G7A10HRS\ntype: Settings\ntitle: House rules\n---\nNever call the Acme internship a job.\n",
+          class: "normal",
+        },
+        PERSON_CTX,
+      );
+      equal(rules.status, "applied", JSON.stringify(rules));
+      const scoped = as(connection(sql, { sensitive: true }));
+      const sop = call(sql, scoped, "draft", { kind: "sop", for: PATHS.tum });
+      same((sop["for"] as { id: string }).id, n.tum);
+      // The application first, then the facts; the March IELTS is history, superseded by November's.
+      same(idsIn(sop["notes"]).toSorted(), [n.tum, n.bsc, n.role, n.ielts].toSorted());
+      equal(idsIn(sop["notes"])[0], n.tum);
+      same(
+        (sop["house_rules"] as { text: string }[]).map((r) => r.text),
+        ["Never call the Acme internship a job.\n"],
+      );
+      ok((sop["outline"] as string[]).length > 0);
+      // The floor sees no sensitive note, and so no test score at all.
+      const floor = call(sql, as(connection(sql)), "draft", { kind: "essay" });
+      same(idsIn(floor["notes"]).toSorted(), [n.bsc, n.role].toSorted());
+      equal(floor["for"], undefined);
+      match(refused(sql, scoped, "draft", { kind: "sop", for: n.role }), /No application/);
+      match(refused(sql, scoped, "draft", { kind: "cv" }), /kind/);
+    },
+
   "ask verify checks each claim against the note's current value and flags uncited numbers and dates": (
     sql,
     fixtures,

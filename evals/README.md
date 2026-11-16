@@ -8,7 +8,8 @@ results, the agent skill, or prompts. The planned evals and their release gates 
 [docs/operations/quality-bar.md](../docs/operations/quality-bar.md).
 
 The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md),
-[`photos`](photos/README.md) and [`mcp-tool-use`](mcp-tool-use/README.md); every eval follows this shape:
+[`photos`](photos/README.md), [`mcp-tool-use`](mcp-tool-use/README.md) and [`drafts`](drafts/README.md); every
+eval follows this shape:
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.
@@ -58,6 +59,7 @@ A run checks the [release gates](../docs/operations/quality-bar.md#release-gates
 | `mcp-tool-use` | Tasks completed correctly                                                      | >= 0.90 of samples |
 | `mcp-tool-use` | Exact-value canaries                                                           | no failing sample  |
 | `mcp-tool-use` | No regression on any case (with `--baseline`)                                  | none               |
+| `drafts`       | Drafts: started from `draft`, verify ok, no invented value, house rules kept   | no failing sample  |
 
 Answerability exists because over-refusal invents no number: an answer that says "not in your record" to
 every question would pass a check that only looks for wrong values. It counts a sample as answered only when its

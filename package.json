@@ -15,6 +15,7 @@
     "dev:token": "node scripts/dev-auth.ts token",
     "e2e": "node scripts/e2e.ts",
     "eval:answers": "node evals/answers/run.ts",
+    "eval:drafts": "node evals/drafts/run.ts",
     "eval:filing": "node evals/filing/run.ts",
     "eval:mcp-tool-use": "node evals/mcp-tool-use/run.ts",
     "eval:photos": "node evals/photos/run.ts",
