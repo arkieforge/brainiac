@@ -55,6 +55,7 @@ it("names only normal items, and its subject names nothing", () => {
   expect(email.text).toContain("- APS certificate expires 2026-12-20, in 30 days");
   expect(email.text).toContain("1 private item too, shown only when you sign in.");
   expect(email.text).toContain(`${ORIGIN}/`);
+  expect(email.text).toContain(`Turn these reminders off at ${ORIGIN}/emails.`);
   expect(reminderEmail("ada@example.edu", { ...REMINDER, lines: [] }, ORIGIN).text).not.toContain("- ");
 });
 

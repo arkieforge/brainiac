@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as EmailsRouteImport } from './routes/emails'
 import { Route as ProposalsRouteImport } from './routes/proposals'
 import { Route as QuestionsRouteImport } from './routes/questions'
 import { Route as ReviewRouteImport } from './routes/review'
@@ -21,6 +22,11 @@ import { Route as NNoteIdRouteImport } from './routes/n.$noteId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmailsRoute = EmailsRouteImport.update({
+  id: '/emails',
+  path: '/emails',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProposalsRoute = ProposalsRouteImport.update({
@@ -61,6 +67,7 @@ const NNoteIdRoute = NNoteIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/emails': typeof EmailsRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
@@ -71,6 +78,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/emails': typeof EmailsRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
@@ -82,6 +90,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/emails': typeof EmailsRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
@@ -94,6 +103,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/emails'
     | '/proposals'
     | '/questions'
     | '/review'
@@ -104,6 +114,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/emails'
     | '/proposals'
     | '/questions'
     | '/review'
@@ -114,6 +125,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/emails'
     | '/proposals'
     | '/questions'
     | '/review'
@@ -125,6 +137,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  EmailsRoute: typeof EmailsRoute
   ProposalsRoute: typeof ProposalsRoute
   QuestionsRoute: typeof QuestionsRoute
   ReviewRoute: typeof ReviewRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/emails': {
+      id: '/emails'
+      path: '/emails'
+      fullPath: '/emails'
+      preLoaderRoute: typeof EmailsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/proposals': {
@@ -197,6 +217,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  EmailsRoute: EmailsRoute,
   ProposalsRoute: ProposalsRoute,
   QuestionsRoute: QuestionsRoute,
   ReviewRoute: ReviewRoute,

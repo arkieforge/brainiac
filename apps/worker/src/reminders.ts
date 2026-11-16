@@ -20,6 +20,7 @@ export function reminderEmail(to: string, reminder: Reminder, origin: string) {
         ? `${plural(reminder.private, "private item", "private items")} too, shown only when you sign in.`
         : "",
       `See what relies on it, and add the renewed one: ${origin}/`,
+      `Turn these reminders off at ${origin}/emails.`,
     ]
       .filter(Boolean)
       .join("\n\n"),

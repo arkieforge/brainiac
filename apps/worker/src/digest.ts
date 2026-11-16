@@ -29,7 +29,7 @@ export function digestEmail(to: string, digest: Digest, origin: string) {
         : "",
       digest.more > 0 ? `${digest.more} more wait until these are answered.` : "",
       url,
-      `You get this once a week while questions are waiting. Turn it off at ${url}.`,
+      `You get this once a week while questions are waiting. Turn it off at ${origin}/emails.`,
     ]
       .filter(Boolean)
       .join("\n\n"),
