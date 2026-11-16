@@ -266,4 +266,23 @@ describe("Base DO", () => {
     await base.dispatch();
     expect(await base.reminded()).toEqual([`${made.noteId} 7`]);
   });
+
+  it("a record from before reminders arms its alarm for them when it migrates, without a write", async () => {
+    const base = await record("migrated");
+    const made = await base().mutate(
+      {
+        op: "create",
+        path: "documents/passport.md",
+        raw: "---\nid: 01M6AM78G0STS7TB29G7A10PPT\ntype: Document\ntitle: Passport scan\nkind: id\nexpires: 2099-01-31\n---\n",
+        class: "normal",
+      },
+      human,
+    );
+    if (made.status !== "applied") throw new Error(JSON.stringify(made));
+    await base().beforeReminders();
+    expect(await base().alarmAt()).toBeNull();
+    await expect(base().crash()).rejects.toThrow();
+    // Waking for a read migrates it and arms the alarm (here first for the history purge, before the 60-day mark).
+    expect(await base().alarmAt()).toBeGreaterThan(Date.now());
+  });
 });

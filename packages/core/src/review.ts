@@ -705,7 +705,7 @@ export function reminderItems(notes: readonly ReviewNote[], ids: ReadonlySet<str
       (note) =>
         ids.has(note.id) &&
         !superseded.has(note.id) &&
-        !listOf(note.data["proves"]).some((p) => resolve(note, p)?.data["expires"] !== undefined),
+        !listOf(note.data["proves"]).some((p) => isDate(resolve(note, p)?.data["expires"])),
     )
     .map((note) => ({ id: note.id, label: labelOf(note), usedBy: used.get(note.id) ?? [] }));
 }

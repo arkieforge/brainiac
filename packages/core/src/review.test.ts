@@ -11,6 +11,7 @@ import {
   headline,
   meetsEdges,
   overview,
+  reminderItems,
   requirementsOf,
   reviewQueue,
   verifyOps,
@@ -807,6 +808,22 @@ describe("requirements", () => {
       expect.stringMatching(/\[0\] must be done only with check: manual/),
     ]);
     expect(issues([{ need: "Letters", check: { type: "Letter", count_gte: 0 } }])[0]).toMatch(/count_gte/);
+  });
+});
+
+describe("expiry reminders", () => {
+  it("leave out a superseded note and a document whose note has its own expiry, never one with none", () => {
+    const ids = new Set([OLD_IELTS.id, IELTS.id, TRF.id]);
+    expect(reminderItems(fixture, ids, NOW).map((item) => [item.id, item.usedBy])).toEqual([
+      [IELTS.id, [TUM.id]],
+    ]);
+    // A score whose expiry was cleared reminds of nothing, so the report form it comes from reminds in its place.
+    const cleared = replace(fixture, edited(IELTS, { expires: null }));
+    expect(
+      reminderItems(cleared, ids, NOW)
+        .map((item) => item.id)
+        .toSorted(),
+    ).toEqual([IELTS.id, TRF.id].toSorted());
   });
 });
 

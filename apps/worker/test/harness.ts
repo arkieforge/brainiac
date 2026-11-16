@@ -6,6 +6,7 @@ import {
   mutate,
   oauthConnection,
   recordApproval,
+  SCHEMA_VERSION,
   search,
   unseal,
   type ChunkInput,
@@ -109,6 +110,22 @@ export class TestBase extends Base {
 
   jobs(): Job[] {
     return this.sql.all<Job>("SELECT * FROM jobs ORDER BY id");
+  }
+
+  /**
+   * Back to the version before expiry reminders, its jobs done and no alarm set, as an idle record from before
+   * that deploy.
+   */
+  async beforeReminders(): Promise<void> {
+    this.sql.all("DELETE FROM jobs");
+    this.sql.all("DROP TABLE reminders");
+    this.sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 1));
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  /** When the runtime will next fire this record's alarm, or null. */
+  alarmAt(): Promise<number | null> {
+    return this.ctx.storage.getAlarm();
   }
 
   /** The expiry reminders the alarm has sent (or marked sent), as `noteId days`. */

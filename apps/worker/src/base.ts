@@ -211,9 +211,10 @@ export class Base extends DurableObject<Env> {
     super(ctx, env);
     this.sql = doSql(ctx.storage);
     // Every wake: a record migrates the first time it is used after a deploy, and re-indexes in the background
-    // when chunking or the embedding model changed.
-    migrate(this.sql);
-    if (reindex(this.sql)) this.wake();
+    // when chunking or the embedding model changed. A migration can bring alarm work of its own (expiry
+    // reminders), so it re-arms the alarm too; the weekly email's cron wakes every record within a week.
+    const { from, to } = migrate(this.sql);
+    if (reindex(this.sql) || from < to) this.wake();
     // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
     // vault key the first time it wakes, off the request it woke for.
     if (env.VAULT_KEY_PREVIOUS)
