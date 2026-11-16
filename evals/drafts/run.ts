@@ -4,13 +4,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { listNotes, mutate, project } from "../../packages/base/src/index.ts";
+import { getNoteByPath, listNotes, mutate, project } from "../../packages/base/src/index.ts";
 import { factsOf } from "../answers/cases.ts";
 import { context, dryRun, flags, readBaseline, report, type Row } from "../shared/cli.ts";
 import { installed, isCodex, run } from "../shared/runners.ts";
 import { sampled } from "../shared/sampling.ts";
 import { connection, fixtureRecord, PERSON, serve, SKILL } from "../shared/world.ts";
-import { CASES, draftsGates, HOUSE_RULES, type Drafted } from "./cases.ts";
+import { CASES, draftsGates, HOUSE_RULES, type Case, type Drafted } from "./cases.ts";
 
 const options = flags(CASES);
 
@@ -38,25 +38,42 @@ const bin = isCodex(options.model) ? "codex" : "claude";
 if (!installed(bin)) throw new Error(`The drafts eval runs ${bin}: it must be on PATH and signed in.`);
 
 mkdirSync(options.out, { recursive: true });
-const { sql } = fixtureRecord();
-const rules = mutate(
-  sql,
-  {
-    op: "create",
-    path: "settings/agents.md",
-    raw: `---\nid: 01M6AM78G0STS7TB29G7A10HRS\ntype: Settings\nkind: agents\ntitle: House rules\n---\n${HOUSE_RULES}`,
-    class: "normal",
-  },
-  PERSON,
-);
-if (rules.status !== "applied") throw new Error(`house rules: ${JSON.stringify(rules)}`);
-// The person's own Claude: it may read everything, sensitive notes included.
-const reader = connection(sql, "read", true);
-const facts = factsOf(listNotes(sql).flatMap((note) => (project(note, reader.connection) ? [note.raw] : [])));
-const mcp = await serve(sql);
+
+/** The fixture record with the person's house rules and what `c` plants, read by the person's own Claude. */
+function world(c: Case) {
+  const { sql } = fixtureRecord();
+  const rules = mutate(
+    sql,
+    {
+      op: "create",
+      path: "settings/agents.md",
+      raw: `---\nid: 01M6AM78G0STS7TB29G7A10HRS\ntype: Settings\nkind: agents\ntitle: House rules\n---\n${HOUSE_RULES}`,
+      class: "normal",
+    },
+    PERSON,
+  );
+  if (rules.status !== "applied") throw new Error(`house rules: ${JSON.stringify(rules)}`);
+  if (c.planted) {
+    const note = getNoteByPath(sql, c.planted.path);
+    if (!note) throw new Error(`${c.id}: no note ${c.planted.path}`);
+    const put = mutate(
+      sql,
+      { op: "put", noteId: note.id, baseRev: note.rev, raw: `${note.raw}${c.planted.text}` },
+      PERSON,
+    );
+    if (put.status !== "applied") throw new Error(`${c.id}: ${JSON.stringify(put)}`);
+  }
+  // The person's own Claude: it may read everything, sensitive notes included.
+  const reader = connection(sql, "read", true);
+  const facts = factsOf(listNotes(sql).flatMap((n) => (project(n, reader.connection) ? [n.raw] : [])));
+  return { sql, reader, facts };
+}
+
 const rows: Row[] = [];
-try {
-  for (const c of options.cases)
+for (const c of options.cases) {
+  const { sql, reader, facts } = world(c);
+  const mcp = await serve(sql);
+  try {
     rows.push(
       ...(await sampled(options.samples, true, async (sample) => {
         const done = await run({
@@ -85,8 +102,9 @@ try {
         };
       })),
     );
-} finally {
-  mcp.close();
+  } finally {
+    mcp.close();
+  }
 }
 
 const passed = report(options.out, {
