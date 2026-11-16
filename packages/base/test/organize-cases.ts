@@ -5,7 +5,16 @@ import { deepStrictEqual as same, equal, match, ok } from "node:assert/strict";
 
 import { parseManifest, parseNote, type PlanItem } from "@brainiac/core";
 
-import { getNote, mutate, recordApproval, search, PERSON, type Sql, type ToolContext } from "../src/index.ts";
+import {
+  getNote,
+  mutate,
+  recordApproval,
+  search,
+  PERSON,
+  waitingPlans,
+  type Sql,
+  type ToolContext,
+} from "../src/index.ts";
 import type { Case } from "./cases.ts";
 import { as, call, connection, indexed, record, signature } from "./tool-cases.ts";
 
@@ -73,6 +82,12 @@ export const organizeCases: Record<string, Case> = {
     // Read and propose connections can't organize; a write one gets the plan to show, and nothing changes yet.
     for (const level of ["read", "propose"] as const)
       equal(call(sql, as(connection(sql, { level })), "organize", args)["status"], "forbidden", level);
+    // The site shows the plan as current: its manifest part starts from the schema's version, not a note's revision.
+    const asking = call(sql, writer, "organize", args);
+    same(
+      waitingPlans(sql, String(asking["approval_id"])).map((plan) => plan.stale),
+      [false],
+    );
     const { planned, done } = signed(sql, writer, args);
     equal(planned["status"], "needsApproval");
     const items = planned["items"] as PlanItem[];

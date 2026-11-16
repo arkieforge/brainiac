@@ -114,8 +114,33 @@ async function serveApi(
       return failed(400, `Send the ids of the notes to review, up to ${REVIEW_ITEMS}.`);
     return json({ nonce: await record.startReview(ids, PERSON) });
   }
-  // The person signed a plan a change came back `needsApproval` with: the change cites the approval once.
+  // Plans waiting for the person's passkey, whoever asked (an agent, the laptop, another tab), as the record keeps
+  // them: a page shows these, never a plan from its own URL. Sensitive values load only here, on demand.
+  if (pathname === "/api/approvals" && !post) {
+    // One plan by its id (an agent's link), or the newest waiting.
+    const id = new URL(request.url).searchParams.get("id");
+    // The RPC stub's mapped type drops a plan's `unknown` values, so the answer passes through as JSON.
+    const approvals: unknown = await record.pendingApprovals(id === null ? undefined : id.slice(0, 64));
+    return json({ approvals });
+  }
+  if (pathname === "/api/approvals/decline" && post) {
+    const approvalId = field(body, "approvalId");
+    if (typeof approvalId !== "string" || approvalId.length > 64)
+      return failed(400, "Say which approval to turn down.");
+    return (await record.declineApproval(approvalId))
+      ? json({ declined: true })
+      : failed(404, "This approval isn't waiting any more.");
+  }
+  // The person signed a plan a change came back `needsApproval` with: the change cites the approval once. A plan
+  // the record kept (`approvalId`) is signed as the record holds it; the site's own tab sends the items it got.
   if (pathname === "/api/approve" && post) {
+    const waiting = field(body, "approvalId");
+    if (typeof waiting === "string" && waiting.length <= 64) {
+      if (!signer) return failed(400, "Send your passkey's answer over the plan.");
+      if (!person.approver) return failed(403, "That passkey isn't one of yours.");
+      const approved = await record.approveWaiting(waiting, signer, person.approver);
+      return "error" in approved ? failed(403, approved.error) : json({ approvalId: approved.approvalId });
+    }
     const items = field(body, "items");
     if (!signer || !Array.isArray(items) || items.length === 0 || items.length > REVIEW_ITEMS)
       return failed(400, "Send the plan's items and your passkey's answer over its hash.");

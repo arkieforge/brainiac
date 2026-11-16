@@ -102,6 +102,8 @@ export interface ToolContext extends Context {
   };
   /** The embedding of the call's question (`questionOf`), which only the cloud makes; without it, search is keyword-only. */
   readonly vector?: readonly number[];
+  /** The site's origin (`https://<domain>`), for links the person opens, like an approval's. */
+  readonly origin?: string;
 }
 
 /** One tool call as its connection, collecting the notes its answer shows for the call's audit row. */
@@ -165,6 +167,7 @@ const pathOf = (field: string) => field.split(".").map((key) => (/^\d+$/.test(ke
 /** What a mutation's outcome tells the agent, with the next step for anything that didn't apply. */
 function outcome(
   result: MutationResult | BatchResult | UndoResult | Decided | Organized,
+  ctx: Pick<ToolContext, "origin">,
 ): Record<string, unknown> {
   switch (result.status) {
     case "applied":
@@ -192,7 +195,7 @@ function outcome(
         message: `The note is at rev ${result.rev} now. Get it again and send your change with that rev.`,
       };
     case "needsApproval":
-      return approval(result);
+      return approval(result, ctx);
     case "proposed":
       return proposed(result);
     case "forbidden":
@@ -205,12 +208,18 @@ function outcome(
   }
 }
 
-const approval = (result: NeedsApproval) => ({
+/** Where the person sees and signs a waiting plan: the site's own page, never a link that carries the plan. */
+const approvalLink = (origin: string | undefined, approvalId: string) =>
+  `${origin ?? ""}/approvals/${encodeURIComponent(approvalId)}`;
+
+const approval = (result: NeedsApproval, ctx: Pick<ToolContext, "origin">) => ({
   status: "needsApproval",
+  approval_id: result.approvalId,
+  link: approvalLink(ctx.origin, result.approvalId),
   planHash: result.planHash,
   items: result.items,
   message:
-    "Nothing changed: this needs the person's passkey. Ask them to approve it in Brainiac, then send the same call with approval_id.",
+    "Nothing changed: this needs the person's passkey. Give them the link to approve it in Brainiac, and once they say they have, send the same call again with this approval_id.",
 });
 
 const proposed = (result: Proposed) => ({
@@ -241,8 +250,21 @@ function rolledBack<T>(sql: Sql, fn: () => T): T {
 
 /** A dry run's outcome: what would happen, without the ids of a proposal or run that was never kept. */
 function wouldBe(result: MutationResult | BatchResult | UndoResult | Organized): Record<string, unknown> {
-  const { proposal: _proposal, run: _run, ...rest } = outcome(result);
-  return { dryRun: true, ...rest };
+  // A dry run keeps no plan for the person (it rolled back), so it has no approval to link to.
+  const {
+    proposal: _proposal,
+    run: _run,
+    approval_id: _approvalId,
+    link: _link,
+    ...rest
+  } = outcome(result, {});
+  return {
+    dryRun: true,
+    ...rest,
+    ...(result.status === "needsApproval" && {
+      message: "This would need the person's passkey. Send it without dry_run to get the link for them.",
+    }),
+  };
 }
 
 /** Each note's change, from its text before to its text after, for a dry run to show. */
@@ -701,7 +723,7 @@ const add = tool(
       { op: "create", path, raw, class: args.sensitive ? "sensitive" : "normal" },
       { actor: ctx.actor, now: ctx.now, reader: principal(ctx) },
     );
-    return ok({ ...outcome(result), ...(result.status === "applied" && { path }) });
+    return ok({ ...outcome(result, ctx), ...(result.status === "applied" && { path }) });
   },
 );
 
@@ -718,8 +740,9 @@ const slug = (text: string) =>
 const fold = (text: string) => text.normalize("NFKC").toLowerCase().trim();
 
 /**
- * The note an unused approval signed into being, if it signed exactly one of this type that the caller may see:
- * a create sent again with the approval makes that note, so its plan matches what the person signed. Taken from
+ * The note an unused approval (signed, or still waiting for the person) makes, if it makes exactly one of this
+ * type that the caller may see: a create sent again with the approval makes that note, so its plan matches what
+ * the person signs, and a retry before they sign gets the same plan back rather than a new one. Taken from
  * the approval, never from the caller, and only when every answer it leads to is about notes the caller may see;
  * otherwise the call gets a new id, as if it cited no approval.
  */
@@ -825,7 +848,7 @@ const create = tool(
         note: { id, path, fields: parseNote(raw).data, body: args.body ?? "" },
       });
     // Every answer names the note, so a retry after an approval can make exactly it.
-    return ok({ ...outcome(run()), id, path });
+    return ok({ ...outcome(run(), ctx), id, path });
   },
 );
 
@@ -862,7 +885,10 @@ const importTool = tool(
           if (twin) ctx.shown.add(twin.id);
           return imported;
         }
-        return { ...(imported.path !== undefined && { path: imported.path }), ...outcome(imported.result) };
+        return {
+          ...(imported.path !== undefined && { path: imported.path }),
+          ...outcome(imported.result, ctx),
+        };
       }),
     });
   },
@@ -908,7 +934,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
       // A background run shares the device's connection, so "its own" proposals include the person's sessions'.
       if (ctx.background)
         return ok({ status: "forbidden", message: "A background run can't withdraw proposals." });
-      return ok(outcome(withdraw(sql, args.withdraw, ctx)));
+      return ok(outcome(withdraw(sql, args.withdraw, ctx), ctx));
     }
     if (readOnly(ctx)) return ok(READ_ONLY);
     if (many === (args.id !== undefined))
@@ -995,7 +1021,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
         });
       const result = run();
       const moved = moving && result.status === "applied" ? getNote(sql, note.id)?.path : undefined;
-      return ok({ ...outcome(result), ...(moved !== undefined && { path: moved }) });
+      return ok({ ...outcome(result, ctx), ...(moved !== undefined && { path: moved }) });
     }
 
     if (args.restore) return fail("restore takes one deleted note's id.");
@@ -1031,7 +1057,7 @@ Changes to many notes: run with dry_run first, then again with expect set to the
         message: `Nothing changed. This matches ${matched.length} notes now: check them with dry_run, then send expect: ${matched.length}.`,
       });
     if (mutations.length === 0) return ok({ status: "applied", notes: [] });
-    return ok(outcome(run()));
+    return ok(outcome(run(), ctx));
   },
 );
 
@@ -1057,7 +1083,7 @@ const undo = tool(
         ...ctx,
         ...(args.approval_id !== undefined && { approvalId: args.approval_id }),
       });
-    return ok(args.dry_run ? wouldBe(rolledBack(sql, run)) : outcome(run()));
+    return ok(args.dry_run ? wouldBe(rolledBack(sql, run)) : outcome(run(), ctx));
   },
 );
 
@@ -1143,7 +1169,7 @@ The first call answers needsApproval with the plan (dry_run shows it too): show 
       );
     if (args.dry_run) return ok(wouldBe(rolledBack(sql, run)));
     const result = run();
-    if (result.status !== "applied") return ok(outcome(result));
+    if (result.status !== "applied") return ok(outcome(result, ctx));
     // The notes the run placed, and every note of a type it changed, as the person's next search would find them.
     const asked = [
       ...result.notes.map((n) => n.noteId),
@@ -1151,7 +1177,7 @@ The first call answers needsApproval with the plan (dry_run shows it too): show 
     ];
     const test = selfTest(sql, principal(ctx), asked, ctx.now);
     return ok({
-      ...outcome(result),
+      ...outcome(result, ctx),
       selfTest: test,
       ...(test.missed.length > 0 && {
         message: `${test.missed.length} of ${test.asked} self-test questions no longer find their note. Tell the person, and offer undo {run: "${result.runId}"}.`,
@@ -1236,7 +1262,7 @@ const requestInfo = tool(
       },
       { actor: ctx.actor, now: ctx.now, reader: principal(ctx) },
     );
-    return ok(result.status === "applied" ? { status: "queued", question: id } : outcome(result));
+    return ok(result.status === "applied" ? { status: "queued", question: id } : outcome(result, ctx));
   },
 );
 
@@ -1360,10 +1386,10 @@ File each item with create and update, then send its id in done, which deletes i
       if (result.status === "needsApproval")
         return {
           id,
-          ...outcome(result),
-          message: `Nothing changed for this item: it needs the person's passkey. Ask them to approve it in Brainiac, then send inbox {lease, done: ["${id}"], approval_id}.`,
+          ...outcome(result, ctx),
+          message: `Nothing changed for this item: it needs the person's passkey. Give them the link to approve it in Brainiac, and once they have, send inbox {lease, done: ["${id}"], approval_id}.`,
         };
-      return { id, ...outcome(result) };
+      return { id, ...outcome(result, ctx) };
     });
     for (const id of args.release ?? []) end(id);
     // An item the caller can no longer see (made sensitive since) goes back for a session that may file it.

@@ -28,7 +28,7 @@ landed       { changeId PK, result JSON, at }                       // every syn
 clients      { clientId PK, highWater, ackedUpTo, lastHash, lastSeenAt, appVersion, reader }   // strict in-order apply; ackedUpTo: the highest it sent; reader: the principal its cursor was earned under
 results      { clientId, clientSeq, digest, result JSON }             // dropped once ackedUpTo passes it
 proposals    { id, noteId?, patch, actor, autoApplyAt?, status, kind: change | conflict | schema, action?, runId? }   // status: open | applied | rejected | withdrawn; a held change keeps its plan in patch and what applies it in action
-approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)], assertion, credentialId, at, usedAt? }   // used once
+approvals    { id, planHash, items JSON [(noteId, baseRev, path, class, patch)], assertion, credentialId, at, usedAt?, actor }   // kept from the needsApproval; assertion '' until signed; used once
 review_runs  { nonce, actor, items JSON, assertion, credentialId, expiresAt }   // one signature, only for its opener and the items shown; assertion '' until signed
 passkey_keys { credentialId PK, publicKey, counter }                // the last counter each passkey signed with here
 connections  { id PK, kind: oauth | cli, oauthClientId?, level, scopes JSON, sensitive, holdDays, rev, createdAt }   // rev: bumped by every grant change; a grant signature names it

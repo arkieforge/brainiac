@@ -36,6 +36,7 @@ welcome  { clientId, highWater, ackedUpTo, connection?, manifest? }   // answer 
 snapshot { seq, notes, attempt }       // answers hello `attempt`: cursor missing, ahead of the record, or older than the 90-day log
 changes  { from, to, items }            // each note changed after `from`, as it is at `to`: catch-up, then live
 result   { clientId, clientSeq, changeId, ok, rev?, conflict?, needsApproval?: { planHash, items }, error? }
+approved { approvals: [{ planHash, approvalId }] } // plans the person signed that nothing cited yet: after every welcome, and to every socket when one is signed
 gap      { clientId, highWater }        // resend from highWater + 1
 reset    { clientId, clientSeq?, reason } // two machines share this id; no clientSeq: another actor owns it
 proposals {}                            // the person's sockets only: the open proposals changed, so the site asks /api/proposals again
@@ -45,9 +46,11 @@ The DO computes each mutation's digest itself. A result names the `changeId` it 
 shares a `clientId` never takes another machine's result as its own: a mismatch makes it repair. A client
 takes only the snapshot answering its latest hello; an older one has been overtaken. That one is taken even
 when its seq is below the cursor, since the record may have been restored. A `needsApproval` result carries
-the plan the person signs (each note's base revision, path, class and effect) and its hash. Once they approve on
-the site, the client resends the edit with the `approvalId` under a new `clientSeq` and a new `changeId`: the
-record answers a `changeId` it has seen with the answer it gave.
+the plan the person signs (each note's base revision, path, class and effect) and its hash, and the record keeps
+that plan, so the site's Approvals page lists it whichever device sent it. Once they approve on the site or phone,
+the record sends `approved` to every socket (and after every welcome until a change cites it, for a device that
+was off), and a client holding a blocked edit with that plan resends it with the `approvalId` under a new
+`clientSeq` and a new `changeId`: the record answers a `changeId` it has seen with the answer it gave.
 
 - **Who a socket speaks for**: `/sync` (`apps/worker/src/devices.ts`) takes WebSocket upgrades only. A laptop
   sends its CLI token in the `authorization` header (never the URL; plain `ws:` only to loopback): the Worker

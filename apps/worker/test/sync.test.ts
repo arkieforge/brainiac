@@ -3,8 +3,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { tokenBase } from "@brainiac/base";
-import type { ServerMessage } from "@brainiac/core";
+import { tokenBase, type Answer } from "@brainiac/base";
+import type { PlanItem, ServerMessage } from "@brainiac/core";
 import { emptyState, SyncClient } from "@brainiac/sync";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -448,17 +448,20 @@ describe("approving a blocked edit on the site", () => {
       patch: { ...item.patch, fields: { overall: { before: 8, after: 9 } } },
     }));
     expect((await approve(tampered, response)).status).toBe(403);
+    const landed = tab.next((m) => m.type === "result" && m.ok);
     const approved = await approve(plan.items, sign(plan.planHash));
     const { approvalId } = (await approved.json()) as { approvalId: string };
     expect(approved.status).toBe(200);
 
-    const landed = tab.next((m) => m.type === "result" && m.ok);
-    expect(tab.client.approved(id, plan.planHash, approvalId)).toBe(true);
-    const resent = tab.client.state.pending.at(-1);
-    expect(resent?.clientSeq).toBeGreaterThan(first.clientSeq);
-    expect(resent?.changeId).not.toBe(first.changeId);
-    expect(resent?.approvalId).toBe(approvalId);
+    // The record tells every socket, so the tab resends before its own approval answer is back: once.
     const result = await landed;
+    expect(tab.client.approved(id, plan.planHash, approvalId)).toBe(false);
+    const sent = tab.received.map((text): ServerMessage => JSON.parse(text));
+    expect(sent.filter((m) => m.type === "approved")).toEqual([
+      { type: "approved", approvals: [{ planHash: plan.planHash, approvalId }] },
+    ]);
+    expect(result.type === "result" && result.clientSeq).toBeGreaterThan(first.clientSeq);
+    expect(result.type === "result" && result.changeId).not.toBe(first.changeId);
     expect(result).toMatchObject({ ok: true, rev: 2 });
     expect(tab.client.state.blocked.get(id)).toBeUndefined();
     expect(await base.rev(id)).toBe(2);
@@ -497,6 +500,129 @@ describe("approving a blocked edit on the site", () => {
     expect(await again).toMatchObject({ ok: false, needsApproval: { planHash: plan.planHash } });
     expect(await base.rev(id)).toBe(1);
     expect((await own.approve([], own.sign(plan.planHash))).status).toBe(400);
+  });
+
+  it("lands a laptop's blocked edit from the laptop once the person approves its plan on the site", async () => {
+    const base = await record("approve-laptop");
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const { token } = await cliToken(base);
+    const laptop = await online("approve-laptop-daemon", bearer(token));
+    const refused = laptop.next((m) => m.type === "result");
+    laptop.client.edit(id, ielts.replace("overall: 8.0", "overall: 8.5"));
+    const first = await refused;
+    const plan = laptop.client.state.blocked.get(id)?.at(-1)?.needsApproval;
+    if (!plan || first.type !== "result") throw new Error("not blocked for approval");
+
+    // The site lists the laptop's plan as the record keeps it; a tab never held this edit.
+    const listed = (await (await waitingOn("approve-laptop")).json()) as { approvals: Waiting[] };
+    const [waiting] = listed.approvals;
+    expect(listed.approvals).toHaveLength(1);
+    expect(waiting).toMatchObject({
+      planHash: plan.planHash,
+      from: "brainiac on a laptop",
+      by: "laptop",
+      stale: false,
+    });
+    expect(waiting?.items).toEqual(plan.items);
+
+    const { approve, sign } = approver("approve-laptop");
+    // A signature over another plan doesn't sign this one, whatever id it names.
+    expect(
+      (await approve(undefined, sign("c29tZXRoaW5nIGVsc2U"), { approvalId: waiting?.approvalId })).status,
+    ).toBe(403);
+    const landed = laptop.next((m) => m.type === "result" && m.ok);
+    const approved = await approve(undefined, sign(plan.planHash), { approvalId: waiting?.approvalId });
+    expect(approved.status).toBe(200);
+    // The record tells the laptop, which sends the edit again on its own, under a new changeId.
+    expect(await landed).toMatchObject({ ok: true, rev: 2 });
+    expect(laptop.client.state.blocked.get(id)).toBeUndefined();
+    expect(await base.noteRaw(id)).toContain("overall: 8.5");
+    const resent = laptop.received
+      .map((text): ServerMessage => JSON.parse(text))
+      .find((m) => m.type === "result" && m.ok);
+    expect(resent?.type === "result" && resent.changeId).not.toBe(first.changeId);
+    expect(
+      ((await (await waitingOn("approve-laptop")).json()) as { approvals: Waiting[] }).approvals,
+    ).toEqual([]);
+  });
+
+  it("gives an agent's held change a link; approving there lets its retry with approval_id land it", async () => {
+    const base = await record("approve-agent");
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const { id: connectionId, token } = await cliToken(base);
+    await base.setGrants(connectionId, { level: "write", sensitive: false, holdDays: 0 });
+    const call = { id, rev: 1, set: { overall: 8.5 } };
+    const tool = async (args: object) => {
+      // As the DO types it: the stub's RPC types drop an answer whose fields hold `unknown` values.
+      const answer = (await base.tool({ connectionId, origin: ORIGIN }, "update", args)) as Answer;
+      if (!answer.ok) throw new Error(answer.error);
+      return answer.value as Record<string, unknown>;
+    };
+    const held = await tool(call);
+    expect(held).toMatchObject({ status: "needsApproval" });
+    const approvalId = String(held["approval_id"]);
+    expect(held["link"]).toBe(`${ORIGIN}/approvals/${approvalId}`);
+    // Before the person signs, the id lets nothing through: the same plan, the same id, nothing changed.
+    expect(await tool({ ...call, approval_id: approvalId })).toMatchObject({
+      status: "needsApproval",
+      approval_id: approvalId,
+    });
+    expect(await base.rev(id)).toBe(1);
+
+    // The agent's own token can't reach the site's approval routes.
+    const { approve, sign } = approver("approve-agent");
+    for (const path of ["/api/approve", "/api/approvals"])
+      expect(
+        (
+          await mf.dispatchFetch(`${ORIGIN}${path}`, {
+            method: path === "/api/approve" ? "POST" : "GET",
+            headers: { ...bearer(token), origin: ORIGIN, "content-type": "application/json" },
+            ...(path === "/api/approve" && {
+              body: JSON.stringify({ approvalId, response: sign(String(held["planHash"])) }),
+            }),
+          })
+        ).status,
+      ).toBe(401);
+
+    // The link's page asks for its plan by id, as the record keeps it.
+    const [waiting] = (
+      (await (await waitingOn("approve-agent", approvalId)).json()) as { approvals: Waiting[] }
+    ).approvals;
+    expect(waiting).toMatchObject({ approvalId, planHash: held["planHash"] });
+    expect(waiting?.items.map((item) => item.patch.fields["overall"])).toEqual([{ before: 8, after: 8.5 }]);
+    expect((await approve(undefined, sign(String(held["planHash"])), { approvalId })).status).toBe(200);
+
+    expect(await tool({ ...call, approval_id: approvalId })).toMatchObject({ status: "applied", rev: 2 });
+    expect(await base.noteRaw(id)).toContain("overall: 8.5");
+    // Used up: citing it again lets no other change through.
+    expect(await tool({ ...call, rev: 2, set: { overall: 9 }, approval_id: approvalId })).toMatchObject({
+      status: "needsApproval",
+    });
+  });
+
+  it("forgets a plan the person turns down, so the agent has to ask again", async () => {
+    const base = await record("approve-decline");
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const { id: connectionId } = await cliToken(base);
+    await base.setGrants(connectionId, { level: "write", sensitive: false, holdDays: 0 });
+    const answer = (await base.tool({ connectionId }, "update", {
+      id,
+      rev: 1,
+      set: { overall: 6 },
+    })) as Answer;
+    const approvalId = answer.ok ? String((answer.value as Record<string, unknown>)["approval_id"]) : "";
+    const decline = () =>
+      mf.dispatchFetch(`${ORIGIN}/api/approvals/decline`, {
+        method: "POST",
+        headers: { ...session("approve-decline"), "content-type": "application/json" },
+        body: JSON.stringify({ approvalId }),
+      });
+    expect((await decline()).status).toBe(200);
+    expect((await decline()).status).toBe(404);
+    expect(
+      ((await (await waitingOn("approve-decline")).json()) as { approvals: Waiting[] }).approvals,
+    ).toEqual([]);
+    expect(await base.rev(id)).toBe(1);
   });
 });
 
@@ -614,3 +740,18 @@ describe("deciding proposals on the site", () => {
     expect(forged.status).toBe(403);
   });
 });
+
+/** A plan waiting for the person, as `GET /api/approvals` lists it. */
+interface Waiting {
+  readonly approvalId: string;
+  readonly planHash: string;
+  readonly items: PlanItem[];
+  readonly from: string;
+  readonly stale: boolean;
+}
+
+/** The plans waiting in `user`'s record, as their tab loads them. */
+const waitingOn = (user: string, id?: string) =>
+  mf.dispatchFetch(`${ORIGIN}/api/approvals${id === undefined ? "" : `?id=${id}`}`, {
+    headers: session(user),
+  });

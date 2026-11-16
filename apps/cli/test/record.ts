@@ -13,8 +13,10 @@ import {
   getNoteByPath,
   migrate,
   mutate,
+  waitingPlans,
   PERSON,
   principalOf,
+  recordApproval,
   restrict,
   serve,
   type Connection,
@@ -22,6 +24,7 @@ import {
   type NoteRow,
   type Principal,
 } from "@brainiac/base";
+import type { PlanItem } from "@brainiac/core";
 import { emptyState, SyncClient } from "@brainiac/sync";
 
 import type { Connect } from "../src/daemon.ts";
@@ -36,6 +39,7 @@ export class TestRecord {
   readonly #peers = new Set<Peer>();
   #now = Date.UTC(2026, 10, 14);
   #ids = 0;
+  #signatures = 0;
   readonly #events = new Set<() => void>();
 
   /** What every client may read: the person's view, or a connection's with fewer scopes. */
@@ -93,6 +97,47 @@ export class TestRecord {
     if (moved.status !== "applied") throw new Error(JSON.stringify(moved));
     const pushed = changesSince(this.sql, before, this.reader);
     for (const peer of this.#peers) this.#later(peer, () => peer.on.message(pushed));
+  }
+
+  /** Marks a note's title as checked, as the person would on the site with their passkey, and pushes it. */
+  verify(id: string): void {
+    const before = currentSeq(this.sql);
+    const mutation = {
+      op: "patch",
+      noteId: id,
+      baseRev: getNote(this.sql, id)?.rev ?? 0,
+      ops: [{ op: "set", path: ["verified"], value: { by: "human", fields: ["title"] } }],
+    } as const;
+    const ctx = { actor: "site", now: this.#now };
+    const held = mutate(this.sql, mutation, ctx);
+    if (held.status !== "needsApproval") throw new Error(JSON.stringify(held));
+    const approvalId = this.#sign(held.items);
+    const done = mutate(this.sql, mutation, { ...ctx, approvalId });
+    if (done.status !== "applied") throw new Error(JSON.stringify(done));
+    const pushed = changesSince(this.sql, before, this.reader);
+    for (const peer of this.#peers) this.#later(peer, () => peer.on.message(pushed));
+  }
+
+  /** The plans waiting for the person, as the site's Approvals page lists them. */
+  waiting(): ReturnType<typeof waitingPlans> {
+    return waitingPlans(this.sql);
+  }
+
+  /** The person signs each waiting plan on the site, and the record tells every open socket. */
+  approveWaiting(): void {
+    const approvals = this.waiting().map((plan) => ({
+      planHash: plan.planHash,
+      approvalId: this.#sign(plan.items),
+    }));
+    for (const peer of this.#peers) this.#later(peer, () => peer.on.message({ type: "approved", approvals }));
+  }
+
+  /** A passkey signature the DO has checked, recorded over `items`. */
+  #sign(items: readonly PlanItem[]): string {
+    const signature = { credentialId: "passkey", counter: ++this.#signatures, assertion: "{}" };
+    const approved = recordApproval(this.sql, items, signature, this.#now);
+    if (!("approvalId" in approved)) throw new Error(approved.error);
+    return approved.approvalId;
   }
 
   note(id: string): NoteRow | undefined {

@@ -28,7 +28,16 @@ import {
   type YamlValue,
 } from "@brainiac/core";
 
-import { planOf, relationTarget, settle, type Effect, type Grant, type NeedsApproval } from "./approvals.ts";
+import {
+  pend,
+  planOf,
+  relationTarget,
+  settle,
+  type Effect,
+  type Grant,
+  type NeedsApproval,
+  type Unsigned,
+} from "./approvals.ts";
 import { canSee, principalOf, type Connection } from "./connections.ts";
 import { PERSON, project, type Principal } from "./project.ts";
 import { diff, side, stateOf, type State } from "./diff.ts";
@@ -135,10 +144,7 @@ const effectOf = (items: readonly PlanItem[]) =>
 
 /** Thrown to roll back a transaction whose effect needs an approval it doesn't have, or waits as a proposal. */
 class Held extends Error {
-  readonly verdict:
-    | NeedsApproval
-    | Invalid
-    | { readonly autoApplyAt: number | null; readonly effects: Effect[] };
+  readonly verdict: Unsigned | Invalid | { readonly autoApplyAt: number | null; readonly effects: Effect[] };
   constructor(verdict: Held["verdict"]) {
     super("held");
     this.verdict = verdict;
@@ -233,7 +239,11 @@ function judged<T extends { readonly status: string }>(
       });
     } catch (error) {
       if (!(error instanceof Held)) throw error;
-      if ("status" in error.verdict) return error.verdict;
+      // The plan is kept for the person to sign on the site, wherever the change came from.
+      if ("status" in error.verdict)
+        return error.verdict.status === "needsApproval"
+          ? pend(sql, error.verdict, ctx.actor, ctx.now)
+          : error.verdict;
       return recordHeld(
         sql,
         action,

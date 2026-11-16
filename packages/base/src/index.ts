@@ -1,16 +1,21 @@
 // The record's SQL: one schema, migrations and queries, run by the Base DO and by the CLI's bun:sqlite.
 export {
+  decline,
   lastCounter,
   openReview,
   planHash,
   recordApproval,
   REVIEW_MS,
   startReview,
+  unused,
+  waitingItems,
+  waitingPlans,
   type Approved,
   type Grant,
   type NeedsApproval,
   type Opened,
   type Signature,
+  type WaitingPlan,
 } from "./approvals.ts";
 export { activity, auditOf, type AuditCall } from "./audit.ts";
 export {

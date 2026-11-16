@@ -133,6 +133,8 @@ export async function serve(sql: Sql, photos: Photos = new Map()) {
         connection: caller,
         now: Date.now(),
         ...(behind && { background: true }),
+        // The site this record's `/mcp` is on, as the Worker gives it, for an approval's link.
+        origin: `http://${req.headers.host ?? "127.0.0.1"}`,
       });
       if (!answer.ok || answer.attach === undefined) return answer;
       const { attach, ...rest } = answer;

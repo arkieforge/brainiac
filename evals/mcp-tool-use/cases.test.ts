@@ -219,6 +219,34 @@ describe("mcp-tool-use grader", () => {
         [[], "Your writing score on the November 2026 IELTS was 7.0."],
       ],
       ["ielts-writing-canary", [[], "Writing: 6.5."], [[], "Writing: 7.0."]],
+      // The change waits for the passkey: the person gets the page to approve it on, not just "approve it".
+      [
+        "approval-link",
+        [
+          [call("update", { id: IELTS_NOV, rev: 1, set: { overall: 8.5 } })],
+          "It needs your approval with your passkey in Brainiac.",
+        ],
+        [
+          [
+            {
+              ...call("update", { id: IELTS_NOV, rev: 1, set: { overall: 8.5 } }),
+              result: { status: "needsApproval", approval_id: "Wm9vYmFyYmF6cXV4" },
+            },
+          ],
+          "It needs your passkey: approve it at http://127.0.0.1:4100/approvals/Wm9vYmFyYmF6cXV4 and I'll send it again.",
+        ],
+      ],
+      [
+        "approval-link",
+        [
+          [call("create", { type: "TestScore", fields: { overall: 8.5 } })],
+          "Approve it at http://127.0.0.1:4100/approvals/Wm9vYmFyYmF6cXV4.",
+        ],
+        [
+          [call("update", { id: IELTS_NOV })],
+          "Approve it with your passkey: http://127.0.0.1:4100/approvals/Wm9vYmFyYmF6cXV4",
+        ],
+      ],
       [
         "new-kind-through-organize",
         [[call("create", { type: "Talk", fields: { title: "ACL 2024" } })], ""],

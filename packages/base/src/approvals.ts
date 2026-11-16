@@ -7,8 +7,10 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { deepEqual, isUlid, PathError, pathKey, resolveRelation, type PlanItem } from "@brainiac/core";
 
+import { connectionOf } from "./connections.ts";
 import { diff, stateOf } from "./diff.ts";
 import { getNote, type NoteRow } from "./notes.ts";
+import { MANIFEST } from "./organize.ts";
 import type { Sql } from "./sql.ts";
 
 /** How long a review session lasts after its signature, and how long its nonce waits to be signed. */
@@ -26,11 +28,20 @@ export interface Effect {
   readonly after: NoteRow;
 }
 
-export interface NeedsApproval {
+/** What a change needs signed before it may land. */
+export interface Unsigned {
   readonly status: "needsApproval";
   /** The WebAuthn challenge to sign: base64url SHA-256 over `items`. */
   readonly planHash: string;
   readonly items: readonly PlanItem[];
+}
+
+/**
+ * A change held for the person's passkey, with the plan the record keeps for it (`pend`): the id names that plan
+ * on the site, and the change cites it once the person signed it there.
+ */
+export interface NeedsApproval extends Unsigned {
+  readonly approvalId: string;
 }
 
 /** JSON with object keys sorted, so equal plans hash equally whatever order their fields were built in. */
@@ -151,6 +162,11 @@ function needsApproval(sql: Sql, { before, after }: Effect): boolean {
 interface ApprovalRow {
   readonly id: string;
   readonly planHash: string;
+  readonly items: string;
+  /** Empty while the plan waits for the person: nobody signed it yet. */
+  readonly assertion: string;
+  readonly actor: string;
+  readonly at: number;
   readonly usedAt: number | null;
 }
 
@@ -192,7 +208,7 @@ export function settle(
   ctx: Grant & { readonly actor: string; readonly now: number; readonly connection?: object },
   scope: "change" | "undo" | "organize",
   extra: readonly PlanItem[] = [],
-): NeedsApproval | "signed" | undefined {
+): Unsigned | "signed" | undefined {
   const deleting = effects.filter(({ before, after }) => liveData(before) && !liveData(after));
   // A connection's deletes over the last day count together, so deleting one note per call doesn't get around the
   // limit. The count includes this transaction's own, which are written by now. Sync edits carry no connection: a
@@ -222,7 +238,8 @@ export function settle(
   const hash = planHash(items);
   if (ctx.approvalId !== undefined) {
     const [approval] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ?", ctx.approvalId);
-    if (approval && approval.planHash === hash && approval.usedAt === null) {
+    // A plan still waiting for the person has no signature: citing it lets nothing through.
+    if (approval && approval.planHash === hash && approval.assertion !== "" && approval.usedAt === null) {
       sql.all("UPDATE approvals SET usedAt = ? WHERE id = ?", ctx.now, approval.id);
       return "signed";
     }
@@ -291,8 +308,118 @@ export type Approved = { readonly approvalId: string } | { readonly error: strin
 export type Opened = { readonly review: string } | { readonly error: string };
 
 /**
+ * Keeps the plan a held change needs signed, so the person can see and sign it on the site whoever asked (an
+ * agent, the laptop's daemon, another tab), and the change can cite it once signed. The same plan asked again
+ * gets the same id. Written after the change rolled back, in the caller's transaction, so a dry run keeps none.
+ */
+export function pend(sql: Sql, plan: Unsigned, actor: string, now: number): NeedsApproval {
+  const [given] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE planHash = ?", plan.planHash);
+  if (given) return { ...plan, approvalId: given.id };
+  const approvalId = randomBytes(16).toString("base64url");
+  sql.all(
+    "INSERT INTO approvals (id, planHash, items, assertion, credentialId, at, actor) VALUES (?, ?, ?, '', '', ?, ?)",
+    approvalId,
+    plan.planHash,
+    JSON.stringify(plan.items),
+    now,
+    actor,
+  );
+  return { ...plan, approvalId };
+}
+
+/** A plan waiting for the person's passkey, as the site shows it. */
+export interface WaitingPlan {
+  readonly approvalId: string;
+  readonly planHash: string;
+  readonly items: readonly PlanItem[];
+  /** Who asked, in the person's words: the site, a laptop, or the agent's app by its host. */
+  readonly from: string;
+  /** What asked: a tab of the site and a laptop resend on their own once it's signed; an agent waits to be told. */
+  readonly by: "site" | "laptop" | "agent";
+  readonly at: number;
+  /**
+   * A note in it moved on since it was asked, so the change can't land as signed: the agent or device asks
+   * again, with a new plan.
+   */
+  readonly stale: boolean;
+}
+
+/** How many waiting plans the site lists at once, newest first. */
+const PENDING_LIMIT = 50;
+
+/** Who an actor is, for the person reading a plan it asked for. */
+function askedBy(sql: Sql, actor: string): Pick<WaitingPlan, "from" | "by"> {
+  if (!actor.startsWith("connection:")) return { from: "You, on the site", by: "site" };
+  const connection = connectionOf(sql, actor);
+  if (!connection) return { from: "A connection you've since disconnected", by: "agent" };
+  // A CLI token speaks for the laptop's daemon and for `brainiac mcp serve` alike.
+  if (connection.kind !== "oauth" || connection.oauthClientId === null)
+    return { from: "brainiac on a laptop", by: "laptop" };
+  try {
+    return { from: new URL(connection.oauthClientId).hostname, by: "agent" };
+  } catch {
+    return { from: connection.oauthClientId, by: "agent" };
+  }
+}
+
+/** Where a plan item's note is now: a note's revision, or for the manifest (organize.ts) the schema's version. */
+function revisionOf(sql: Sql, noteId: string): number {
+  if (noteId !== MANIFEST) return getNote(sql, noteId)?.rev ?? 0;
+  const [schema] = sql.all<{ version: number }>("SELECT max(version) AS version FROM schema");
+  return schema?.version ?? 0;
+}
+
+const pendingOf = (sql: Sql, row: ApprovalRow): WaitingPlan => {
+  const items: PlanItem[] = JSON.parse(row.items);
+  return {
+    approvalId: row.id,
+    planHash: row.planHash,
+    items,
+    ...askedBy(sql, row.actor),
+    at: row.at,
+    stale: items.some((item) => revisionOf(sql, item.noteId) !== item.baseRev),
+  };
+};
+
+/**
+ * The plans waiting for the person's passkey, newest first, or the one `approvalId` names. The person's alone:
+ * only the site's session route reads these, since a plan shows sensitive values.
+ */
+export function waitingPlans(sql: Sql, approvalId?: string): WaitingPlan[] {
+  const rows =
+    approvalId === undefined
+      ? sql.all<ApprovalRow>(
+          "SELECT * FROM approvals WHERE assertion = '' ORDER BY at DESC LIMIT ?",
+          PENDING_LIMIT,
+        )
+      : sql.all<ApprovalRow>("SELECT * FROM approvals WHERE id = ? AND assertion = ''", approvalId);
+  return rows.map((row) => pendingOf(sql, row));
+}
+
+/** The plan the record keeps under `approvalId`, if it still waits for a signature. */
+export function waitingItems(sql: Sql, approvalId: string): readonly PlanItem[] | undefined {
+  return waitingPlans(sql, approvalId)[0]?.items;
+}
+
+/** The person turns a waiting plan down: it's gone, and the change asks again with a new one if it's sent again. */
+export function decline(sql: Sql, approvalId: string): boolean {
+  return sql.all("DELETE FROM approvals WHERE id = ? AND assertion = '' RETURNING id", approvalId).length > 0;
+}
+
+/** Approved plans no change has cited yet, newest first: what a sync client resends its blocked edits with. */
+export function unused(sql: Sql): { readonly planHash: string; readonly approvalId: string }[] {
+  return sql
+    .all<ApprovalRow>(
+      "SELECT * FROM approvals WHERE assertion != '' AND usedAt IS NULL ORDER BY at DESC LIMIT ?",
+      PENDING_LIMIT,
+    )
+    .map((row) => ({ planHash: row.planHash, approvalId: row.id }));
+}
+
+/**
  * Records a checked signature over `planHash(items)`, ready for the change to cite once. A plan approved but
- * not yet used gets its approval back, so an answer lost on the way to the site doesn't strand the change.
+ * not yet used gets its approval back, so an answer lost on the way to the site doesn't strand the change. A plan
+ * the record kept waiting (`pend`) is signed in place, so the change holding its id lands.
  */
 export function recordApproval(
   sql: Sql,
@@ -306,9 +433,19 @@ export function recordApproval(
     // a replayed signature from a passkey whose counter stays at 0 would open a fresh one: never prune them.
     // The cost: an identical plan after a purge and recreate can't be approved again.
     const [given] = sql.all<ApprovalRow>("SELECT * FROM approvals WHERE planHash = ?", hash);
-    if (given)
-      return given.usedAt === null ? { approvalId: given.id } : { error: "This plan was already applied." };
+    if (given && given.usedAt !== null) return { error: "This plan was already applied." };
+    if (given && given.assertion !== "") return { approvalId: given.id };
     if (!advance(sql, signature)) return { error: "This passkey signature was already used." };
+    if (given) {
+      sql.all(
+        "UPDATE approvals SET assertion = ?, credentialId = ?, at = ? WHERE id = ?",
+        signature.assertion,
+        signature.credentialId,
+        now,
+        given.id,
+      );
+      return { approvalId: given.id };
+    }
     const approvalId = randomBytes(16).toString("base64url");
     sql.all(
       "INSERT INTO approvals (id, planHash, items, assertion, credentialId, at) VALUES (?, ?, ?, ?, ?, ?)",

@@ -22,6 +22,8 @@ import { type createAuth, mcpResource } from "../auth/config.ts";
  */
 export type Via = ({ readonly oauthClientId: string } | { readonly connectionId: string }) & {
   readonly background?: boolean;
+  /** The site's origin, for the links an answer gives the person (an approval's page). */
+  readonly origin?: string;
 };
 
 /** The part of a Base DO's stub /mcp uses. */
@@ -194,6 +196,7 @@ export async function serveMcp(
   const via: Via = {
     ...from.via,
     ...(request.headers.get(BACKGROUND_HEADER) === "1" && { background: true }),
+    origin: new URL(request.url).origin,
   };
   return serveTools(request, (name, args) => record.tool(via, name, args));
 }
