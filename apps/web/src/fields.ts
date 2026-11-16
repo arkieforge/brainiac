@@ -8,6 +8,7 @@ import {
   splitNote,
   validate,
   type Manifest,
+  type PlanItem,
   type YamlValue,
 } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
@@ -132,8 +133,22 @@ export interface Base {
   readonly raw: string;
 }
 
-/** An online save's answer: what the record now has, why it wasn't saved, or undefined when nothing changed. */
-export type Saved = Base | { readonly error: string } | undefined;
+/**
+ * An online save the record held for the person's passkey: the plan it asked them to sign, and the same edit (the
+ * same text on the same base) sent again citing the approval they made over it. Held in memory only: nothing
+ * about a sensitive note's edit is written on the device (contract §5).
+ */
+export interface Approval {
+  readonly planHash: string;
+  readonly items: readonly PlanItem[];
+  readonly resend: (approvalId: string) => Promise<Saved>;
+}
+
+/**
+ * An online save's answer: what the record now has, why it wasn't saved (with the plan to sign, when the
+ * person's passkey would let it through), or undefined when nothing changed.
+ */
+export type Saved = Base | { readonly error: string; readonly approval?: Approval } | undefined;
 
 /**
  * Saves a sensitive note's edit online only, straight to the record (`POST /api/notes/<id>`), one at a time per

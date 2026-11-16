@@ -290,12 +290,13 @@ async function serveSecrets(
 }
 
 /**
- * `POST /api/notes/<id>` `{ raw, baseRev, review? }`: the site's edit to a note straight to the record, as the
- * person. A sensitive note's edits always come here: a tab never queues one in its sync client, whose queue lives
+ * `POST /api/notes/<id>` `{ raw, baseRev, review?, approvalId? }`: the site's edit to a note straight to the record,
+ * as the person. A sensitive note's edits always come here: a tab never queues one in its sync client, whose queue lives
  * in IndexedDB on a device the person may not have marked as theirs (contract §5). Review mode's edits come here
  * too, with the review session they were made in (`review`), which the record checks covers this note. Online
  * only. A `baseRev` the note has moved past is a conflict, never an overwrite; the change reaches every tab
- * through the sync push.
+ * through the sync push. An edit that needs the person's passkey answers 409 with the plan to sign, and is sent
+ * again, the same text on the same base, with the approval's id.
  */
 async function saveNote(
   body: unknown,
@@ -306,12 +307,19 @@ async function saveNote(
   const raw = "raw" in given ? given.raw : undefined;
   const baseRev = "baseRev" in given ? given.baseRev : undefined;
   const review = "review" in given ? given.review : undefined;
+  const approvalId = "approvalId" in given ? given.approvalId : undefined;
   if (typeof raw !== "string" || typeof baseRev !== "number" || !Number.isInteger(baseRev))
     return failed(400, "Send the note's text and the revision it was edited from.");
   if (review !== undefined && typeof review !== "string") return failed(400, "review is a session's nonce.");
+  if (approvalId !== undefined && typeof approvalId !== "string")
+    return failed(400, "approvalId is an approval's id.");
   const result = await record.mutate(
     { op: "put", noteId, baseRev, raw },
-    { ...PERSON, ...(review !== undefined && { review }) },
+    {
+      ...PERSON,
+      ...(review !== undefined && { review }),
+      ...(approvalId !== undefined && { approvalId }),
+    },
   );
   switch (result.status) {
     case "applied":
@@ -325,14 +333,23 @@ async function saveNote(
   }
   // The RPC stub's mapped type drops `needsApproval` (its plan holds `unknown` values), so it's read as an object.
   const answer: object = result;
-  if ("planHash" in answer)
+  // A review edit the session doesn't cover ends the review; it isn't signed for one change at a time.
+  if ("planHash" in answer && review !== undefined)
     return json(
       {
         needsApproval: true,
         error:
-          review === undefined
-            ? "This change needs your passkey approval."
-            : "Your review session doesn't cover this change: it ended, or the change reaches past its items.",
+          "Your review session doesn't cover this change: it ended, or the change reaches past its items.",
+      },
+      409,
+    );
+  if ("planHash" in answer && "items" in answer)
+    return json(
+      {
+        needsApproval: true,
+        error: "This change needs your passkey approval.",
+        planHash: answer.planHash,
+        items: answer.items,
       },
       409,
     );

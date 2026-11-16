@@ -4,7 +4,7 @@
 import { Annotation, Transaction, type EditorState, type TransactionSpec } from "@codemirror/state";
 import type { SyncClient } from "@brainiac/sync";
 
-import { bodyOf, savesOnline, withBody, type Base, type Saved } from "./fields.ts";
+import { bodyOf, savesOnline, withBody, type Approval, type Base, type Saved } from "./fields.ts";
 
 /** Marks a change that came from the record, so it isn't sent back as the person's edit. */
 export const fromRecord = Annotation.define<boolean>();
@@ -56,6 +56,8 @@ export class BodyDraft {
   /** A sensitive note's online save is on its way; the next waits for it, to build on what it wrote. */
   #saving = false;
   #conflict: string | undefined;
+  /** The last save, held by the record for the person's passkey. */
+  #approval: Approval | undefined;
 
   constructor(
     client: SyncClient,
@@ -78,6 +80,11 @@ export class BodyDraft {
   /** Why the last save didn't land; the person's text stays until they try again or take the record's. */
   get conflict(): string | undefined {
     return this.#conflict;
+  }
+
+  /** The plan the last save needs the person's passkey over, while it waits for them. */
+  get approval(): Approval | undefined {
+    return this.#approval;
   }
 
   /** The person typed: `body` is the editor's whole text now. */
@@ -108,16 +115,32 @@ export class BodyDraft {
     this.#dirty = false;
     if (raw === base.raw) return;
     this.#saving = true;
-    void this.#save(this.#noteId, base, raw).then((saved) => {
-      this.#saving = false;
-      if (saved && "error" in saved) {
-        this.#conflict = saved.error;
-        this.#dirty = true;
-      } else if (saved) this.#base = saved;
-      // A push that came while the save was on its way was held back; catch up with whichever is newer now,
-      // after sending anything typed meanwhile on what this save wrote.
-      this.#changed(this.fromRecord());
-    });
+    void this.#save(this.#noteId, base, raw).then((saved) => this.#landed(saved));
+  }
+
+  #landed(saved: Saved): void {
+    this.#saving = false;
+    if (saved && "error" in saved) {
+      this.#conflict = saved.error;
+      this.#approval = saved.approval;
+      this.#dirty = true;
+    } else if (saved) this.#base = saved;
+    // A push that came while the save was on its way was held back; catch up with whichever is newer now,
+    // after sending anything typed meanwhile on what this save wrote.
+    this.#changed(this.fromRecord());
+  }
+
+  /**
+   * The person approved the held save with their passkey: the same text goes again on the same base, citing the
+   * approval. Anything typed since follows it once it lands, on what it wrote.
+   */
+  async approved(approvalId: string): Promise<void> {
+    const approval = this.#approval;
+    if (!approval) return;
+    this.#conflict = undefined;
+    this.#approval = undefined;
+    this.#saving = true;
+    this.#landed(await approval.resend(approvalId));
   }
 
   /**
@@ -148,6 +171,7 @@ export class BodyDraft {
   /** After a conflict: send the person's text again on the same base (a real conflict answers the same). */
   retry(): void {
     this.#conflict = undefined;
+    this.#approval = undefined;
     this.#dirty = true;
     this.flush();
   }
@@ -155,6 +179,7 @@ export class BodyDraft {
   /** After a conflict: drop the person's text for the record's. Returns the body to show. */
   takeRecord(): string | undefined {
     this.#conflict = undefined;
+    this.#approval = undefined;
     this.#dirty = false;
     return this.fromRecord();
   }

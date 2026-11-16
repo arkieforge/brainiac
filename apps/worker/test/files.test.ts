@@ -383,6 +383,70 @@ describe("sensitive note edits", () => {
     expect(await base.rev(ID)).toBe(2);
   });
 
+  it("to a verified value land once the person signs the plan the record answered with, and only that edit", async () => {
+    const base = await record("verified");
+    const ielts = readFileSync(
+      join(import.meta.dirname, "../../../fixtures/nadia/facts/tests/ielts-2026-11.md"),
+      "utf8",
+    );
+    await base.seed([{ path: "facts/tests/ielts-2026-11.md", raw: ielts, class: "sensitive" }]);
+    const edited = ielts.replace("overall: 8.0", "overall: 8.5");
+    const asked = await save("verified", { raw: edited, baseRev: 1 });
+    expect(asked.status).toBe(409);
+    const plan = (await asked.json()) as {
+      needsApproval: boolean;
+      planHash: string;
+      items: { patch: { fields: Record<string, unknown> } }[];
+    };
+    expect(plan.needsApproval).toBe(true);
+    expect(plan.items.map((item) => item.patch.fields["overall"])).toEqual([{ before: 8, after: 8.5 }]);
+    expect(await base.rev(ID)).toBe(1);
+
+    const passkey = createAuthenticator(SITE);
+    const neon = {
+      credentialId: passkey.id,
+      publicKey: passkey.publicKey,
+      counter: 0,
+      approvesAt: new Date(0).toISOString(),
+      origin: SITE,
+    };
+    const approved = await mf.dispatchFetch(`${SITE}/api/approve`, {
+      method: "POST",
+      headers: {
+        ...tab("verified"),
+        "content-type": "application/json",
+        "x-test-passkey": JSON.stringify(neon),
+      },
+      body: JSON.stringify({
+        items: plan.items,
+        response: passkey.authenticate({ challenge: plan.planHash }),
+      }),
+    });
+    const { approvalId } = (await approved.json()) as { approvalId: string };
+    expect(approved.status).toBe(200);
+
+    // The approval lets through the change it was signed for, not another edit sent with it.
+    const other = await save("verified", {
+      raw: ielts.replace("overall: 8.0", "overall: 9.0"),
+      baseRev: 1,
+      approvalId,
+    });
+    expect(other.status).toBe(409);
+    expect(await base.rev(ID)).toBe(1);
+    const landed = await save("verified", { raw: edited, baseRev: 1, approvalId });
+    expect(await landed.json()).toEqual({ rev: 2 });
+    expect(await base.rev(ID)).toBe(2);
+    expect(await base.actorOf(ID)).toBe("human");
+    // Spent: sending it again cites nothing.
+    const again = await save("verified", {
+      raw: ielts.replace("overall: 8.0", "overall: 7.5"),
+      baseRev: 2,
+      approvalId,
+    });
+    expect(again.status).toBe(409);
+    expect(await base.rev(ID)).toBe(2);
+  });
+
   it("refuse another origin's pages, another record's session and a malformed body", async () => {
     const base = await record("guarded");
     await base.seed([{ path: "facts/tests/ielts.md", raw: raw("IELTS"), class: "sensitive" }]);

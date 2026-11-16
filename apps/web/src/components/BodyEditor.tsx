@@ -7,8 +7,9 @@ import type { SyncClient } from "@brainiac/sync";
 import { useEffect, useRef, useState } from "react";
 
 import { BodyDraft, fromRecord, recordChange } from "../editing.ts";
-import { bodyOf } from "../fields.ts";
+import { bodyOf, type Approval } from "../fields.ts";
 import { saveOnline } from "../record.ts";
+import { HeldEdit } from "./Approval.tsx";
 
 /** How long typing pauses before the body is sent: short, well inside the 300 ms an edit has to reach a tab. */
 const TYPING_MS = 150;
@@ -30,8 +31,13 @@ export function BodyEditor({
   readonly readOnly: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const actions = useRef<{ retry: () => void; takeRecord: () => void }>(undefined);
+  const actions = useRef<{
+    retry: () => void;
+    takeRecord: () => void;
+    approved: (approvalId: string) => Promise<void>;
+  }>(undefined);
   const [conflict, setConflict] = useState<string>();
+  const [approval, setApproval] = useState<Approval>();
   const [preview, setPreview] = useState(() => bodyOf(client.working(noteId) ?? ""));
   useEffect(() => {
     const node = host.current;
@@ -52,6 +58,7 @@ export function BodyEditor({
       const spec = body === undefined ? undefined : recordChange(view.state, body);
       if (spec) view.dispatch(spec);
       setConflict(draft.conflict);
+      setApproval(draft.approval);
     };
     const view = new EditorView({
       parent: node,
@@ -76,7 +83,11 @@ export function BodyEditor({
         ],
       }),
     });
-    actions.current = { retry: () => draft.retry(), takeRecord: () => show(draft.takeRecord()) };
+    actions.current = {
+      retry: () => draft.retry(),
+      takeRecord: () => show(draft.takeRecord()),
+      approved: (approvalId) => draft.approved(approvalId),
+    };
     const unsubscribe = client.subscribe((ids) => {
       if (!ids.has(noteId)) return;
       // Unsent typing goes first (the draft sends it on the text it was typed over), then the record's text.
@@ -94,7 +105,17 @@ export function BodyEditor({
     <div className="body">
       <div className="editor">
         <div ref={host} />
-        {conflict && (
+        {approval && (
+          <HeldEdit
+            approval={approval}
+            send={async (approvalId) => {
+              await actions.current?.approved(approvalId);
+              return undefined;
+            }}
+            keep={() => actions.current?.takeRecord()}
+          />
+        )}
+        {conflict && !approval && (
           <p role="alert">
             {conflict} Your text is still here.{" "}
             <button type="button" onClick={() => actions.current?.retry()}>
