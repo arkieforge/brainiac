@@ -583,6 +583,53 @@ kbd,
 .note-side > .fields:not(:last-child) {
   min-height: 0;
 }
+/* An application's requirements: dense rows, each met (ok) or missing (faint), with the notes or the why under it. */
+.requirements {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.requirements h2 {
+  display: flex;
+  justify-content: space-between;
+}
+.requirements ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.requirements li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.requirements li:last-child {
+  border-bottom: 0;
+}
+.requirements li > svg,
+.requirements li > input {
+  margin: 1px 0 0;
+  width: 15px;
+  height: 15px;
+}
+.requirements li.met > svg {
+  color: var(--ok);
+}
+.requirements li.missing > svg {
+  color: var(--fg-faint);
+}
+.requirements li > input {
+  accent-color: var(--ok);
+}
+.requirements .why {
+  font-size: var(--small);
+  color: var(--fg-faint);
+  overflow-wrap: anywhere;
+}
+.requirements .why a {
+  color: var(--fg-muted);
+}
 .file-facts {
   display: flex;
   flex-wrap: wrap;

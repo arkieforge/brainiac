@@ -14,6 +14,7 @@ import { fileLabel } from "./Files.tsx";
 import { MoveForm } from "./MoveForm.tsx";
 import { titleTransition } from "./Overview.tsx";
 import { Pip } from "./Pip.tsx";
+import { Requirements } from "./Requirements.tsx";
 
 /** The stored file a note's `file:` names, resolved from the note's own folder, as the record resolves it. */
 function fileOf(files: readonly FileItem[], path: string, file: unknown): FileItem | undefined {
@@ -95,6 +96,8 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
   // A sensitive note's edits save online only (fields.ts, `savesOnline`), so offline it can only be read.
   const readOnly = remote.class === "sensitive" && status !== "live";
   const file = fileOf(files, remote.path, data["file"]);
+  // An application's requirements show as a checklist of their own, judged, rather than as a field's text.
+  const application = data["type"] === "Application";
   return (
     <article className="note">
       <header className="pane-head">
@@ -114,6 +117,15 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
       </header>
       <div className="note-grid">
         <div className="note-main">
+          {application && (
+            <Requirements
+              client={client}
+              manifest={manifest}
+              application={{ id: noteId, path: remote.path, data }}
+              live={status === "live"}
+              disabled={readOnly}
+            />
+          )}
           {file && <FileView file={file} />}
           <BodyEditor key={noteId} client={client} noteId={noteId} readOnly={readOnly} />
         </div>
@@ -129,7 +141,7 @@ export function NotePane({ noteId }: { readonly noteId: string }) {
           {file && <KindForm key={file.sha256} file={file} />}
           {file && showable(file) && <ShareForm file={file} />}
           <FieldForm
-            fields={fieldsOf(data, manifest)}
+            fields={fieldsOf(data, manifest).filter((f) => !(application && f.name === "requirements"))}
             client={client}
             noteId={noteId}
             manifest={manifest}
