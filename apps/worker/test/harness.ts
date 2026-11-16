@@ -16,7 +16,7 @@ import {
   type Principal,
 } from "@brainiac/base";
 
-import { ownershipCode } from "@brainiac/core";
+import { ownershipCode, type PlanItem } from "@brainiac/core";
 
 import type { Approver } from "../src/approvals.ts";
 import { Base, type JobMessage } from "../src/base.ts";
@@ -157,15 +157,19 @@ export class TestBase extends Base {
     return notes.map((note) => {
       const mutation = { op: "create", ...note } as const;
       let result = mutate(this.sql, mutation, ctx);
-      if (result.status === "needsApproval") {
-        const signed = { credentialId: "test-passkey", counter: 0, assertion: "{}" };
-        const approved = recordApproval(this.sql, result.items, signed, ctx.now);
-        if ("error" in approved) throw new Error(approved.error);
-        result = mutate(this.sql, mutation, { ...ctx, approvalId: approved.approvalId });
-      }
+      if (result.status === "needsApproval")
+        result = mutate(this.sql, mutation, { ...ctx, approvalId: this.sign(result.items) });
       if (result.status !== "applied") throw new Error(JSON.stringify(result));
       return result.noteId;
     });
+  }
+
+  /** Records the person's signature over `items` as if their passkey checked out, and returns the approval's id. */
+  sign(items: readonly PlanItem[]): string {
+    const signed = { credentialId: "test-passkey", counter: 0, assertion: "{}" };
+    const approved = recordApproval(this.sql, items, signed, Date.now());
+    if ("error" in approved) throw new Error(approved.error);
+    return approved.approvalId;
   }
 
   /** An MCP client's connection, if it has one. */

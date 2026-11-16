@@ -294,6 +294,9 @@ export class Daemon {
               ? { token: tokenKey, grants: message.connection, manifest: message.manifest ?? null }
               : undefined,
           );
+        // The manifest changed online (organize): a hello on the same socket brings it in the next welcome, so the
+        // copy answers offline with the new types.
+        if (message.type === "manifest") return this.#client.connect();
         this.#client.receive(message);
         if (message.type !== "snapshot" && message.type !== "changes") return;
         if (this.#client.state.cursor === null) return;

@@ -70,11 +70,15 @@ let files: readonly FileItem[] = [];
 let proposals: readonly ProposalItem[] | undefined;
 /** Counts asks for the list, so an answer overtaken by a later ask is dropped. */
 let proposalsAsked = 0;
+/** The same for the manifest and the file list. */
+let refreshAsked = 0;
 /** The record has answered with its manifest this visit: until then, checks that need the schema can't run. */
 let schemaLoaded = false;
 let release: (() => Promise<void>) | undefined;
 let socket: WebSocket | undefined;
 let retry = 0;
+/** This visit's socket has been live before: going live again means it was away, and may have missed a push. */
+let wasLive = false;
 let started = false;
 /** Signed out in some tab: this one holds no copy and never reconnects. */
 let stopped = false;
@@ -144,6 +148,8 @@ function connect() {
     const message: ServerMessage = JSON.parse(event.data);
     // The record's proposals changed: one came, went, or turned into a conflict.
     if (message.type === "proposals") return void loadProposals();
+    // Its manifest changed (organize): forms and checks take the new types without a reload.
+    if (message.type === "manifest") return void refresh();
     client?.receive(message);
     // Live once the client took the record's answer to its hello (what changed, or all of it): before that, this
     // tab holds only its stored copy, without the sensitive notes it never keeps. An answer it set aside (one an
@@ -153,8 +159,13 @@ function connect() {
       (message.type === "snapshot" && cursor === message.seq) ||
       (message.type === "changes" && cursor === message.to)
     ) {
-      // Back online: proposals decided or made while this tab was away come in with the record.
-      if (status !== "live") void loadProposals();
+      // Back online: proposals decided or made while this tab was away come in with the record, and so does a
+      // manifest changed meanwhile (start already asked for it on the first connect).
+      if (status !== "live") {
+        void loadProposals();
+        if (wasLive) void refresh();
+      }
+      wasLive = true;
       setStatus("live");
     }
   });
@@ -257,15 +268,22 @@ function post(
   return next;
 }
 
-/** Loads the manifest and the file list; both come from the record over HTTP, not the sync socket. */
+/**
+ * Loads the manifest and the file list; both come from the record over HTTP, not the sync socket, which only says
+ * when the manifest changed.
+ */
 export async function refresh() {
-  const [schema, list] = await Promise.all([api("/api/schema"), api("/api/files")]);
-  const next = {
-    manifest: schema.ok ? (await schema.json()).manifest : manifest,
-    schemaLoaded: schema.ok || schemaLoaded,
-    files: list.ok ? (await list.json()).files : files,
-  };
-  if (stopped) return;
+  const asked = ++refreshAsked;
+  const next = await Promise.all([api("/api/schema"), api("/api/files")])
+    .then(async ([schema, list]) => ({
+      manifest: schema.ok ? (await schema.json()).manifest : manifest,
+      schemaLoaded: schema.ok || schemaLoaded,
+      files: list.ok ? (await list.json()).files : files,
+    }))
+    // Offline: what this tab has stays; the next time it goes live it asks again.
+    .catch(() => undefined);
+  // An answer overtaken by a later ask (the manifest changed again meanwhile) would put the older one back.
+  if (stopped || !next || asked !== refreshAsked) return;
   ({ manifest, files, schemaLoaded } = next);
   changed();
 }

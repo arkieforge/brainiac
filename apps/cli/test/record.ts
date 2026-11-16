@@ -148,11 +148,15 @@ export class TestRecord {
     return getNoteByPath(this.sql, path);
   }
 
-  /** From now on every note needs a title, as a record's manifest can require. */
+  /**
+   * From now on every note needs a title, as a record's manifest can require, and every open socket hears the
+   * manifest changed, as the DO tells them.
+   */
   requireTitles(): void {
     const manifest =
       "schema_version: 1\ntypes:\n  Note:\n    version: 1\n    fields:\n      title: {kind: text, required: true}\n";
     this.sql.all("INSERT INTO schema (version, manifest) VALUES (1, ?)", manifest);
+    for (const peer of this.#peers) this.#later(peer, () => peer.on.message({ type: "manifest" }));
   }
 
   liveCount(): number {
@@ -178,7 +182,11 @@ export class TestRecord {
     }, 0);
   }
 
+  /** How many sockets clients have opened. */
+  connections = 0;
+
   readonly connect: Connect = (on) => {
+    this.connections++;
     const peer: Peer = { on, open: true };
     this.#peers.add(peer);
     this.#later(peer, () => on.open());

@@ -137,8 +137,7 @@ export type ServerMessage =
        * To a connection's client (a laptop's daemon), what its local copy needs to answer reads offline as that
        * connection: its grants as of now, and the record's manifest. A change to the grants closes the socket, so
        * the next welcome carries them. Absent for the person, whose clients read everything.
-       * shortcut: a manifest changed while the socket is open reaches the device on its next connect; nothing
-       * changes a record's manifest yet.
+       * A manifest changed while the socket is open comes as `manifest`, and the client says hello again for it.
        */
       readonly connection?: Grants;
       readonly manifest?: string | null;
@@ -176,6 +175,12 @@ export type ServerMessage =
    * the person's sockets get it, and it names nothing; the site then asks for the list (`/api/proposals`).
    */
   | { readonly type: "proposals" }
+  /**
+   * The record's manifest changed (an organize run, or an undo of one). It names nothing, so no change carries
+   * manifest bytes: the site reads it again (`/api/schema`), and a connection's client (a laptop's daemon) says
+   * hello again on the same socket, and its welcome carries the manifest. Sent to every socket.
+   */
+  | { readonly type: "manifest" }
   /**
    * Plans the person signed that no change has cited yet: a client resends each blocked edit whose plan is one of
    * these, citing its approval. Sent after every welcome, and to every socket when the person signs one, so a

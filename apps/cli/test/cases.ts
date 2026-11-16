@@ -1507,6 +1507,29 @@ const cases: Record<string, () => Promise<void>> = {
     equal(ask("describe", {}).you.sensitive, false, "the grants as the record last said");
   },
 
+  async "a manifest changed online reaches the offline copy over the open socket, without reconnecting"() {
+    const record = new TestRecord();
+    record.seed(A, "notes/a.md");
+    record.seed(B, "notes/b.md");
+    record.asConnection();
+    const token = "brn_e0a1_manifest";
+    const v = await open(record, folder("brainiac-vault-"), { tokenKey: tokenKey(token) });
+    const sockets = record.connections;
+    const note = () => {
+      const copy = localCopy({ vault: v.root, deviceId: "laptop", token, keepSensitive: false });
+      const answer = copy.call("describe", {});
+      copy.close();
+      ok(answer.ok, JSON.stringify(answer));
+      return (answer.value as { types: Record<string, unknown> }).types["Note"];
+    };
+    equal(note(), undefined, "no manifest yet");
+    // An organize run online adds a type: the copy answers with it once the next welcome lands.
+    record.requireTitles();
+    await v.until(() => note() !== undefined, "the new manifest in the copy");
+    equal(record.connections, sockets, "the same socket");
+    v.daemon.stop();
+  },
+
   async "offline, the local copy answers only for the token it synced with"() {
     const record = new TestRecord();
     record.seed(A, "notes/a.md");

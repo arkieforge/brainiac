@@ -98,6 +98,7 @@ import {
   EMBED_MODEL,
   finishJob,
   jobInput,
+  manifestVersion,
   markDispatched,
   migrate,
   mutate,
@@ -214,6 +215,8 @@ export class Base extends DurableObject<Env> {
   #dataKey: Promise<Uint8Array> | undefined;
   /** The proposals counter the person's sockets last heard about (`proposalsRev`). */
   #proposals: number;
+  /** The manifest version every socket last heard about (`manifestVersion`). */
+  #manifest: number;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -223,6 +226,7 @@ export class Base extends DurableObject<Env> {
     // alarm is re-armed after one; the weekly questions email wakes every record, so none waits longer than a week.
     const { from, to } = migrate(this.sql);
     this.#proposals = proposalsRev(this.sql);
+    this.#manifest = manifestVersion(this.sql);
     if (reindex(this.sql) || from !== to) this.wake();
     // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
     // vault key the first time it wakes, off the request it woke for.
@@ -1116,6 +1120,7 @@ export class Base extends DurableObject<Env> {
     const at = nextWake(this.sql, Date.now());
     void (at === null ? this.ctx.storage.deleteAlarm() : this.ctx.storage.setAlarm(at));
     this.#tellProposals();
+    this.#tellManifest();
   }
 
   /**
@@ -1132,5 +1137,19 @@ export class Base extends DurableObject<Env> {
       const socket: Socket | null = ws.deserializeAttachment();
       if (socket?.clientId && !socket.actor.startsWith("connection:")) ws.send(text);
     }
+  }
+
+  /**
+   * Tells every open socket the manifest changed, once per change, after the write that changed it (`wake` follows
+   * every write, as for proposals). Only that it changed: the manifest itself goes to whoever asks again.
+   * Sockets that haven't said hello hear it too, since a tab reads the manifest over HTTP while its hello is
+   * on the way and could otherwise keep the one from before.
+   */
+  #tellManifest(): void {
+    const version = manifestVersion(this.sql);
+    if (version === this.#manifest) return;
+    this.#manifest = version;
+    const text = JSON.stringify({ type: "manifest" } satisfies ServerMessage);
+    for (const ws of this.ctx.getWebSockets()) ws.send(text);
   }
 }
