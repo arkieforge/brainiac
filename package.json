@@ -19,6 +19,7 @@
     "eval:filing": "node evals/filing/run.ts",
     "eval:mcp-tool-use": "node evals/mcp-tool-use/run.ts",
     "eval:photos": "node evals/photos/run.ts",
+    "eval:review-detectors": "node evals/review-detectors/run.ts",
     "logs": "node scripts/logs.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"
