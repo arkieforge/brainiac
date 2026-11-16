@@ -28,7 +28,7 @@ import { serveTools } from "../../packages/base/src/mcp.ts";
 import { nodeSql } from "../../packages/base/src/node.ts";
 
 export const ROOT = join(import.meta.dirname, "../..");
-const FIXTURES = join(ROOT, "fixtures/nadia");
+export const FIXTURES = join(ROOT, "fixtures/nadia");
 /** The agent skill the plugin loads (#18), as every eval hands it to the model. */
 export const SKILL = readFileSync(join(ROOT, "apps/cli/plugin/skills/brainiac/SKILL.md"), "utf8");
 const BASE_ID = "e0a1";

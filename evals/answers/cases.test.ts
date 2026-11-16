@@ -74,6 +74,8 @@ describe("answers eval", () => {
         "Your CGPA is 3.82 on a scale of 0.00 to 4.00 (unverified).",
         // The sixth paid run: "either value" points back at the CGPA and its scale.
         "Your record lists your CGPA as **3.82** on a scale of **4**. You haven't marked either value as verified yet.",
+        // A paid Sonnet run in the mcp-tool-use eval (#54): the label two sentences on, pointing back at both values.
+        "Your CGPA is **3.82** on a scale of **4**. That's for your BSc Computer Science at Northvale University. Neither value has been verified by you.",
       ],
       "ielts-expiry-unverified": [
         "It expires on 2 November 2028 (unverified).",
@@ -232,6 +234,17 @@ describe("answers eval", () => {
       ["latest-writing-score", "Writing 7.0. That puts you in the top 12% of takers.", /says 12/],
       ["cgpa-unverified", "Your CGPA is 3.82 out of 4.", /unverified/],
       ["cgpa-unverified", "About 3.8 (unverified).", /3\.82/],
+      // Two sentences on, "neither value" may mean another value given between: it reads as no label.
+      [
+        "cgpa-unverified",
+        "Your CGPA is 3.82 on a scale of 4. Your IELTS overall is 8. Neither value has been verified.",
+        /unverified/,
+      ],
+      [
+        "cgpa-unverified",
+        "Your CGPA is 3.82. You checked it. Neither value has been verified.",
+        /unverified/,
+      ],
       ["ielts-expiry-unverified", "It expires November 2028, not verified.", /gives November 2028/],
       [
         "ielts-expiry-unverified",

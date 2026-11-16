@@ -7,9 +7,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import { readBaseline, report } from "./cli.ts";
-import { checkModel, codexModel, command, fromClaude, fromCodex } from "./runners.ts";
+import { checkModel, codexModel, command, fromClaude, fromCodex, refreshedAfter } from "./runners.ts";
 import { another, passes, sampled } from "./sampling.ts";
 
+/** The value after `flag` in a command's arguments. */
+const at = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
 const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** A run of two samples whose results are `oks`, a 3rd one passing. */
 const sampleRun = (oks: boolean[], strict: boolean) =>
@@ -73,10 +75,59 @@ describe("runners", () => {
     expect(codex).toContain("shell_tool");
   });
 
+  it("hands back only a Codex sign-in refreshed after the real one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "brainiac-eval-test-"));
+    try {
+      const auth = (name: string, value: unknown) => {
+        writeFileSync(join(dir, name), JSON.stringify(value));
+        return join(dir, name);
+      };
+      const real = auth("real.json", {
+        last_refresh: "2026-11-01T00:00:00Z",
+        tokens: { refresh_token: "a" },
+      });
+      const newer = { last_refresh: "2026-11-16T00:00:00Z", tokens: { refresh_token: "b" } };
+      expect(refreshedAfter(auth("newer.json", newer), real)).toBe(true);
+      expect(
+        refreshedAfter(auth("older.json", { ...newer, last_refresh: "2026-10-01T00:00:00Z" }), real),
+      ).toBe(false);
+      expect(refreshedAfter(auth("bare.json", { last_refresh: newer.last_refresh }), real)).toBe(false);
+      writeFileSync(join(dir, "junk.json"), "not json");
+      expect(refreshedAfter(join(dir, "junk.json"), real)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives native tools only with a vault, each harness sandboxed to its copy", () => {
+    const claude = command({ ...ASK, model: undefined, vault: "/vault" }).args;
+    expect([at(claude, "--tools"), at(claude, "--permission-mode"), claude.includes("--restricted")]).toEqual(
+      ["Bash,Read,Edit,Write,Glob,Grep", "acceptEdits", true],
+    );
+    expect(JSON.parse(at(claude, "--settings") ?? "{}")).toEqual({
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+    });
+    expect(at(command({ ...ASK, model: undefined }).args, "--tools")).toBe("");
+    const codex = command({ ...ASK, model: "gpt-6.1-sol", vault: "/vault" }).args;
+    expect([at(codex, "--sandbox"), codex.includes("shell_tool")]).toEqual(["workspace-write", false]);
+  });
+
   it("reads Codex's events as Claude Code names them: apply_patch is an Edit, a command is Bash", () => {
     const run = fromCodex(
       [
         item({ type: "mcp_tool_call", server: "brainiac", tool: "describe", arguments: {} }),
+        item({
+          type: "mcp_tool_call",
+          server: "brainiac",
+          tool: "update",
+          result: { isError: true, content: [{ type: "text", text: "No note with id x." }] },
+        }),
+        item({
+          type: "mcp_tool_call",
+          server: "brainiac",
+          tool: "create",
+          result: { content: [{ type: "text", text: '{"status":"duplicate"}' }] },
+        }),
         item({ type: "command_execution", command: "cat me.md" }),
         item({ type: "file_change", changes: [{ path: "me.md", kind: "update" }] }),
         item({ type: "agent_message", text: "draft" }),
@@ -91,7 +142,16 @@ describe("runners", () => {
     expect(() => fromCodex([item({ type: "agent_message", text: "half" })], "gpt-6.1-sol")).toThrow(
       /didn't finish/,
     );
-    expect(run.calls.map((call) => call.tool)).toEqual(["mcp__brainiac__describe", "Bash", "Edit"]);
+    expect(run.calls.map((call) => `${call.tool}${call.failed ? " (failed)" : ""}`)).toEqual([
+      "mcp__brainiac__describe",
+      "mcp__brainiac__update (failed)",
+      "mcp__brainiac__create",
+      "Bash",
+      "Edit",
+    ]);
+    expect(run.calls.find((call) => call.tool === "mcp__brainiac__create")?.result).toEqual({
+      status: "duplicate",
+    });
     expect([run.text, run.model, run.usage]).toEqual([
       "Northvale University.",
       "gpt-6.1-sol",
@@ -104,7 +164,21 @@ describe("runners", () => {
       { type: "system", subtype: "init", model: "claude-opus-5-5" },
       {
         type: "assistant",
-        message: { content: [{ type: "tool_use", name: "mcp__brainiac__ask", input: { q: 1 } }] },
+        message: {
+          content: [
+            { type: "tool_use", id: "t1", name: "mcp__brainiac__ask", input: { q: 1 } },
+            { type: "tool_use", id: "t2", name: "mcp__brainiac__update", input: {} },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: '{"notes":[]}' }] },
+            { type: "tool_result", tool_use_id: "t2", is_error: true, content: "No note with id x." },
+          ],
+        },
       },
       {
         type: "result",
@@ -115,7 +189,10 @@ describe("runners", () => {
       },
     ]);
     expect(run).toEqual({
-      calls: [{ tool: "mcp__brainiac__ask", input: { q: 1 } }],
+      calls: [
+        { tool: "mcp__brainiac__ask", input: { q: 1 }, result: { notes: [] } },
+        { tool: "mcp__brainiac__update", input: {}, failed: true, result: "No note with id x." },
+      ],
       text: "Northvale.",
       model: "claude-opus-5-5",
       usage: { ...NO_USAGE, input: 3, output: 9 },

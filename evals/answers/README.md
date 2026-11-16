@@ -36,7 +36,11 @@ wrong answer passing on phrasing a model plausibly writes, with that answer adde
   with "in", "for" or "on" between); "You verified the scores, but not the expiry date"; a month given before the
   exact date ("in September 2025 (2025-09-30)"); and, in the internship case, a later sentence giving another 2025
   date (another note's, like the BSc's end), which reads as a correction; a range placed before "scale" ("on a 0-4
-  scale") or after "scale from" ("on a scale from 0 to 4"), whose 0 reads as a made-up number; and "You haven't verified 3.82 yet", which reads as denying the value.
+  scale") or after "scale from" ("on a scale from 0 to 4"), whose 0 reads as a made-up number; and "You haven't verified 3.82 yet", which reads as denying the value;
+  and a label more than one sentence after the value, unless it points back at every value ("Neither value has been
+  verified") and the sentence between gives no number.
+- A value's label may come two sentences after it in that one shape, from a real Sonnet answer in the
+  `mcp-tool-use` eval (#54), which reuses these graders for its canaries.
 - These let a wrong answer pass: every day and month in the record counts as a number it holds, so a made-up
   number from 1 to 31 isn't caught as invented; and any "n't ... checked" counts as the unverified label, so
   "it hasn't changed since you checked it" passes. Context hands the model `verified: false` and the skill says to
