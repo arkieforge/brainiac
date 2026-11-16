@@ -1,5 +1,6 @@
 // The site's own routes beside `/sync`: who is signed in, the record's manifest, its files, its secrets and the
-// fills agents asked for, the person's passkey approvals, and whether the weekly questions email goes out. Each one finds the
+// fills agents asked for, its proposals, the person's passkey approvals, and whether the weekly questions email
+// goes out. Each one finds the
 // record from the session (through the registry), calls one method on it and maps the answer; none takes a base id
 // from the request. A file's bytes never come from here: only a single-use token for the usercontent origin.
 import type { FileToken } from "@brainiac/base";
@@ -96,6 +97,12 @@ async function serveApi(
   const note = /^\/api\/notes\/([0-9A-HJKMNP-TV-Z]{26})(\/move)?$/.exec(pathname);
   if (note?.[1] !== undefined && post)
     return note[2] ? moveNote(body, record, note[1]) : saveNote(body, record, note[1]);
+  if (pathname === "/api/proposals" && !post) {
+    const proposals = await record.listProposals(PERSON);
+    return "status" in proposals ? refusal(proposals) : json({ proposals });
+  }
+  const proposal = /^\/api\/proposals\/([0-9A-HJKMNP-TV-Z]{26})$/.exec(pathname)?.[1];
+  if (proposal !== undefined && post) return decideProposal(body, record, proposal);
   if (pathname === "/api/review" && post) {
     const ids = typeof body === "object" && body !== null && "noteIds" in body ? body.noteIds : undefined;
     if (
@@ -375,6 +382,56 @@ async function moveNote(
   if ("planHash" in answer && "items" in answer)
     return json({ needsApproval: true, planHash: answer.planHash, items: answer.items }, 409);
   return failed(409, "This change is waiting for you as a proposal.");
+}
+
+/**
+ * The person accepts or rejects a proposal (`POST /api/proposals/<id>`, `{ decision, approvalId? }`). Only this
+ * session route decides: the record refuses every connection. Accepting one that changes a verified value answers
+ * 409 with the plan to sign, sent again with the approval's id. A note that moved on since the proposal turns it
+ * into a conflict, which answers 409 too; the list then shows the conflict to pick.
+ */
+async function decideProposal(
+  body: unknown,
+  record: ReturnType<Env["BASE"]["get"]>,
+  proposalId: string,
+): Promise<Response> {
+  const decision = field(body, "decision");
+  const approvalId = field(body, "approvalId");
+  if (decision !== "accept" && decision !== "reject") return failed(400, "Say accept or reject.");
+  if (approvalId !== undefined && typeof approvalId !== "string")
+    return failed(400, "approvalId is an approval's id.");
+  const result = await record.decide(proposalId, decision, {
+    ...PERSON,
+    ...(approvalId !== undefined && { approvalId }),
+  });
+  // The RPC stub's mapped type drops the arms whose plans hold `unknown` values, so it's read as an object.
+  const answer: object = result;
+  if ("planHash" in answer && "items" in answer)
+    return json({ needsApproval: true, planHash: answer.planHash, items: answer.items }, 409);
+  if (!("status" in answer)) return failed(500, "The record gave no answer.");
+  switch (answer.status) {
+    case "applied":
+    case "rejected":
+      return json({ status: answer.status });
+    case "conflict":
+      return json(
+        {
+          conflict: true,
+          error: "The note changed since this was proposed, so it's now a conflict for you to pick.",
+        },
+        409,
+      );
+    case "invalid":
+      return failed(
+        400,
+        "issues" in answer && Array.isArray(answer.issues)
+          ? answer.issues.map((issue: { message: string }) => issue.message).join(" ")
+          : "That proposal can't be decided.",
+      );
+    case "forbidden":
+      return failed(403, "reason" in answer ? String(answer.reason) : "Only you decide proposals.");
+  }
+  return failed(409, "This change is waiting as a proposal again.");
 }
 
 /** The header an upload names its file in, URI-encoded so any name fits in a header. */

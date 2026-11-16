@@ -171,6 +171,11 @@ export type ServerMessage =
       readonly items: readonly NoteState[];
     }
   | Result
+  /**
+   * The record's open proposals changed: one came in, was decided, became a conflict or applied on its own. Only
+   * the person's sockets get it, and it names nothing; the site then asks for the list (`/api/proposals`).
+   */
+  | { readonly type: "proposals" }
   /** `clientSeq` skipped a number: resend from `highWater + 1`. */
   | { readonly type: "gap"; readonly clientId: string; readonly highWater: number }
   | { readonly type: "error"; readonly message: string };

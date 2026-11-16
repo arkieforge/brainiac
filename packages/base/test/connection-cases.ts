@@ -23,6 +23,9 @@ import {
   openReview,
   mutate,
   nextWake,
+  pending,
+  PERSON,
+  proposalsRev,
   planHash,
   recordApproval,
   releaseDue,
@@ -474,6 +477,53 @@ export const connectionCases: Record<string, Case> = {
     same([field(sql, role, "end"), field(sql, role, "org")], ["2025-11-30", "Acme Robotics AG"]);
     equal(proposal(sql, third.proposalId)?.kind, "conflict");
   },
+
+  "the site's list shows each open proposal with who made it and what it changes, and moves with every change":
+    (sql, fixtures) => {
+      const { role, ielts } = record(sql, fixtures);
+      const writer = granted(sql, { level: "write", sensitive: true });
+      const rev = proposalsRev(sql);
+      const held = proposed(mutate(sql, patchOf(sql, role, [set("end", "2025-10-31")]), via(writer)));
+      const secret = proposed(mutate(sql, patchOf(sql, ielts, [set("overall", 7.5)]), via(writer, T0 + 1)));
+      ok(proposalsRev(sql) > rev);
+      same(
+        pending(sql, PERSON).map((p) => [p.id, p.kind, p.by, p.autoApplyAt, p.items.map((i) => i.path)]),
+        [
+          [held.proposalId, "change", "brainiac on your laptop", held.autoApplyAt, [ROLE]],
+          [secret.proposalId, "change", "brainiac on your laptop", secret.autoApplyAt, [IELTS_OLD]],
+        ],
+      );
+      same(pending(sql, PERSON)[0]?.items[0]?.patch.fields["end"], {
+        before: "2025-09-30",
+        after: "2025-10-31",
+      });
+      // A sensitive note's proposal shows only to a reader that may see sensitive notes.
+      same(
+        pending(sql, principalOf(granted(sql, {}))).map((p) => p.id),
+        [held.proposalId],
+      );
+
+      // The note moved on: the held change becomes a conflict, shown at the note's revision now, over its value now.
+      applied(mutate(sql, patchOf(sql, role, [set("end", "2025-12-15")]), human()));
+      const before = proposalsRev(sql);
+      equal(decide(sql, held.proposalId, "accept", human()).status, "conflict");
+      ok(proposalsRev(sql) > before);
+      const [conflict] = pending(sql, PERSON);
+      equal(conflict?.kind, "conflict");
+      equal(conflict?.autoApplyAt, null);
+      same(
+        conflict?.items.map((i) => [i.noteId, i.baseRev, i.patch.fields["end"]]),
+        [[role, getNote(sql, role)?.rev, { before: "2025-12-15", after: "2025-10-31" }]],
+      );
+
+      // Decided either way, it leaves the list; so does one its connection withdraws.
+      applied(decide(sql, held.proposalId, "accept", human()));
+      equal(field(sql, role, "end"), "2025-10-31");
+      const after = proposalsRev(sql);
+      equal(withdraw(sql, secret.proposalId, via(writer)).status, "withdrawn");
+      ok(proposalsRev(sql) > after);
+      same(pending(sql, PERSON), []);
+    },
 
   "bringing back a deleted held-type note with other values is held, and so is rewriting its body": (
     sql,

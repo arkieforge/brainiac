@@ -499,3 +499,118 @@ describe("approving a blocked edit on the site", () => {
     expect((await own.approve([], own.sign(plan.planHash))).status).toBe(400);
   });
 });
+
+/** The site's own calls, as the person `user`'s tab makes them. */
+const siteCall = (user: string, path: string, body?: unknown) =>
+  mf.dispatchFetch(`${ORIGIN}${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { ...session(user), "content-type": "application/json" },
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
+
+interface Listed {
+  readonly proposals: readonly {
+    readonly id: string;
+    readonly kind: string;
+    readonly by: string;
+    readonly autoApplyAt: number | null;
+    readonly items: readonly { readonly noteId: string; readonly path: string; readonly baseRev: number }[];
+  }[];
+}
+const listed = async (user: string) => (await (await siteCall(user, "/api/proposals")).json()) as Listed;
+
+describe("deciding proposals on the site", () => {
+  it("a GitHub project accepted on one tab reaches every device, and leaves every tab's list", async () => {
+    const user = "proposals";
+    const base = await record(user);
+    const laptop = await online("proposals-laptop", session(user));
+    const phone = await online("proposals-phone", session(user));
+    const agent = await online("proposals-agent", bearer((await cliToken(base)).token));
+
+    // A repo the person picked on GitHub (the fixture student's, fictional) arrives as a proposal.
+    const told = [laptop, phone].map((tab) => tab.next((m) => m.type === "proposals"));
+    await base.githubRepos([
+      {
+        id: "R_kgDOJxSeats",
+        name: "nadia-karim/library-seat-finder",
+        url: "https://github.com/nadia-karim/library-seat-finder",
+        private: false,
+        archived: false,
+        stars: 214,
+        language: "TypeScript",
+        pushed: "2026-11-14",
+      },
+    ]);
+    await Promise.all(told);
+    const { proposals } = await listed(user);
+    expect(proposals).toMatchObject([
+      {
+        kind: "change",
+        by: "GitHub",
+        autoApplyAt: null,
+        items: [{ path: "facts/projects/library-seat-finder.md", baseRev: 0 }],
+      },
+    ]);
+    const [proposal] = proposals;
+    const noteId = proposal?.items[0]?.noteId ?? "";
+    expect(laptop.client.working(noteId)).toBeUndefined();
+
+    // Accepted on the laptop: the note reaches every device, and the phone's list hears it is gone.
+    const arrived = [laptop, phone, agent].map((d) =>
+      d.next((m) => m.type === "changes" && m.items.some((item) => item.noteId === noteId)),
+    );
+    const gone = phone.next((m) => m.type === "proposals");
+    const accepted = await siteCall(user, `/api/proposals/${proposal?.id}`, { decision: "accept" });
+    expect(await accepted.json()).toEqual({ status: "applied" });
+    await Promise.all([...arrived, gone]);
+    for (const copy of [laptop, phone, agent])
+      expect(copy.client.working(noteId)).toContain("library-seat-finder");
+    expect(await listed(user)).toEqual({ proposals: [] });
+    // Decided once: deciding it again is refused, and an agent's socket never hears about proposals.
+    expect((await siteCall(user, `/api/proposals/${proposal?.id}`, { decision: "reject" })).status).toBe(400);
+    expect(agent.received.some((text) => JSON.parse(text).type === "proposals")).toBe(false);
+  });
+
+  it("accepting a change to a verified value takes the person's passkey, then lands once", async () => {
+    const user = "proposals-verified";
+    const base = await record(user);
+    const [id = ""] = await base.seed([{ path: IELTS, raw: ielts, class: "normal" }]);
+    const { id: connectionId } = await base.addConnection({ kind: "cli" });
+    const ops = [{ op: "set", path: ["overall"], value: 8.5 }] as const;
+    const made = await base.mutate(
+      { op: "patch", noteId: id, baseRev: 1, ops },
+      { actor: `connection:${connectionId}`, connectionId },
+    );
+    expect(made.status).toBe("proposed");
+    const [proposal] = (await listed(user)).proposals;
+    expect(proposal).toMatchObject({ by: "brainiac on your laptop", items: [{ noteId: id, baseRev: 1 }] });
+
+    const path = `/api/proposals/${proposal?.id}`;
+    const asked = await siteCall(user, path, { decision: "accept" });
+    expect(asked.status).toBe(409);
+    const plan = (await asked.json()) as { needsApproval: true; planHash: string; items: unknown[] };
+    expect(plan.needsApproval).toBe(true);
+    expect(await base.rev(id)).toBe(1);
+
+    const { approve, sign } = approver(user);
+    const approved = await approve(plan.items, sign(plan.planHash));
+    const { approvalId } = (await approved.json()) as { approvalId: string };
+    expect(approved.status).toBe(200);
+    expect(await (await siteCall(user, path, { decision: "accept", approvalId })).json()).toEqual({
+      status: "applied",
+    });
+    expect(await base.rev(id)).toBe(2);
+    expect(await listed(user)).toEqual({ proposals: [] });
+  });
+
+  it("only the person's own origin decides, signed in", async () => {
+    const stranger = await mf.dispatchFetch(`${ORIGIN}/api/proposals`);
+    expect(stranger.status).toBe(401);
+    const forged = await mf.dispatchFetch(`${ORIGIN}/api/proposals/01M6AM78G0STS7TB29G7A10DCY`, {
+      method: "POST",
+      headers: { cookie: "user=proposals", origin: "https://usercontent.brainiac.test" },
+      body: JSON.stringify({ decision: "accept" }),
+    });
+    expect(forged.status).toBe(403);
+  });
+});

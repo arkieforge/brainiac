@@ -4,6 +4,7 @@ import {
   MagnifyingGlass,
   Question,
   SealCheck,
+  Tray,
   UserCircle,
   X,
   type Icon,
@@ -38,13 +39,14 @@ const STATUS: Record<Status, string> = {
 };
 
 const NAV: readonly {
-  readonly to: "/" | "/review" | "/questions";
+  readonly to: "/" | "/review" | "/questions" | "/proposals";
   readonly label: string;
   readonly icon: Icon;
 }[] = [
   { to: "/", label: "Overview", icon: House },
   { to: "/review", label: "Review", icon: SealCheck },
   { to: "/questions", label: "Questions", icon: Question },
+  { to: "/proposals", label: "Proposals", icon: Tray },
 ];
 
 // Matches the phone breakpoint in styles.css. The prerendered shell has no window, so it renders the desktop side.

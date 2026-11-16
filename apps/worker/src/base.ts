@@ -66,6 +66,8 @@ import {
   connectionOf,
   decide,
   digest,
+  pending,
+  proposalsRev,
   disconnect,
   getConnection,
   grant,
@@ -108,6 +110,7 @@ import {
   type Connection,
   type Context,
   type Decided,
+  type Pending,
   type Forbidden,
   type GrantPlan,
   type Granted,
@@ -204,6 +207,8 @@ export class Base extends DurableObject<Env> {
   protected readonly sql: Sql;
   /** The record's data key, unwrapped once per instance; reading the vault key is the only I/O it costs. */
   #dataKey: Promise<Uint8Array> | undefined;
+  /** The proposals counter the person's sockets last heard about (`proposalsRev`). */
+  #proposals: number;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -212,6 +217,7 @@ export class Base extends DurableObject<Env> {
     // when chunking or the embedding model changed. A migration can add background work (expiry reminders), so the
     // alarm is re-armed after one; the weekly questions email wakes every record, so none waits longer than a week.
     const { from, to } = migrate(this.sql);
+    this.#proposals = proposalsRev(this.sql);
     if (reindex(this.sql) || from !== to) this.wake();
     // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
     // vault key the first time it wakes, off the request it woke for.
@@ -448,7 +454,16 @@ export class Base extends DurableObject<Env> {
 
   withdraw(proposalId: string, caller: Caller): Decided {
     const ctx = this.context(caller);
-    return "status" in ctx ? ctx : withdraw(this.sql, proposalId, ctx);
+    if ("status" in ctx) return ctx;
+    const result = withdraw(this.sql, proposalId, ctx);
+    this.wake();
+    return result;
+  }
+
+  /** The open proposals the caller may see, with what each would change: the site's list to decide from. */
+  listProposals(caller: Caller): Pending[] | Forbidden {
+    const ctx = this.context(caller);
+    return "status" in ctx ? ctx : pending(this.sql, principalOf(ctx.connection));
   }
 
   decide(proposalId: string, decision: "accept" | "reject", caller: Caller): Decided {
@@ -1028,6 +1043,7 @@ export class Base extends DurableObject<Env> {
     const seq = currentSeq(this.sql);
     releaseDue(this.sql, now);
     if (currentSeq(this.sql) > seq) this.push((reader) => changesSince(this.sql, seq, reader));
+    this.#tellProposals();
     const due = dueJobs(this.sql, now);
     if (due.length > 0) {
       try {
@@ -1057,5 +1073,22 @@ export class Base extends DurableObject<Env> {
   private wake(): void {
     const at = nextWake(this.sql, Date.now());
     void (at === null ? this.ctx.storage.deleteAlarm() : this.ctx.storage.setAlarm(at));
+    this.#tellProposals();
+  }
+
+  /**
+   * Tells the person's open tabs their proposals changed, once per change, after the write that changed them. Every
+   * write is followed by `wake`, so this one read covers every way a proposal comes, goes or turns into a conflict.
+   * Connections' sockets never hear it: an agent has no proposals to decide.
+   */
+  #tellProposals(): void {
+    const rev = proposalsRev(this.sql);
+    if (rev === this.#proposals) return;
+    this.#proposals = rev;
+    const text = JSON.stringify({ type: "proposals" } satisfies ServerMessage);
+    for (const ws of this.ctx.getWebSockets()) {
+      const socket: Socket | null = ws.deserializeAttachment();
+      if (socket?.clientId && !socket.actor.startsWith("connection:")) ws.send(text);
+    }
   }
 }

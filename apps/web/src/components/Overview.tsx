@@ -9,6 +9,7 @@ import {
   Question as QuestionMark,
   SealCheck,
   Stack,
+  Tray,
   WarningCircle,
   type Icon,
 } from "@phosphor-icons/react";
@@ -236,7 +237,8 @@ function nextStep(counts: ReturnType<typeof overviewOf>["counts"], questions: nu
 
 /** See everything: every item's headline and mark, grouped by type, with the record's health on top. */
 export function Overview() {
-  const { client, manifest, status, schemaLoaded } = useRecord();
+  const { client, manifest, status, schemaLoaded, proposals } = useRecord();
+  const waiting = proposals?.length ?? 0;
   if (!client) return status === "loading" ? <OverviewLoading /> : <p className="empty">No record yet.</p>;
   const now = Date.now();
   const health = overviewOf(client, manifest, now);
@@ -245,10 +247,22 @@ export function Overview() {
   if (health.items.length === 0)
     return status === "live" ? (
       <div className="empty">
-        <Pip
-          sticker="coffee"
-          say="Nothing in your record yet. Ask your Claude to file something, or add a file."
-        />
+        {waiting > 0 ? (
+          <>
+            <Pip
+              sticker="detective"
+              say={`Nothing in your record yet, but ${plural(waiting, "proposal waits", "proposals wait")} for you.`}
+            />
+            <Link to="/proposals" className="stamp">
+              See proposals
+            </Link>
+          </>
+        ) : (
+          <Pip
+            sticker="coffee"
+            say="Nothing in your record yet. Ask your Claude to file something, or add a file."
+          />
+        )}
       </div>
     ) : (
       <OverviewLoading />
@@ -276,6 +290,17 @@ export function Overview() {
               </div>
             );
           })}
+          {waiting > 0 && (
+            <div className="warn">
+              <dt>
+                <Tray size={13} weight="fill" aria-hidden />
+                <Link to="/proposals">proposals</Link>
+              </dt>
+              <dd>
+                <NumberFlow value={waiting} />
+              </dd>
+            </div>
+          )}
           {questions.length > 0 && (
             <div>
               <dt>
