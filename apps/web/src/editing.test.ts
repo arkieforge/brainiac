@@ -142,6 +142,48 @@ describe("body draft", () => {
     expect(draft.body).toBe(bodyOf(rev5));
   });
 
+  it("holds a sensitive save the record wants a passkey for, and sends the same text on the same base once approved", async () => {
+    const { client } = tab("sensitive");
+    const server = record({ rev: 3, raw: R3 });
+    const resent: { approvalId: string; base: Base; raw: string }[] = [];
+    const sends: Base[] = [];
+    // The record holds every send for approval; a resend cites the approval and lands.
+    const save: SaveFrom = async (id, base, raw) => (
+      sends.push(base),
+      {
+        error: "This change needs your passkey approval.",
+        approval: {
+          planHash: "hash",
+          items: [],
+          resend: async (approvalId) => {
+            resent.push({ approvalId, base, raw });
+            return server.save(id, base, raw);
+          },
+        },
+      }
+    );
+    const draft = new BodyDraft(client, ID, save, server.changed);
+    draft.type("Line one.\nMine below.\n");
+    const held = server.answered();
+    draft.flush();
+    await held;
+    expect(draft.approval?.planHash).toBe("hash");
+    expect(server.state.note.rev).toBe(3);
+    draft.type("Line one.\nMine below.\nAnd more.\n"); // typed while the plan waits: not sent under it
+    const landed = server.answered();
+    await draft.approved("ap-1");
+    await landed;
+    const mine = withBody(R3, "Line one.\nMine below.\n");
+    expect(resent).toEqual([{ approvalId: "ap-1", base: { rev: 3, raw: R3 }, raw: mine }]);
+    expect(server.state.note).toEqual({ rev: 4, raw: mine });
+    // The later typing follows on what the approved save wrote, as an edit of its own with its own plan.
+    expect(sends).toEqual([
+      { rev: 3, raw: R3 },
+      { rev: 4, raw: mine },
+    ]);
+    expect(draft.body).toBe("Line one.\nMine below.\nAnd more.\n");
+  });
+
   it("lets a sensitive note's typing through when only its front-matter moved meanwhile", async () => {
     const { client, push } = tab("sensitive");
     const server = record({ rev: 3, raw: R3 });

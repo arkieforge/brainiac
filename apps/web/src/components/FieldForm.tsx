@@ -2,9 +2,10 @@ import { parseNote, type Manifest } from "@brainiac/core";
 import type { SyncClient } from "@brainiac/sync";
 import { useEffect, useRef, useState } from "react";
 
-import { commitField, editField, inputOf, type Field, type SaveOnline } from "../fields.ts";
+import { commitField, editField, inputOf, type Approval, type Field, type SaveOnline } from "../fields.ts";
 import { calm } from "../motion.ts";
 import { saveOnline } from "../record.ts";
+import { HeldEdit } from "./Approval.tsx";
 
 /** How long typing pauses before a text field's edit is sent. */
 const TYPING_MS = 400;
@@ -26,6 +27,11 @@ function FieldInput({
   const stored = inputOf(field.value);
   const [text, setText] = useState(stored);
   const [issue, setIssue] = useState<string>();
+  /** The last edit, held by the record for the person's passkey, with its place in `queue`. Component state only. */
+  const [held, setHeld] = useState<{
+    readonly approval: Approval;
+    readonly save?: { readonly value: string };
+  }>();
   const editing = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const row = useRef<HTMLLabelElement>(null);
@@ -70,14 +76,19 @@ function FieldInput({
     if (save) queue.current = [...queue.current, save];
     // An online save that turns out to change nothing (the record already had it) resolves to undefined.
     let unchanged = false;
+    let approval: Approval | undefined;
     const online: SaveOnline = (id, edit, base) =>
       saveOnline(id, edit, base).then((saved) => {
         unchanged = saved === undefined;
+        approval = saved && "approval" in saved ? saved.approval : undefined;
         return saved;
       });
+    setHeld(undefined);
     void commitField(client, noteId, manifest, field, input, online).then((problem) => {
-      if (save && (problem || unchanged)) drop(save);
-      setIssue(problem);
+      // A held edit stays queued: approved, it arrives as the person's own value.
+      if (save && (unchanged || (problem && !approval))) drop(save);
+      setIssue(approval ? undefined : problem);
+      setHeld(approval && { approval, ...(save && { save }) });
     });
   };
   const typed = (input: string) => {
@@ -144,7 +155,11 @@ function FieldInput({
         onKeyDown={(event) => event.key === "Enter" && !issue && commit(text)}
       />
     );
-  return (
+  const release = () => {
+    if (held?.save) drop(held.save);
+    setHeld(undefined);
+  };
+  const label = (
     <label htmlFor={id} ref={row}>
       <span>
         {field.name}
@@ -157,6 +172,27 @@ function FieldInput({
         </span>
       )}
     </label>
+  );
+  if (!held) return label;
+  return (
+    <>
+      {label}
+      <HeldEdit
+        approval={held.approval}
+        send={async (approvalId) => {
+          const saved = await held.approval.resend(approvalId);
+          if (saved && "error" in saved) return { error: saved.error };
+          // Landed, its value retires the queued save when the push brings it; unchanged, nothing will.
+          if (!saved) release();
+          else setHeld(undefined);
+          return undefined;
+        }}
+        keep={() => {
+          release();
+          setText(seen.current);
+        }}
+      />
+    </>
   );
 }
 

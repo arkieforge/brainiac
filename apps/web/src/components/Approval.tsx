@@ -1,6 +1,9 @@
 import { show, type PlanItem } from "@brainiac/core";
 import { useState } from "react";
 
+import { approvePlan } from "../approve.ts";
+import type { Approval } from "../fields.ts";
+
 const value = (side: object, key: "before" | "after") =>
   key in side ? show(Object.entries(side).find(([k]) => k === key)?.[1]) : "not set";
 
@@ -93,5 +96,42 @@ export function ApproveButton({
       </button>
       {error && <span role="alert"> {error}</span>}
     </>
+  );
+}
+
+/**
+ * A sensitive note's edit the record held for the person's passkey: the plan it returned, signed as shown, then
+ * the same edit sent again citing the approval (`send`). `keep` drops the edit for the record's version.
+ */
+export function HeldEdit({
+  approval,
+  send,
+  keep,
+}: {
+  readonly approval: Approval;
+  readonly send: (approvalId: string) => Promise<{ readonly error: string } | undefined>;
+  readonly keep: () => void;
+}) {
+  // Once approving starts, the edit may land: keeping the record's version then would hide it, not drop it.
+  const [approving, setApproving] = useState(false);
+  return (
+    <div className="approval" role="status">
+      <p>This change needs your passkey. Approving lets exactly this through:</p>
+      <Plan items={approval.items} />
+      <ApproveButton
+        approve={async () => {
+          setApproving(true);
+          try {
+            const approved = await approvePlan(approval.planHash, approval.items);
+            return "error" in approved ? approved : await send(approved.approvalId);
+          } finally {
+            setApproving(false);
+          }
+        }}
+      />{" "}
+      <button type="button" disabled={approving} onClick={keep}>
+        Keep the record's version
+      </button>
+    </div>
   );
 }

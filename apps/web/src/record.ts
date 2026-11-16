@@ -192,6 +192,7 @@ function post(
   edit: (raw: string) => string,
   from?: { readonly rev: number; readonly raw: string },
   review?: string,
+  approvalId?: string,
 ): Promise<Reviewed> {
   const run = async (): Promise<Reviewed> => {
     if (status !== "live")
@@ -203,11 +204,26 @@ function post(
     const res = await api(`/api/notes/${noteId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ raw, baseRev: base.rev, ...(review !== undefined && { review }) }),
+      body: JSON.stringify({
+        raw,
+        baseRev: base.rev,
+        ...(review !== undefined && { review }),
+        ...(approvalId !== undefined && { approvalId }),
+      }),
     }).catch(() => undefined);
     if (!res) return { error: "You're offline, so this edit wasn't saved." };
     const body = await res.json().catch(() => ({}));
     if (review !== undefined && body.needsApproval) return { error: body.error, ended: true };
+    // The plan exactly as the record sent it: it is what the person sees, signs and the record checks.
+    if (body.needsApproval && typeof body.planHash === "string" && Array.isArray(body.items))
+      return {
+        error: body.error,
+        approval: {
+          planHash: body.planHash,
+          items: body.items,
+          resend: (id: string) => post(noteId, () => raw, base, undefined, id),
+        },
+      };
     if (!res.ok) return { error: body.error ?? "This edit wasn't saved." };
     accepted.set(noteId, { rev: body.rev, raw });
     return { rev: body.rev, raw };
