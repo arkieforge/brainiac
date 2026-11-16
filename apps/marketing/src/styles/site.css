@@ -1330,3 +1330,44 @@ footer {
     min-height: 0;
   }
 }
+
+/* Council round 3, Opus. */
+.works > * {
+  flex: none;
+  white-space: nowrap;
+}
+.timeline .tick span {
+  white-space: nowrap;
+}
+.foot .logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  padding: 0;
+}
+.step {
+  align-items: baseline;
+}
+.step .n {
+  padding-top: 0;
+}
+.step::after {
+  top: 20px;
+}
+@media (max-width: 640px) {
+  .works {
+    padding-top: 28px;
+  }
+  section.block#how {
+    padding-top: 56px;
+  }
+}
+
+/* Council round 3, Sol: the phone terminal scrolls its full lines. */
+@media (max-width: 640px) {
+  .term .row {
+    overflow: visible;
+    width: max-content;
+  }
+}
