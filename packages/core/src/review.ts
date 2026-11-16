@@ -15,7 +15,7 @@ export interface ReviewNote {
   readonly data: Readonly<Record<string, unknown>>;
 }
 
-/** ✓ checked, ! looks wrong, ? unchecked or unproven, stale (checked over a year ago), conflict. */
+/** ✓ checked, ! looks wrong, ? unchecked or unproven, stale (checked over a year ago, or expiring soon), conflict. */
 export type Mark = "checked" | "wrong" | "unproven" | "stale" | "conflict";
 
 export type Detector =
@@ -31,8 +31,10 @@ export type Detector =
   | "proof"
   /** One name written two ways. */
   | "spelling"
-  /** An item an open application relies on runs out before the date it must be valid on. */
+  /** An item an open application relies on runs out before the date it must be valid on; the application too. */
   | "expired"
+  /** An item runs out within `REMIND_DAYS[0]` days; each open application left relying on it alone too. */
+  | "expiring"
   /** Checked, but over a year ago. */
   | "stale"
   /** One of the person's own profiles (LinkedIn, X, Google Scholar) says something else than the record. */
@@ -123,6 +125,52 @@ const isDate = (value: unknown): value is string =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * How many days before an item expires the person hears about it (docs/product/features/applications.md), and on
+ * the day itself: the record's alarm wakes at the start of each of these days (UTC), as dates are kept.
+ */
+export const REMIND_DAYS = [60, 30, 7, 0] as const;
+/** Which reminder an item is in: 60 for 60 to 31 days left, 30, 7, and 0 on the day. */
+export type Stage = (typeof REMIND_DAYS)[number];
+
+/** Whole days from `now`'s day to the day `expires` names; negative once it has passed. */
+const daysLeft = (expires: string, now: number) =>
+  Math.round((Date.parse(expires.slice(0, 10)) - Date.parse(today(now))) / DAY_MS);
+
+/** The reminder an item expiring on `expires` is in on `now`'s day, if it expires within 60 days or today. */
+export function stageOf(expires: unknown, now: number): Stage | undefined {
+  if (!isDate(expires)) return undefined;
+  const left = daysLeft(expires, now);
+  return left < 0 ? undefined : REMIND_DAYS.findLast((days) => left <= days);
+}
+
+/** When the next reminder for an item expiring on `expires` starts after `now`, if one is still to come. */
+export function nextStageAt(expires: unknown, now: number): number | undefined {
+  if (!isDate(expires)) return undefined;
+  const day = Date.parse(expires.slice(0, 10));
+  return REMIND_DAYS.map((days) => day - days * DAY_MS).find((at) => at > now);
+}
+
+/** The notes a reminder may name on `now`'s day: current (none supersedes them), expiring within 60 days or today. */
+export function remindable<T extends ReviewNote>(
+  notes: readonly T[],
+  now: number,
+): { note: T; stage: Stage }[] {
+  const resolve = resolver(notes);
+  const superseded = new Set(notes.flatMap((n) => [resolve(n, n.data["supersedes"])?.id ?? []].flat()));
+  return notes.flatMap((note) => {
+    const stage = superseded.has(note.id) ? undefined : stageOf(note.data["expires"], now);
+    return stage === undefined ? [] : [{ note, stage }];
+  });
+}
+
+/** When an item that hasn't expired yet does, as a reminder says it: `2026-12-20, in 35 days`, or `today`. */
+export function expiresIn(expires: string, now: number): string {
+  const left = daysLeft(expires, now);
+  return `${expires.slice(0, 10)}, ${left === 0 ? "today" : `in ${left} ${left === 1 ? "day" : "days"}`}`;
+}
 
 /** A value as a line of text shows it. */
 export function show(value: unknown): string {
@@ -844,7 +892,12 @@ function* requirements(
     }
 }
 
-/** An item an open application relies on that runs out before the date it must be valid on, with no valid one beside it. */
+/**
+ * Expiry, flagged on the item and on each open application that relies on it. An item a requirement relies on
+ * (no match without an expiry beside it) that runs out before the date it must be valid on is `expired`, on both.
+ * Otherwise an item that runs out within `REMIND_DAYS[0]` days is `expiring`, the reminder the record's alarm also
+ * emails, and so is each application whose requirement it is the last to meet on today's date.
+ */
 function expiries(
   notes: readonly ReviewNote[],
   current: readonly ReviewNote[],
@@ -852,20 +905,50 @@ function expiries(
   now: number,
   add: Add,
 ) {
+  const expired = new Set<string>();
   for (const { application, matches, on, named } of requirements(notes, current, resolve, now)) {
     const expiring = matches.filter((note) => isDate(note.data["expires"]));
     if (expiring.length === 0 || expiring.length < matches.length) continue;
-    if (expiring.some((note) => String(note.data["expires"]).slice(0, 10) >= on)) continue;
     const latest = expiring.toSorted((a, b) =>
       String(b.data["expires"]).localeCompare(String(a.data["expires"])),
     )[0];
     if (!latest) continue;
+    const expires = String(latest.data["expires"]).slice(0, 10);
+    if (expires < on) {
+      expired.add(latest.id);
+      add({
+        noteId: latest.id,
+        detector: "expired",
+        field: "expires",
+        evidence: `Expires ${expires}, before ${labelOf(application)}${named ? `'s ${named}` : ""} ${on}`,
+        related: [application.id],
+      });
+      add({
+        noteId: application.id,
+        detector: "expired",
+        field: "requirements",
+        evidence: `Relies on ${labelOf(latest)}, which ${named ? `expires ${expires}, before its ${named} ${on}` : `expired ${expires}`}`,
+        related: [latest.id],
+      });
+    } else if (named === undefined && stageOf(expires, now) !== undefined)
+      // Valid on the date its check names, the application is safe; one checked on today's date isn't for long.
+      add({
+        noteId: application.id,
+        detector: "expiring",
+        field: "requirements",
+        evidence: `Relies on ${labelOf(latest)}, which expires ${expiresIn(expires, now)}`,
+        related: [latest.id],
+      });
+  }
+  for (const note of current) {
+    const expires = note.data["expires"];
+    if (expired.has(note.id) || !isDate(expires) || stageOf(expires, now) === undefined) continue;
     add({
-      noteId: latest.id,
-      detector: "expired",
+      noteId: note.id,
+      detector: "expiring",
       field: "expires",
-      evidence: `Expires ${String(latest.data["expires"]).slice(0, 10)}, before ${labelOf(application)}${named ? `'s ${named}` : ""} ${on}`,
-      related: [application.id],
+      evidence: `Expires ${expiresIn(expires, now)}`,
+      related: [],
     });
   }
 }
@@ -928,14 +1011,17 @@ const WRONG = new Set<Detector>([
   "dead",
 ]);
 
+/** Going out of date: checked long ago, or running out soon. */
+const DATED = new Set<Detector>(["stale", "expiring"]);
+
 /** How bad a check is: a conflict, then a value that looks wrong, then staleness, then missing proof. */
 const rankOf = (check: Check) =>
-  check.detector === "conflict" ? 0 : WRONG.has(check.detector) ? 1 : check.detector === "stale" ? 2 : 3;
+  check.detector === "conflict" ? 0 : WRONG.has(check.detector) ? 1 : DATED.has(check.detector) ? 2 : 3;
 
 function markOf(checks: readonly Check[], verified: readonly string[]): Mark {
   if (checks.some((c) => c.detector === "conflict")) return "conflict";
   if (checks.some((c) => WRONG.has(c.detector))) return "wrong";
-  if (checks.some((c) => c.detector === "stale")) return "stale";
+  if (checks.some((c) => DATED.has(c.detector))) return "stale";
   if (verified.length === 0 || checks.some((c) => c.detector === "proof" || c.detector === "unchecked"))
     return "unproven";
   return "checked";

@@ -83,8 +83,13 @@ export {
 } from "./questions.ts";
 export {
   detect,
+  expiresIn,
   meetsEdges,
+  nextStageAt,
   overview,
+  remindable,
+  REMIND_DAYS,
+  stageOf,
   requirementsOf,
   reviewFields,
   reviewQueue,
@@ -96,4 +101,5 @@ export {
   type Overview,
   type Requirement,
   type ReviewNote,
+  type Stage,
 } from "./review.ts";

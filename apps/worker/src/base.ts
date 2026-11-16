@@ -120,6 +120,10 @@ import {
   type Sql,
   type ProfileSeen,
   type ProfileWork,
+  installReminders,
+  reminderWork,
+  type Reminder,
+  type Waiting,
 } from "@brainiac/base";
 import { decodeClientMessage, type Manifest, type PlanItem, type ServerMessage } from "@brainiac/core";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
@@ -150,13 +154,14 @@ interface Socket {
  * What a job works on, for the jobs consumer: a note to index, a file to extract (and index once cleared), or a
  * paper's DOI to look up, a profile to read, or a saved link to check. A lookup leaves with the DOI alone, a
  * profile read with its link (and for Google Scholar, paper titles), and a link check with its address, never the
- * note.
+ * note. A reminder leaves as the email's words, which name only normal notes.
  */
 export type JobWork =
   | { readonly kind: "index"; readonly note: NoteRow }
   | { readonly kind: "doi"; readonly doi: string }
   | { readonly kind: "drift"; readonly work: ProfileWork }
   | { readonly kind: "link"; readonly work: LinkWork }
+  | { readonly kind: "remind"; readonly reminder: Reminder }
   | {
       readonly kind: "file";
       readonly sha256: string;
@@ -204,9 +209,10 @@ export class Base extends DurableObject<Env> {
     super(ctx, env);
     this.sql = doSql(ctx.storage);
     // Every wake: a record migrates the first time it is used after a deploy, and re-indexes in the background
-    // when chunking or the embedding model changed.
-    migrate(this.sql);
-    if (reindex(this.sql)) this.wake();
+    // when chunking or the embedding model changed. A migration can add background work (expiry reminders), so the
+    // alarm is re-armed after one; the weekly questions email wakes every record, so none waits longer than a week.
+    const { from, to } = migrate(this.sql);
+    if (reindex(this.sql) || from !== to) this.wake();
     // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
     // vault key the first time it wakes, off the request it woke for.
     if (env.VAULT_KEY_PREVIOUS)
@@ -926,6 +932,7 @@ export class Base extends DurableObject<Env> {
       // Only a profile with a site and a link gets a job, at a revision that still has them; this can't happen.
       throw new Error(`drift job ${jobId} has no profile to read`);
     }
+    if (!("file" in input)) return { kind: "remind", reminder: reminderWork(this.sql, Date.now()) };
     const { file } = input;
     const object = await this.env.BLOBS.get(file.r2Key);
     // Gone from R2 is a bug, not a state: fail the job loudly rather than mark the file read.
@@ -939,6 +946,13 @@ export class Base extends DurableObject<Env> {
       bytes: unseal(await this.dataKey(), sealed, `file:${file.sha256}`),
       embed: mayClear(file),
     };
+  }
+
+  /** Marks the expiry reminders an email answered as sent (packages/base/src/reminders.ts). */
+  installReminders(jobId: string, covered: readonly Waiting[]): "installed" | "dropped" {
+    const result = installReminders(this.sql, jobId, covered);
+    this.wake();
+    return result;
   }
 
   /** Installs an index job's chunks, only while the note is still at the job's revision. */
