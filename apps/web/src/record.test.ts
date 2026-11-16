@@ -133,7 +133,7 @@ describe("review saves", () => {
 });
 
 describe("the manifest", () => {
-  it("is read again when the record says it changed, and when the tab comes back online", async () => {
+  it("is read again when the record says it changed, when the tab comes back online, and once live after a failed read", async () => {
     vi.resetModules();
     localStorage.setItem("brainiac:user", "ada");
     const opened: (FakeSocket & { sent: string[] })[] = [];
@@ -147,14 +147,14 @@ describe("the manifest", () => {
         this.sent.push(data);
       }
     }
-    // Each read of the schema answers with the record's manifest as of then.
-    let types: Record<string, object> = {};
+    // Each read of the schema answers with the record's manifest as of then; the first, at start, fails.
+    let types: Record<string, object> = { Fact: { version: 1, fields: {} } };
     let schemaReads = 0;
     vi.stubGlobal("WebSocket", Socket);
     vi.stubGlobal("fetch", async (path: string) => {
       if (path === "/api/session") return Response.json({ user: "ada" });
       if (path === "/api/schema") {
-        schemaReads++;
+        if (++schemaReads === 1) throw new TypeError("Failed to fetch");
         return Response.json({ manifest: { schema_version: 1, types } });
       }
       return Response.json({ files: [], proposals: [] });
@@ -185,15 +185,18 @@ describe("the manifest", () => {
       );
       return socket;
     };
+    // The start's read failed: going live reads it again.
+    const fact = shows("Fact");
     const socket = await live();
-    expect(schemaReads).toBe(1);
+    await fact;
+    expect(schemaReads).toBe(2);
 
     // Organize added Trip somewhere else: the socket says so, and the tab's forms get it without a reload.
     types = { Trip: { version: 2, folder: "history/travel", fields: {} } };
     const trip = shows("Trip");
     socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "manifest" }) }));
     await trip;
-    expect(schemaReads).toBe(2);
+    expect(schemaReads).toBe(3);
 
     // Changed again while the tab was offline: the push went to nobody, so coming back reads it again.
     socket.dispatchEvent(new Event("close"));
@@ -202,6 +205,6 @@ describe("the manifest", () => {
     window.dispatchEvent(new Event("online"));
     await live();
     await visa;
-    expect(schemaReads).toBe(3);
+    expect(schemaReads).toBe(4);
   });
 });

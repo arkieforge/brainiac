@@ -72,6 +72,8 @@ let proposals: readonly ProposalItem[] | undefined;
 let proposalsAsked = 0;
 /** The same for the manifest and the file list. */
 let refreshAsked = 0;
+/** The last read of them failed (offline at start, say): going live reads them again. */
+let refreshFailed = false;
 /** The record has answered with its manifest this visit: until then, checks that need the schema can't run. */
 let schemaLoaded = false;
 let release: (() => Promise<void>) | undefined;
@@ -160,10 +162,10 @@ function connect() {
       (message.type === "changes" && cursor === message.to)
     ) {
       // Back online: proposals decided or made while this tab was away come in with the record, and so does a
-      // manifest changed meanwhile (start already asked for it on the first connect).
+      // manifest changed meanwhile (start already asked for it on the first connect, unless that failed).
       if (status !== "live") {
         void loadProposals();
-        if (wasLive) void refresh();
+        if (wasLive || refreshFailed) void refresh();
       }
       wasLive = true;
       setStatus("live");
@@ -283,7 +285,9 @@ export async function refresh() {
     // Offline: what this tab has stays; the next time it goes live it asks again.
     .catch(() => undefined);
   // An answer overtaken by a later ask (the manifest changed again meanwhile) would put the older one back.
-  if (stopped || !next || asked !== refreshAsked) return;
+  if (stopped || asked !== refreshAsked) return;
+  refreshFailed = !next;
+  if (!next) return;
   ({ manifest, files, schemaLoaded } = next);
   changed();
 }
