@@ -244,6 +244,19 @@ export default Alchemy.Stack(
         scriptName: worker.workerName,
         settings: { batchSize: 10, maxWaitTimeMs: 100 },
       });
+      // The public site (apps/marketing): static pages on an assets-only Worker, linking to the app's origin. It has
+      // its workers.dev URL until the domain decision (#47) gives it one of its own.
+      const marketing = yield* Command.Build("marketing", {
+        command: "pnpm run build",
+        cwd: "apps/marketing",
+        outdir: "dist",
+        env: { PUBLIC_APP_ORIGIN: domain ? `https://${domain}` : worker.url.as<string>() },
+      });
+      yield* Cloudflare.Worker("marketing", {
+        name: name("marketing"),
+        assets: { directory: marketing.outdir, hash: marketing.hash.output.as<string>() },
+      });
+
       return { url: worker.url };
     });
 
