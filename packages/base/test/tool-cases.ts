@@ -788,9 +788,18 @@ export const toolCases: Record<string, Case> = {
   ) => {
     const n = record(sql, fixtures);
     const writer = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+    // A dry run shows it would need the passkey, and keeps no plan for the person: there's nothing to link to.
+    const dry = call(sql, writer, "update", { id: n.ielts, rev: 1, set: { overall: 8.5 }, dry_run: true });
+    equal(dry["status"], "needsApproval");
+    equal(dry["approval_id"], undefined);
+    equal(dry["link"], undefined);
+    same(sql.all("SELECT id FROM approvals WHERE assertion = ''"), []);
     const held = call(sql, writer, "update", { id: n.ielts, rev: 1, set: { overall: 8.5 } });
     equal(held["status"], "needsApproval");
     match(String(held["message"]), /passkey/);
+    // The plan waits in the record for the person, under the id the agent cites once they sign it there.
+    same(sql.all("SELECT id FROM approvals WHERE assertion = ''"), [{ id: held["approval_id"] }]);
+    equal(held["link"], `/approvals/${String(held["approval_id"])}`);
     equal(revOf(sql, n.ielts), 1);
     const approved = recordApproval(sql, held["items"] as PlanItem[], signature(), T0);
     ok("approvalId" in approved);

@@ -87,6 +87,9 @@ import {
   openReview,
   planHash,
   recordApproval,
+  decline,
+  waitingItems,
+  waitingPlans,
   startReview,
   currentSeq,
   doSql,
@@ -106,6 +109,7 @@ import {
   undoRun,
   type Answer,
   type Approved,
+  type WaitingPlan,
   type ChunkInput,
   type Connection,
   type Context,
@@ -277,6 +281,8 @@ export class Base extends DurableObject<Env> {
   async tool(
     via: ({ readonly oauthClientId: string } | { readonly connectionId: string }) & {
       readonly background?: boolean;
+      /** The site's origin the call came in on, for the links an answer gives the person. */
+      readonly origin?: string;
     },
     name: string,
     args: unknown,
@@ -300,6 +306,7 @@ export class Base extends DurableObject<Env> {
       now,
       ...(via.background && { background: true }),
       ...(vector && { vector }),
+      ...(via.origin !== undefined && { origin: via.origin }),
     });
     this.changed(before);
     return answer.ok && answer.attach !== undefined ? this.#withPhoto(answer, via) : answer;
@@ -562,7 +569,38 @@ export class Base extends DurableObject<Env> {
   ): Promise<Approved> {
     const signed = await this.check(response, planHash(items), approver);
     // The check awaited: anything may have landed meanwhile, which the change's own plan hash catches.
-    return "error" in signed ? signed : recordApproval(this.sql, items, signed, Date.now());
+    const approved = "error" in signed ? signed : recordApproval(this.sql, items, signed, Date.now());
+    if ("approvalId" in approved)
+      // Every sync client (a laptop's daemon, another tab) resends a blocked edit with this plan.
+      this.push(() => ({
+        type: "approved",
+        approvals: [{ planHash: planHash(items), approvalId: approved.approvalId }],
+      }));
+    return approved;
+  }
+
+  /**
+   * Signs a plan the record kept waiting (`pend`) for an agent's or another device's change: the items are the
+   * record's own, never the page's, so the passkey signs exactly what the change will do.
+   */
+  async approveWaiting(
+    approvalId: string,
+    response: AuthenticationResponseJSON,
+    approver: Approver,
+  ): Promise<Approved> {
+    const items = waitingItems(this.sql, approvalId);
+    if (!items) return { error: "This approval isn't waiting any more. Ask again for a new one." };
+    return this.approve(items, response, approver);
+  }
+
+  /** The plans waiting for the person's passkey (or the one `approvalId` names), for the site's Approvals page. */
+  pendingApprovals(approvalId?: string): WaitingPlan[] {
+    return waitingPlans(this.sql, approvalId);
+  }
+
+  /** The person turns a waiting plan down; false if it wasn't waiting. */
+  declineApproval(approvalId: string): boolean {
+    return decline(this.sql, approvalId);
   }
 
   /** A nonce for the person to sign, opening a review session over the notes shown, for them alone. */

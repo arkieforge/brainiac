@@ -1,4 +1,5 @@
 import {
+  Fingerprint,
   House,
   List,
   MagnifyingGlass,
@@ -39,7 +40,7 @@ const STATUS: Record<Status, string> = {
 };
 
 const NAV: readonly {
-  readonly to: "/" | "/review" | "/questions" | "/proposals";
+  readonly to: "/" | "/review" | "/questions" | "/proposals" | "/approvals";
   readonly label: string;
   readonly icon: Icon;
 }[] = [
@@ -47,6 +48,7 @@ const NAV: readonly {
   { to: "/review", label: "Review", icon: SealCheck },
   { to: "/questions", label: "Questions", icon: Question },
   { to: "/proposals", label: "Proposals", icon: Tray },
+  { to: "/approvals", label: "Approvals", icon: Fingerprint },
 ];
 
 // Matches the phone breakpoint in styles.css. The prerendered shell has no window, so it renders the desktop side.
@@ -185,7 +187,7 @@ export function Shell({
           </Link>
           <nav>
             {NAV.map(({ to, label, icon: Nav }) => {
-              const here = pathname === to;
+              const here = pathname === to || (to !== "/" && pathname.startsWith(`${to}/`));
               return (
                 <Link key={to} to={to} aria-current={here ? "page" : undefined} aria-label={label}>
                   {here && <motion.span layoutId="nav-pill" className="nav-pill" transition={SPRING} />}

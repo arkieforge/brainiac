@@ -184,6 +184,37 @@ const cases: Record<string, () => Promise<void>> = {
     v.daemon.stop();
   },
 
+  async "an edit to a checked value lands from the laptop once the person approves it on the site"() {
+    const v = await vault();
+    v.record.verify(A);
+    await v.until(() => (v.read("notes/a.md")?.includes("verified") ?? false) && synced(v, A), "the check");
+    v.write("notes/a.md", setField(v.read("notes/a.md")!, "title", "Checked, then changed"));
+    await v.until(() => v.daemon.client.state.blocked.has(A), "the edit to wait for the passkey");
+    const [plan] = v.record.waiting();
+    ok(plan, "the site lists the laptop's plan");
+    same(v.daemon.client.state.blocked.get(A)?.[0]?.needsApproval?.planHash, plan.planHash);
+    equal(v.record.note(A)?.rev, 2);
+    // Approved while the laptop is off: its next hello says so, and it sends the edit again on its own.
+    v.daemon.stop();
+    v.record.approveWaiting();
+    const again = await open(v.record, v.root);
+    await again.until(
+      () => v.record.note(A)?.raw.includes("Checked, then changed") === true && synced(again, A),
+      "the approved edit to land",
+    );
+    equal(again.daemon.client.state.blocked.has(A), false);
+    same(v.record.waiting(), []);
+    // Approved while it's on: the record tells the open socket.
+    again.write("notes/a.md", setField(again.read("notes/a.md")!, "title", "And again"));
+    await again.until(() => again.daemon.client.state.blocked.has(A), "the second edit to wait");
+    v.record.approveWaiting();
+    await again.until(
+      () => v.record.note(A)?.raw.includes("And again") === true && synced(again, A),
+      "the second approved edit to land",
+    );
+    again.daemon.stop();
+  },
+
   async "a kept-aside file named in state.db is only ever read from the daemon's own folder"() {
     const v = await vault();
     const outside = folder("brainiac-outside-");

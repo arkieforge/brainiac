@@ -10,6 +10,7 @@ import {
   resolveRelation,
   ulid,
   type ClientMessage,
+  type Hello,
   type PatchOp,
   type YamlValue,
 } from "@brainiac/core";
@@ -17,17 +18,22 @@ import fc from "fast-check";
 
 import {
   currentSeq,
+  decline,
   getNote,
   migrate,
   mutate,
   openReview,
+  waitingPlans,
   PERSON,
   planHash,
+  purge,
   recordApproval,
   REVIEW_MS,
   serve,
   startReview,
+  TOMBSTONE_MS,
   undoRun,
+  unused,
   type Context,
   type Mutation,
   type MutationResult,
@@ -68,7 +74,7 @@ const applied = (result: MutationResult) => {
 };
 
 /** Signs and records what a held change asks for, as the site does after a `needsApproval`. */
-function approve(sql: Sql, verdict: NeedsApproval, now = T0): string {
+function approve(sql: Sql, verdict: Pick<NeedsApproval, "planHash" | "items">, now = T0): string {
   same(verdict.planHash, planHash(verdict.items));
   const approved = recordApproval(sql, verdict.items, signed(), now);
   ok("approvalId" in approved, JSON.stringify(approved));
@@ -177,6 +183,18 @@ const dotted = (fields: string) =>
     "---",
     "",
   ].join("\n");
+
+/** The laptop's hello: its first (nothing sent yet), then each one after its one change was answered. */
+const hello = (attempt: number): Hello => ({
+  type: "hello",
+  clientId: "laptop",
+  cursor: null,
+  lastAssigned: 1,
+  ackedUpTo: attempt === 0 ? 0 : 1,
+  schemaVersion: 0,
+  appVersion: "t",
+  attempt,
+});
 
 export const approvalCases: Record<string, Case> = {
   "a change that sets verification is held, and lands with an approval for its exact plan": (
@@ -385,12 +403,100 @@ export const approvalCases: Record<string, Case> = {
     ok(result?.type === "result" && result.needsApproval, JSON.stringify(result));
     equal(result.ok, false);
     equal(first.push, undefined);
-    const approvalId = approve(sql, { status: "needsApproval", ...result.needsApproval });
+    const approvalId = approve(sql, result.needsApproval);
     const second = serve(sql, mutateMessage(2, "c2", approvalId), ctx, PERSON);
     same(
       second.replies.map((r) => r.type === "result" && [r.ok, r.rev]),
       [[true, note.rev + 1]],
     );
+  },
+
+  "a held change's plan waits in the record under one id, lets nothing through until signed, then lands once":
+    (sql, fixtures) => {
+      const { ielts } = record(sql, fixtures);
+      const change = patchOf(sql, ielts, [set("overall", 8.5)]);
+      const first = held(mutate(sql, change, agent()));
+      // Asked again, the same plan keeps its id: the person sees it once.
+      same(held(mutate(sql, change, agent())).approvalId, first.approvalId);
+      same(
+        waitingPlans(sql).map(({ approvalId, planHash: hash, items, stale }) => [
+          approvalId,
+          hash,
+          items,
+          stale,
+        ]),
+        [[first.approvalId, first.planHash, first.items, false]],
+      );
+      same(waitingPlans(sql, first.approvalId).length, 1);
+      // Citing a plan nobody signed lets nothing through.
+      same(
+        untouched(sql, () => mutate(sql, change, { ...agent(), approvalId: first.approvalId })).approvalId,
+        first.approvalId,
+      );
+      same(unused(sql), []);
+      // Signed on the site, it stops waiting, and the sync clients hear of it.
+      same(recordApproval(sql, first.items, signed(), T0 + 1), { approvalId: first.approvalId });
+      same(waitingPlans(sql), []);
+      same(unused(sql), [{ planHash: first.planHash, approvalId: first.approvalId }]);
+      applied(mutate(sql, change, { ...agent(), approvalId: first.approvalId }));
+      same(unused(sql), []);
+      // The note moved on, so a plan from before it shows as stale, and the person can turn it down.
+      const old = held(mutate(sql, patchOf(sql, ielts, [set("overall", 9)]), agent()));
+      applied(mutate(sql, patchOf(sql, ielts, [set("title", "IELTS")]), agent()));
+      same(
+        waitingPlans(sql, old.approvalId).map((p) => p.stale),
+        [true],
+      );
+      equal(decline(sql, old.approvalId), true);
+      equal(decline(sql, old.approvalId), false);
+      equal(waitingPlans(sql, old.approvalId).length, 0);
+    },
+
+  "a laptop's blocked edit is told at its next hello that the person approved its plan": (sql, fixtures) => {
+    const { ielts } = record(sql, fixtures);
+    const note = getNote(sql, ielts);
+    ok(note);
+    const ctx = { actor: "client:laptop", now: T0 };
+    serve(sql, { ...hello(0), lastAssigned: 0 }, ctx, PERSON);
+    const [result] = serve(
+      sql,
+      {
+        type: "mutate",
+        clientId: "laptop",
+        clientSeq: 1,
+        changeId: "c1",
+        ackedUpTo: 0,
+        noteId: ielts,
+        baseRev: note.rev,
+        change: { kind: "put", base: note.raw, raw: note.raw.replace("overall: 8.0", "overall: 8.5") },
+      },
+      ctx,
+      PERSON,
+    ).replies;
+    ok(result?.type === "result" && result.needsApproval, JSON.stringify(result));
+    // Nothing approved yet: a hello says nothing of it.
+    equal(
+      serve(sql, hello(1), ctx, PERSON).replies.some((m) => m.type === "approved"),
+      false,
+    );
+    const [plan] = waitingPlans(sql);
+    ok(plan);
+    const approvalId = approve(sql, plan);
+    same(serve(sql, hello(2), ctx, PERSON).replies.at(-1), {
+      type: "approved",
+      approvals: [{ planHash: plan.planHash, approvalId }],
+    });
+  },
+
+  "a plan nobody signed goes with the tombstones; a signed one stays": (sql, fixtures) => {
+    const { ielts } = record(sql, fixtures);
+    const asked = held(mutate(sql, patchOf(sql, ielts, [set("overall", 8.5)]), agent()));
+    const kept = sql.all<{ id: string }>("SELECT id FROM approvals WHERE assertion != ''");
+    purge(sql, T0 + TOMBSTONE_MS - 1);
+    same(waitingPlans(sql, asked.approvalId).length, 1);
+    purge(sql, T0 + TOMBSTONE_MS);
+    same(waitingPlans(sql), []);
+    same(sql.all<{ id: string }>("SELECT id FROM approvals WHERE assertion != ''"), kept);
   },
 
   "a verified field named with a dot is covered, whether it is a path or a literal name": (sql) => {

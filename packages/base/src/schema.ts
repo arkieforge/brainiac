@@ -394,6 +394,13 @@ const MIGRATIONS: readonly (readonly string[])[] = [
     "ALTER TABLE schema ADD COLUMN at INTEGER",
     "CREATE INDEX schema_run ON schema (runId) WHERE runId IS NOT NULL",
   ],
+  // A plan a change needs signed is kept from the moment it's asked (approvals.ts, `pend`), unsigned (an empty
+  // assertion) until the person signs it on the site, with who asked. Approvals from before were signed by the
+  // person's own tab.
+  [
+    "ALTER TABLE approvals ADD COLUMN actor TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX approvals_plan ON approvals (planHash)",
+  ],
 ];
 
 /** The SQL schema version this code writes. */

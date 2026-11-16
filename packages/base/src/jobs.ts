@@ -275,5 +275,7 @@ export function purge(sql: Sql, now: number): void {
     sql.all("DELETE FROM revisions WHERE at <= ?", now - TOMBSTONE_MS);
     sql.all("DELETE FROM changes WHERE at <= ?", now - CHANGES_MS);
     sql.all("DELETE FROM landed WHERE at <= ?", now - CHANGES_MS);
+    // A plan nobody signed holds no signature to replay, so one left waiting this long goes.
+    sql.all("DELETE FROM approvals WHERE assertion = '' AND at <= ?", before);
   });
 }

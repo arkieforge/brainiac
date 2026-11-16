@@ -970,17 +970,20 @@ a.button:active {
   margin: var(--gap) 0;
 }
 
-/* Questions: one card each, the smallest input that fits beside its buttons; stacked on a phone. */
-.questions {
+/* Questions and approvals: one card each, the smallest input that fits beside its buttons; stacked on a phone. */
+.questions,
+.approvals {
   max-width: 760px;
   margin: 0 auto;
 }
-.questions ul {
+.questions ul,
+.approvals > ul {
   list-style: none;
   margin: 0;
   padding: 0 var(--gap);
 }
-.question {
+.question,
+.approvals > ul > .approval {
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--bg-raised);
@@ -1011,7 +1014,11 @@ a.button:active {
   min-width: 0;
   border-color: var(--border-strong);
 }
+.approvals .badge {
+  margin-left: 6px;
+}
 .questions .more,
+.approvals .more,
 .questions .weekly {
   display: block;
   padding: 0 var(--gap) var(--gap);

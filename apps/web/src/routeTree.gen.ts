@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProposalsRouteImport } from './routes/proposals'
 import { Route as QuestionsRouteImport } from './routes/questions'
 import { Route as ReviewRouteImport } from './routes/review'
+import { Route as ApprovalsIndexRouteImport } from './routes/approvals.index'
+import { Route as ApprovalsApprovalIdRouteImport } from './routes/approvals.$approvalId'
 import { Route as FilesFileIdRouteImport } from './routes/files.$fileId'
 import { Route as NNoteIdRouteImport } from './routes/n.$noteId'
 
@@ -36,6 +38,16 @@ const ReviewRoute = ReviewRouteImport.update({
   path: '/review',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApprovalsIndexRoute = ApprovalsIndexRouteImport.update({
+  id: '/approvals/',
+  path: '/approvals/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApprovalsApprovalIdRoute = ApprovalsApprovalIdRouteImport.update({
+  id: '/approvals/$approvalId',
+  path: '/approvals/$approvalId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FilesFileIdRoute = FilesFileIdRouteImport.update({
   id: '/files/$fileId',
   path: '/files/$fileId',
@@ -52,16 +64,20 @@ export interface FileRoutesByFullPath {
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
+  '/approvals/': typeof ApprovalsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
+  '/approvals': typeof ApprovalsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,8 +85,10 @@ export interface FileRoutesById {
   '/proposals': typeof ProposalsRoute
   '/questions': typeof QuestionsRoute
   '/review': typeof ReviewRoute
+  '/approvals/$approvalId': typeof ApprovalsApprovalIdRoute
   '/files/$fileId': typeof FilesFileIdRoute
   '/n/$noteId': typeof NNoteIdRoute
+  '/approvals/': typeof ApprovalsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -79,24 +97,30 @@ export interface FileRouteTypes {
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
+    | '/approvals/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
+    | '/approvals'
   id:
     | '__root__'
     | '/'
     | '/proposals'
     | '/questions'
     | '/review'
+    | '/approvals/$approvalId'
     | '/files/$fileId'
     | '/n/$noteId'
+    | '/approvals/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -104,8 +128,10 @@ export interface RootRouteChildren {
   ProposalsRoute: typeof ProposalsRoute
   QuestionsRoute: typeof QuestionsRoute
   ReviewRoute: typeof ReviewRoute
+  ApprovalsApprovalIdRoute: typeof ApprovalsApprovalIdRoute
   FilesFileIdRoute: typeof FilesFileIdRoute
   NNoteIdRoute: typeof NNoteIdRoute
+  ApprovalsIndexRoute: typeof ApprovalsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -138,6 +164,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReviewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/approvals/': {
+      id: '/approvals/'
+      path: '/approvals'
+      fullPath: '/approvals/'
+      preLoaderRoute: typeof ApprovalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/approvals/$approvalId': {
+      id: '/approvals/$approvalId'
+      path: '/approvals/$approvalId'
+      fullPath: '/approvals/$approvalId'
+      preLoaderRoute: typeof ApprovalsApprovalIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/files/$fileId': {
       id: '/files/$fileId'
       path: '/files/$fileId'
@@ -160,8 +200,10 @@ const rootRouteChildren: RootRouteChildren = {
   ProposalsRoute: ProposalsRoute,
   QuestionsRoute: QuestionsRoute,
   ReviewRoute: ReviewRoute,
+  ApprovalsApprovalIdRoute: ApprovalsApprovalIdRoute,
   FilesFileIdRoute: FilesFileIdRoute,
   NNoteIdRoute: NNoteIdRoute,
+  ApprovalsIndexRoute: ApprovalsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

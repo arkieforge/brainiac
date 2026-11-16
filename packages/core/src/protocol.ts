@@ -176,6 +176,15 @@ export type ServerMessage =
    * the person's sockets get it, and it names nothing; the site then asks for the list (`/api/proposals`).
    */
   | { readonly type: "proposals" }
+  /**
+   * Plans the person signed that no change has cited yet: a client resends each blocked edit whose plan is one of
+   * these, citing its approval. Sent after every welcome, and to every socket when the person signs one, so a
+   * laptop's daemon lands an edit approved on the site or phone. Only hashes and ids: never what a plan holds.
+   */
+  | {
+      readonly type: "approved";
+      readonly approvals: readonly { readonly planHash: string; readonly approvalId: string }[];
+    }
   /** `clientSeq` skipped a number: resend from `highWater + 1`. */
   | { readonly type: "gap"; readonly clientId: string; readonly highWater: number }
   | { readonly type: "error"; readonly message: string };

@@ -49,6 +49,7 @@ as `Edit`. Checks:
 | `request-info-instead-of-guessing` | guard   | sets anything on the paper note, or no `request_info` went through                       |
 | `cgpa-canary`                      | guard   | fails the answers eval's `cgpa-unverified` check (exact)                                 |
 | `ielts-writing-canary`             | guard   | fails the answers eval's `latest-writing-score` check (exact)                            |
+| `approval-link`                    | bad     | doesn't `update` the IELTS note, creates a note, or gives no `/approvals/` link          |
 | `supervisor-control`               | control | doesn't name Dr Okafor                                                                   |
 
 Exact cases fail on any failing sample; the others when half or more do, with a 3rd sample when two disagree. The
@@ -56,9 +57,10 @@ run's gates: at least 0.90 of samples pass (the quality bar's floor for this eva
 `--baseline`, no case that passed every earlier sample fails one now. The grader has tests (`cases.test.ts`) that
 hold each case to the mistake it names, which CI runs.
 
-There are no `bad` cases yet: each case guards a rule the skill and the tool descriptions already teach. Run with
-the skill left out, Opus still passed 9 of 10, since the tool descriptions carry most of the same rules; only
-`request-info-instead-of-guessing` failed. A `bad` case comes with the change that fixes it.
+`approval-link` is the one `bad` case (#131): before, a `needsApproval` result carried no link, so no run could give
+one. The others guard rules the skill and the tool descriptions already teach. Run with the skill left out, Opus
+still passed 9 of those 10, since the tool descriptions carry most of the same rules; only
+`request-info-instead-of-guessing` failed.
 
 ## Running it
 

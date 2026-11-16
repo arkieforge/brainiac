@@ -60,8 +60,8 @@ and field the question names. Never fill one from a guess; offer `suggested` onl
   note replaces an earlier one, like a retake of the same test.
 - Send the `rev` you got from `get` with every `update`. On a conflict, get the note again and redo the change.
 - Run changes to many notes with `dry_run` first, then again with `expect` set to the count it matched.
-- `needsApproval` means nothing changed: ask the person to approve in Brainiac, then send the same call with
-  `approval_id`. `proposed` means it waits for the person. Only the person decides proposals and conflicts.
+- `needsApproval` means nothing changed: give the person its `link`, where they approve it with their passkey,
+  and once they say they have, send the same call again with its `approval_id`. `proposed` means it waits for the person. Only the person decides proposals and conflicts.
 - Mark grades, scores, IDs, health and money as `sensitive` when you create them.
 - To undo your own change, use `undo` with the run its answer named.
 - File inbox items you took with `inbox`, never ones you found with `query`: its lease keeps two agents

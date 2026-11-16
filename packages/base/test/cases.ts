@@ -616,7 +616,7 @@ export const cases: Record<string, Case> = {
     // Back to the version before the tokenizer migration, without what the ones after it added (the leases' rev,
     // the fills table, the sync clients' owners, the secrets' proposals, the files' paths and names, the audit
     // rows' background mark, the ORCID works proposed, the files' upload times and shares, the expiry reminders, the
-    // proposals counter, the manifest's runs).
+    // proposals counter, the manifest's runs, the approvals' askers).
     sql.all("ALTER TABLE inbox_leases DROP COLUMN rev");
     sql.all("DROP TABLE fills");
     sql.all("ALTER TABLE clients DROP COLUMN actor");
@@ -634,11 +634,13 @@ export const cases: Record<string, Case> = {
     sql.all("DROP TRIGGER proposals_changed");
     sql.all("DROP INDEX schema_run");
     for (const column of ["runId", "actor", "at"]) sql.all(`ALTER TABLE schema DROP COLUMN ${column}`);
+    sql.all("DROP INDEX approvals_plan");
+    sql.all("ALTER TABLE approvals DROP COLUMN actor");
     sql.all("INSERT INTO audit (at, actor, tool, noteIds) VALUES (1, 'connection:old', 'get', '[]')");
-    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 12));
+    sql.all("UPDATE meta SET value = ? WHERE key = 'schemaVersion'", String(SCHEMA_VERSION - 13));
     // The bug: a fragment matched inside other words.
     same(hitIds(search(sql, AGENT, "কম")), [id]);
-    same(migrate(sql), { from: SCHEMA_VERSION - 12, to: SCHEMA_VERSION });
+    same(migrate(sql), { from: SCHEMA_VERSION - 13, to: SCHEMA_VERSION });
     // A row from before the background mark reads as a foreground call.
     same(sql.all("SELECT background FROM audit"), [{ background: 0 }]);
     same(hitIds(search(sql, AGENT, "কম্পিউটার")), [id]);

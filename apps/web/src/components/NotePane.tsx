@@ -41,6 +41,7 @@ function SyncState({ client, noteId }: { readonly client: SyncClient; readonly n
           approve={async () => {
             const approved = await approvePlan(plan.planHash, plan.items);
             if ("error" in approved) return approved;
+            // The record tells this tab too, usually first; this covers a socket that missed it.
             client.approved(noteId, plan.planHash, approved.approvalId);
             return undefined;
           }}

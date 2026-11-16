@@ -468,6 +468,16 @@ export class SyncClient {
         if (message.clientSeq === undefined || state.pending.some((p) => p.clientSeq === message.clientSeq))
           this.#repair();
         return;
+      case "approved":
+        // Each blocked edit the person approved elsewhere (on the site or phone) goes again, citing it.
+        for (const { planHash, approvalId } of message.approvals) {
+          // Read first: resending unblocks, which changes the map.
+          const noteIds = [...state.blocked].flatMap(([noteId, blocked]) =>
+            blocked.some((b) => b.needsApproval?.planHash === planHash) ? [noteId] : [],
+          );
+          for (const noteId of noteIds) this.approved(noteId, planHash, approvalId);
+        }
+        return;
       case "error":
         return;
     }

@@ -48,7 +48,7 @@ Resources: `brainiac://note/{id}`, `brainiac://schema`. MCP Apps cards (a note, 
 
 A background run (`brainiac mcp serve --background`, which the daemon's headless filer uses) gets at most propose and never the sensitive scope, whatever its connection was granted, and can't `add`, `import` or `withdraw` (see "Filer access" in [Security](security.md)).
 
-When a call hits the approval list, the result is `needsApproval` with a link (and an MCP elicitation prompt where the client supports it, which only shows the link). The change applies after you approve on the site or phone.
+When a call hits the approval list, the result is `needsApproval` with an `approval_id` and a `link` to `<domain>/approvals/<approval_id>` (a later MCP elicitation prompt would only show the link). Nothing changed: the record keeps the plan, and the page loads it from the record by its id, never from the URL, so the person signs exactly what the change will do. The agent gives the person the link, and once they have approved with their passkey, sends the same call again with `approval_id`; the record applies it only if its effect still hashes to the signed plan, once. Sending it again before they approve gets the same plan and id back. The same page lists every plan waiting, an agent's, a laptop's blocked sync edit or another tab's, and the person can turn one down, after which the agent's retry gets a new one. An agent, a token or an MCP tool can never approve: the routes take only the site's session and one of the person's passkeys. A dry run keeps no plan and gives no link.
 
 ## A session
 

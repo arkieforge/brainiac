@@ -13,6 +13,7 @@ import {
   type ServerMessage,
 } from "@brainiac/core";
 
+import { unused } from "./approvals.ts";
 import { connectionOf } from "./connections.ts";
 import { mutate, propose, type Context, type MutationResult } from "./mutate.ts";
 import { getNote, type NoteRow } from "./notes.ts";
@@ -188,6 +189,7 @@ export function hello(
       message.clientId,
     );
     const connection = connectionOf(sql, ctx.actor);
+    const approvals = unused(sql);
     const [schema] = sql.all<{ manifest: string }>(
       "SELECT manifest FROM schema ORDER BY version DESC LIMIT 1",
     );
@@ -208,6 +210,8 @@ export function hello(
       },
       changesSince(sql, before?.reader === key ? message.cursor : null, reader, message.attempt),
       ...results.map((row) => asSeen(sql, JSON.parse(row.result), row.noteId, reader)),
+      // After the results, so an edit they block is blocked by the time its approval arrives.
+      ...(approvals.length > 0 ? [{ type: "approved", approvals } as const] : []),
     ];
   });
 }
@@ -333,7 +337,7 @@ function refused(done: Omit<Result, "ok">, result: Exclude<MutationResult, { sta
       ...done,
       ok: false,
       needsApproval: { planHash, items },
-      error: "This needs your approval with a passkey.",
+      error: "This needs your approval with a passkey: approve it in Brainiac, under Approvals.",
     };
   }
   // Sync carries no connection, so nothing it sends is held or forbidden (a read-level sender is refused before
