@@ -21,6 +21,7 @@
     "eval:photos": "node evals/photos/run.ts",
     "eval:review-detectors": "node evals/review-detectors/run.ts",
     "eval:retrieval": "node evals/retrieval/run.ts",
+    "eval:structure": "node evals/structure/run.ts",
     "logs": "node scripts/logs.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"

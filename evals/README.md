@@ -9,8 +9,8 @@ results, the agent skill, or prompts. The planned evals and their release gates 
 
 The evals so far are [`filing`](filing/README.md), [`answers`](answers/README.md),
 [`photos`](photos/README.md), [`mcp-tool-use`](mcp-tool-use/README.md), [`drafts`](drafts/README.md),
-[`review-detectors`](review-detectors/README.md) and [`retrieval`](retrieval/README.md); every eval follows this shape
-(retrieval runs no model, so it takes only `--out`, `--case` and `--hybrid`):
+[`structure`](structure/README.md), [`review-detectors`](review-detectors/README.md) and [`retrieval`](retrieval/README.md);
+every eval follows this shape (retrieval runs no model, so it takes only `--out`, `--case` and `--hybrid`):
 
 - `evals/<eval>/run.ts` is the entry point, with a script of the same name in `package.json`.
 - `evals/<eval>/README.md` says what it measures, how to run it, how to add a case, and what a run costs.
