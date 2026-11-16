@@ -8,7 +8,10 @@ import { patch } from "./patch.ts";
 import { ownershipCode, titleHash } from "./profiles.ts";
 import {
   detect,
+  expiresIn,
   headline,
+  nextStageAt,
+  stageOf,
   meetsEdges,
   overview,
   requirementsOf,
@@ -29,6 +32,7 @@ const fixture: ReviewNote[] = readdirSync(ROOT, { recursive: true, encoding: "ut
     return { id: String(data["id"]), path, data };
   });
 const NOW = Date.UTC(2026, 10, 15);
+const day = (d: string) => Date.parse(`${d}T00:00:00Z`);
 const at = (path: string) => {
   const note = fixture.find((n) => n.path === path);
   if (!note) throw new Error(path);
@@ -192,12 +196,24 @@ describe("detectors", () => {
   it("an expired item an open application relies on, when nothing valid stands beside it", () => {
     // Without the November score, only the March one (expiring 2027-03-15) meets TUM's IELTS requirement.
     const notes = fixture.filter((n) => n.id !== IELTS.id && n.id !== TRF.id);
-    const [check] = detect(notes, manifest, NOW).filter((c) => c.detector === "expired");
-    expect(check).toMatchObject({
-      noteId: OLD_IELTS.id,
-      evidence: "Expires 2027-03-15, before TUM MSc Informatics, Winter 2027's deadline 2027-05-31",
-      related: [TUM.id],
-    });
+    // Flagged on the item and on the application that relies on it.
+    expect(detect(notes, manifest, NOW).filter((c) => c.detector === "expired")).toEqual([
+      {
+        noteId: TUM.id,
+        detector: "expired",
+        field: "requirements",
+        evidence:
+          "Relies on IELTS Academic, March 2025, which expires 2027-03-15, before its deadline 2027-05-31",
+        related: [OLD_IELTS.id],
+      },
+      {
+        noteId: OLD_IELTS.id,
+        detector: "expired",
+        field: "expires",
+        evidence: "Expires 2027-03-15, before TUM MSc Informatics, Winter 2027's deadline 2027-05-31",
+        related: [TUM.id],
+      },
+    ]);
     // A valid score below the requirement's 6.5 doesn't stand in for the expiring one.
     const low = note("facts/tests/ielts-low.md", {
       ...OLD_IELTS.data,
@@ -206,11 +222,93 @@ describe("detectors", () => {
       expires: "2028-06-01",
     });
     expect(found([...notes, low]).filter((c) => c.includes(":expired:"))).toEqual([
+      `${TUM.id}:expired:requirements`,
       `${OLD_IELTS.id}:expired:expires`,
     ]);
     // A decided application relies on nothing.
     const decided = replace(notes, edited(TUM, { status: "decision" }));
     expect(found(decided).filter((c) => c.includes(":expired:"))).toEqual([]);
+  });
+
+  it("an item expiring within 60 days is flagged, and so is an application it alone keeps valid today", () => {
+    // TUM checks the score on its deadline; a passport check that only asks for one valid today doesn't.
+    const passport = note("identity/passport-uto.md", {
+      type: "IdDocument",
+      title: "Passport, Utopia",
+      kind: "passport",
+      issuer: "UTO",
+      expires: "2026-12-20",
+    });
+    const visa = note("applications/visa-2027/application.md", {
+      type: "Application",
+      title: "Student visa",
+      kind: "university",
+      deadline: "2027-08-01",
+      status: "preparing",
+      requirements: [{ need: "A valid passport", check: { type: "IdDocument", kind: "passport" } }],
+    });
+    const checks = detect([...fixture, passport, visa], manifest, NOW).filter(
+      (c) => c.detector === "expiring",
+    );
+    expect(checks).toEqual([
+      {
+        noteId: passport.id,
+        detector: "expiring",
+        field: "expires",
+        evidence: "Expires 2026-12-20, in 35 days",
+        related: [],
+      },
+      {
+        noteId: visa.id,
+        detector: "expiring",
+        field: "requirements",
+        evidence: "Relies on Passport, Utopia, which expires 2026-12-20, in 35 days",
+        related: [passport.id],
+      },
+    ]);
+    // A reminder, not a mistake: the mark is stale, and the item comes before anything merely unproven.
+    const { items } = overview([...fixture, passport, visa], manifest, NOW);
+    expect(items.find((i) => i.noteId === passport.id)?.mark).toBe("stale");
+    expect(items.find((i) => i.noteId === visa.id)?.aside).toBe(checks[1]?.evidence);
+    // A second valid passport beside it keeps the visa safe; the expiring one is still flagged.
+    const renewed = note("identity/passport-uto-2036.md", { ...passport.data, expires: "2036-12-01" });
+    expect(found([...fixture, passport, renewed, visa]).filter((c) => c.includes(":expiring:"))).toEqual([
+      `${passport.id}:expiring:expires`,
+    ]);
+    // Superseded by the renewal, it is history: nothing is flagged.
+    const superseding = note("identity/passport-uto-2036.md", {
+      ...renewed.data,
+      supersedes: "passport-uto.md",
+    });
+    expect(found([...fixture, passport, superseding, visa]).filter((c) => c.includes(":expiring:"))).toEqual(
+      [],
+    );
+    // 61 days out, and past it, are outside the window.
+    for (const expires of ["2027-01-15", "2026-11-14"])
+      expect(
+        found([...fixture, edited(passport, { expires })]).filter((c) => c.includes(":expiring:")),
+      ).toEqual([]);
+  });
+
+  it("reminders fall 60, 30 and 7 days before an item expires and on the day, at the start of each (UTC)", () => {
+    expect(
+      [
+        "2026-10-20",
+        "2026-10-21",
+        "2026-11-20",
+        "2026-12-12",
+        "2026-12-13",
+        "2026-12-19",
+        "2026-12-20",
+        "2026-12-21",
+      ].map((d) => stageOf("2026-12-20", day(d) + 3_600_000)),
+    ).toEqual([undefined, 60, 30, 30, 7, 7, 0, undefined]);
+    expect(nextStageAt("2026-12-20", NOW)).toBe(day("2026-11-20"));
+    expect(nextStageAt("2026-12-20", day("2026-11-20"))).toBe(day("2026-12-13"));
+    expect(nextStageAt("2026-12-20", day("2026-12-20"))).toBeUndefined();
+    expect(nextStageAt("not a date", NOW)).toBeUndefined();
+    expect(expiresIn("2026-11-16", NOW)).toBe("2026-11-16, in 1 day");
+    expect(expiresIn("2026-11-15", NOW + 3_600_000)).toBe("2026-11-15, today");
   });
 
   it("checked over a year ago is stale", () => {

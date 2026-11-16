@@ -14,7 +14,7 @@ PROJECTS
 ```
 
 - **Headlines**: one line per item from a per-type template in the schema; marks for checked (✓), looks wrong (!), unchecked or unproven (?), stale, and conflict.
-- **Detectors** (deterministic first): note vs its own document's extracted value, note vs another note, note vs an outside profile, impossible values (end before start, score above the maximum), missing proof, duplicates, inconsistent name spellings, an expired item still used by an application, agent changes nobody looked at. Each comes with its evidence and a suggested fix.
+- **Detectors** (deterministic first): note vs its own document's extracted value, note vs another note, note vs an outside profile, impossible values (end before start, score above the maximum), missing proof, duplicates, inconsistent name spellings, an item that expires before an application needs it or within 60 days (flagged on the item and on each open application relying on it), agent changes nobody looked at. Each comes with its evidence and a suggested fix.
 - **Review mode**: one item at a time, worst first (flags, then anything an open application uses, then the rest). Keys: `y` correct, `e` edit, `f` apply the fix, `?` not sure, `s` skip, `u` undo; swipe on the phone.
 - **"Correct" sets `verified`** for those fields at that revision. Review runs on one passkey signature (10 minutes, renewed with a tap while you keep reviewing), so each key press is an approval without a new prompt. In Claude, the same card gives an approval link instead.
 - **Fix in place**: type-aware editors, the effects shown before saving ("2 drafts go stale; Edinburgh's check still passes"), one undo for all of it.

@@ -57,7 +57,7 @@ export {
   type JobInput,
   type JobKind,
 } from "./jobs.ts";
-export { installReminders, reminderWork, type Reminder, type Waiting } from "./reminders.ts";
+export { installReminders, nextReminder, reminderWork, type Reminder, type Waiting } from "./reminders.ts";
 export {
   mutate,
   mutateAll,

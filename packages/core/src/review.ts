@@ -136,7 +136,7 @@ export const REMIND_DAYS = [60, 30, 7, 0] as const;
 export type Stage = (typeof REMIND_DAYS)[number];
 
 /** Whole days from `now`'s day to the day `expires` names; negative once it has passed. */
-export const daysLeft = (expires: string, now: number) =>
+const daysLeft = (expires: string, now: number) =>
   Math.round((Date.parse(expires.slice(0, 10)) - Date.parse(today(now))) / DAY_MS);
 
 /** The reminder an item expiring on `expires` is in on `now`'s day, if it expires within 60 days or today. */

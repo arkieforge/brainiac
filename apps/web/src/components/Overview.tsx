@@ -30,7 +30,7 @@ const MARKS: Record<Mark, { readonly icon: Icon; readonly label: string }> = {
   checked: { icon: SealCheck, label: "Checked" },
   wrong: { icon: WarningCircle, label: "Looks wrong" },
   unproven: { icon: QuestionMark, label: "Not checked or not proven" },
-  stale: { icon: ArrowsClockwise, label: "Checked over a year ago" },
+  stale: { icon: ArrowsClockwise, label: "Checked over a year ago, or expiring soon" },
   conflict: { icon: ArrowsLeftRight, label: "Conflicts with another note" },
 };
 
