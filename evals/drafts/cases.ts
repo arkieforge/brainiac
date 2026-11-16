@@ -116,7 +116,7 @@ const neverSays = (pattern: RegExp, what: string) => (run: Drafted) =>
 
 /** Words that say the person lacks a skill or wants to gain it, which claims nothing. */
 const LACKS =
-  /\b(?:not|no|never|lack\w*|learn\w*|eager|keen|new to|yet|without|hope to|look forward|grow|develop|pick up)\b|n['\u2019]t\b/i;
+  /\b(?:not|no|never|lack\w*|learn\w*|eager|keen|new to|yet|without|hope to|look forward|grow\w*|develop\w*|pick up|picking up)\b|n['\u2019]t\b/i;
 /**
  * The person saying the skill is theirs: "my Kubernetes skills", "I have deployed", "I am proficient", "I bring
  * experience". "I know your team has experience" says it of someone else.
