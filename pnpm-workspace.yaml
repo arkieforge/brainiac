@@ -24,4 +24,6 @@ overrides:
 patchedDependencies:
   # shortcut: carries resourceSeedScope from better-auth/better-auth#12652 (#83); drop it for the release that ships it.
   "@better-auth/oauth-provider@1.7.22": patches/@better-auth__oauth-provider@1.7.22.patch
+  # A Worker can't build code from strings: the fixed functions the Typst compiler builds that way, written out (apps/typst).
+  "@myriaddreamin/typst-ts-web-compiler@0.7.0": patches/@myriaddreamin__typst-ts-web-compiler@0.7.0.patch
   tesseract-wasm@0.11.0: patches/tesseract-wasm@0.11.0.patch

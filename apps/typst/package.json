@@ -1,0 +1,17 @@
+{
+  "name": "@brainiac/typst",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p .",
+    "test": "vp test run --dir ."
+  },
+  "dependencies": {
+    "@myriaddreamin/typst-ts-web-compiler": "0.7.0"
+  },
+  "devDependencies": {
+    "@brainiac/core": "workspace:*",
+    "@cloudflare/workers-types": "5.20261114.1",
+    "miniflare": "4.20260730.0"
+  }
+}

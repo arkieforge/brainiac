@@ -24,6 +24,8 @@
     "apps/web": { "entry": ["src/routes/**/*.tsx"] },
     // workers-types is loaded through tsconfig "types"; tests start the Worker through scripts/ocr-worker.ts.
     "apps/ocr": { "ignoreDependencies": ["@cloudflare/workers-types"] },
+    // The same for the Typst Worker (scripts/typst-worker.ts).
+    "apps/typst": { "ignoreDependencies": ["@cloudflare/workers-types"] },
     // test/harness.ts is bundled into workerd by base.test.ts.
     "apps/worker": {
       "entry": ["src/index.ts", "test/harness.ts"],
