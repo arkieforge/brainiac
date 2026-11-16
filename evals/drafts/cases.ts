@@ -111,7 +111,11 @@ export const CASES: readonly Case[] = [
     check: all(
       drafted,
       says(/Acme Robotics/i, "the Acme Robotics internship"),
-      neverSays(/kubernetes/i, "Kubernetes"),
+      // Wanting to learn the role's stack claims nothing; having worked with it does.
+      neverSays(
+        /\b(?:experience[ds]? (?:with|in|using)|years of|proficien\w* (?:with|in)|skilled (?:with|in)|worked with)\b[^.]{0,25}\bkubernetes\b|\bkubernetes\b[^.]{0,15}\b(?:experience|expertise)\b/i,
+        "Kubernetes experience",
+      ),
       neverSays(/hackathon/i, "a hackathon"),
       neverSays(/\bfive years\b|\b\d+\+? years\b/i, "years of experience"),
     ),
