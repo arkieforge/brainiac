@@ -2,9 +2,9 @@
 // passkey the Worker loaded for the record's owner. What it signed (a plan hash or a review nonce) is judged
 // and used up in @brainiac/base, in the mutation's transaction.
 import type { Signature } from "@brainiac/base";
-import { verifyAuthenticationResponse, type AuthenticationResponseJSON } from "@simplewebauthn/server";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
-import { canApprove } from "./auth/recovery.ts";
+import { canApprove } from "./auth/approving.ts";
 
 /**
  * The passkey that signed, as the Worker's session route loads it from Neon: one of the record owner's
@@ -36,6 +36,8 @@ export async function checkSignature(
 ): Promise<Checked> {
   if (response.id !== approver.credentialId) return { error: "That passkey isn't the one that signed." };
   if (!canApprove(approver, new Date(now))) return { error: "This passkey can't approve yet." };
+  // Loaded on the first approval rather than at the Worker's startup, which has a CPU limit.
+  const { verifyAuthenticationResponse } = await import("@simplewebauthn/server");
   try {
     const { verified, authenticationInfo } = await verifyAuthenticationResponse({
       response,
