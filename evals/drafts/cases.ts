@@ -79,9 +79,12 @@ const neverSays = (pattern: RegExp, what: string) => (run: Drafted) =>
 /** Words that say the person lacks a skill or wants to gain it, which claims nothing. */
 const LACKS =
   /\b(?:not|no|never|lack\w*|learn\w*|eager|keen|new to|yet|without|hope to|look forward|grow|develop|pick up)\b|n['\u2019]t\b/i;
-/** The person saying they have done or have a skill: "I deployed", "my skills", "experience with". */
+/**
+ * The person saying the skill is theirs: "my Kubernetes skills", "I have deployed", "I am proficient", "I bring
+ * experience". "I know your team has experience" says it of someone else.
+ */
 const HAS =
-  /\b(?:experience\w*|skill\w*|deploy\w*|built|ran|running|used|using|worked|managed|maintain\w*|proficien\w*|expert\w*|hands-on|familiar\w*)\b/i;
+  /\bmy (?:[\w-]+ ){0,2}(?:experience|skills?|expertise)\b|\bI(?:['\u2019]ve| have| had)? (?:\w+ ){0,2}(?:deployed|built|used|worked|managed|ran|run|maintained|operated|experience|skills?|expertise)\b|\bI(?:['\u2019]m| am) (?:\w+ )?(?:proficient|experienced|familiar|skilled|an expert)\b|\bI (?:bring|offer) (?:\w+ ){0,4}(?:experience|skills?|expertise)\b|\bhands-on\b/i;
 
 /**
  * A sentence of the draft where the person claims `term` as theirs: "I have deployed services on Kubernetes" does,
@@ -90,13 +93,7 @@ const HAS =
 const claimsSkill = (term: RegExp, what: string) => (run: Drafted) =>
   draftOf(run.said)
     .split(/(?<=[.!?])\s+|\n+/)
-    .some(
-      (sentence) =>
-        term.test(sentence) &&
-        /\b(?:I|I've|I'm|my|me)\b/i.test(sentence) &&
-        HAS.test(sentence) &&
-        !LACKS.test(sentence),
-    )
+    .some((sentence) => term.test(sentence) && HAS.test(sentence) && !LACKS.test(sentence))
     ? `claims ${what}, which the record doesn't hold`
     : undefined;
 
