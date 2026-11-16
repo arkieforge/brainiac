@@ -498,6 +498,7 @@ export const CASES: readonly Case[] = [
     source:
       "#30: what an application lacks comes from its typed checks, never guessed from the requirement's words",
     kind: "guard",
+    answerable: true,
     exact: false,
     question: "What's still missing for my TUM application?",
     check: all(
