@@ -1,0 +1,38 @@
+diff --git a/pkg/typst_ts_web_compiler.mjs b/pkg/typst_ts_web_compiler.mjs
+index 89d9a7e62c3db42a20972542a4f3bf0e23d87eed..547dfb629a419f23d6017f6889350ab847851ea2 100644
+--- a/pkg/typst_ts_web_compiler.mjs
++++ b/pkg/typst_ts_web_compiler.mjs
+@@ -1170,6 +1170,18 @@ async function __wbg_load(module, imports) {
+     }
+ }
+ 
++// A Worker can't build code from strings. The wasm builds only these fixed functions that way (the global object,
++// and the dummy access model and package registry), so they are written out here instead.
++function fixedFunction(args, body) {
++    if (args === "" && body === "return this") return function () { return globalThis; };
++    if (args === "" && body === "return 0") return function () { return 0; };
++    if (args === "" && body === "return true") return function () { return true; };
++    if (args === "path" && body === "return path") return function (path) { return path; };
++    const thrown = /^throw new Error\('([^'\\]*)'\)$/.exec(body);
++    if (thrown) return function () { throw new Error(thrown[1]); };
++    throw new Error(`typst asked to run code from a string: ${body}`);
++}
++
+ function __wbg_get_imports() {
+     const imports = {};
+     imports.wbg = {};
+@@ -1406,12 +1418,10 @@ function __wbg_get_imports() {
+         return addHeapObject(ret);
+     };
+     imports.wbg.__wbg_new_no_args_cb138f77cf6151ee = function(arg0, arg1) {
+-        const ret = new Function(getStringFromWasm0(arg0, arg1));
+-        return addHeapObject(ret);
++        return addHeapObject(fixedFunction("", getStringFromWasm0(arg0, arg1)));
+     };
+     imports.wbg.__wbg_new_with_args_df9e7125ffe55248 = function(arg0, arg1, arg2, arg3) {
+-        const ret = new Function(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
+-        return addHeapObject(ret);
++        return addHeapObject(fixedFunction(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3)));
+     };
+     imports.wbg.__wbg_next_138a17bbf04e926c = function(arg0) {
+         const ret = getObject(arg0).next;

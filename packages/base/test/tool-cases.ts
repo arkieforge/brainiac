@@ -11,7 +11,11 @@ import {
   chunkNote,
   connect,
   digest,
+  draftRendering,
+  mutateAll,
   getNote,
+  PACKET_BYTES,
+  packetOf,
   grant,
   migrate,
   mutate,
@@ -1239,6 +1243,187 @@ export const toolCases: Record<string, Case> = {
     match(refused(sql, floor, "ask", { mode: "context", question: "x", text: "y" }), /verify/);
   },
 
+  "a saved draft verifies against its claims, quotes a sensitive value only when it is sensitive itself, renders once it passes, and freezes once its application is sent":
+    (sql, fixtures) => {
+      const n = record(sql, fixtures);
+      const writer = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+      const body =
+        "# Nadia Karim\n\nBSc Computer Science, Northvale University: CGPA 3.82. IELTS Academic 8.0. C# and #set.\n";
+      const claims = [
+        { note: n.bsc, field: "cgpa", value: 3.82 },
+        { note: n.ielts, field: "overall", value: 8 },
+      ];
+      const save = (path: string, sensitive: boolean) => {
+        const made = call(sql, writer, "create", {
+          type: "Draft",
+          path,
+          fields: { title: "CV for TUM", kind: "cv", claims },
+          link: { for: n.tum },
+          body,
+          sensitive,
+          duplicate_ok: true,
+        });
+        equal(made["status"], "applied", JSON.stringify(made));
+        return String(made["id"]);
+      };
+      // Normal, it would show the November score to every connection that can't see the score itself.
+      const open = save("applications/tum-msc-informatics-2027/cv-v1.md", false);
+      const leaked = call(sql, writer, "draft", { verify: open });
+      equal(leaked["status"], "fix");
+      match(String(leaked["message"]), /facts\/tests\/ielts-2026-11\.md.*sensitive/);
+      const refusedRender = draftRendering(sql, open, T0);
+      ok("error" in refusedRender);
+      match(refusedRender.error, /doesn't pass verify/);
+      const cv = save("applications/tum-msc-informatics-2027/cv-v2.md", true);
+      const passed = call(sql, writer, "draft", { verify: "applications/tum-msc-informatics-2027/cv-v2.md" });
+      equal(passed["status"], "ok", JSON.stringify(passed));
+      equal(passed["pdf"], `/api/drafts/${cv}/pdf`);
+      const rendering = draftRendering(sql, cv, T0);
+      ok("source" in rendering, JSON.stringify(rendering));
+      equal(rendering.name, "CV_for_TUM.pdf");
+      // The draft's own text is escaped: "#set" prints, it doesn't run.
+      ok(rendering.source.includes("= Nadia Karim") && rendering.source.includes("C\\# and \\#set."));
+      match(refused(sql, writer, "draft", { verify: n.tum }), /verify takes a Draft/);
+      // A claim names its note however verify reads it: by path in any case, or by id.
+      const shouted = call(sql, writer, "create", {
+        type: "Draft",
+        path: "applications/tum-msc-informatics-2027/cv-v3.md",
+        fields: {
+          title: "CV for TUM, shouted",
+          kind: "cv",
+          claims: [{ note: "FACTS/TESTS/IELTS-2026-11.MD", field: "overall", value: 8 }],
+        },
+        body: "1. IELTS Academic 8.0\n2. Northvale University\n2025.\n\nNorthvale University\n",
+      });
+      const loud = call(sql, writer, "draft", { verify: String(shouted["id"]) });
+      equal(loud["status"], "fix");
+      // The list's own numbers are layout; a year on a line of its own is still a value, and uncited.
+      same(loud["uncited"], [{ text: "2025", kind: "number" }]);
+      match(String(loud["message"]), /ielts-2026-11\.md.*sensitive/);
+      // A connection that can't see the score gets it as missing, never its path.
+      const floor = call(sql, as(connection(sql)), "draft", { verify: String(shouted["id"]) });
+      equal(floor["status"], "fix");
+      ok(!JSON.stringify(floor).includes("ielts-2026-11"), JSON.stringify(floor));
+      match(refused(sql, writer, "draft", { verify: cv, kind: "cv" }), /alone/);
+
+      // The packet: the CV rendered under the portal's name; a document with no stored file is left for the person.
+      const status = (value: string) =>
+        mutate(
+          sql,
+          {
+            op: "patch",
+            noteId: n.tum,
+            baseRev: revOf(sql, n.tum),
+            ops: [
+              { op: "set", path: ["status"], value },
+              {
+                op: "set",
+                path: ["packet"],
+                value: [
+                  { item: "cv-v2.md", name: "Karim_Nadia_CV.pdf" },
+                  { item: "../../documents/transcript-bsc.md", name: "Karim_Nadia_Transcript.pdf" },
+                  { item: "cv-v1.md", name: "Karim_Nadia_CV.pdf" },
+                ],
+              },
+            ],
+          },
+          PERSON_CTX,
+        ).status;
+      equal(status("submitted"), "applied");
+      const packet = packetOf(sql, n.tum, T0);
+      ok("parts" in packet, JSON.stringify(packet));
+      same(
+        packet.parts.map((part) => [part.kind, part.name]),
+        [["draft", "Karim_Nadia_CV.pdf"]],
+      );
+      // A file past what one zip carries is left for the person, however cleared.
+      const big = mutate(
+        sql,
+        {
+          op: "create",
+          path: "documents/big-scan.md",
+          raw: "---\nid: 01M6AM78G0STS7TB29G7A10B1G\ntype: Document\ntitle: Big scan\nfile: files/big-scan.pdf\n---\n",
+          class: "sensitive",
+        },
+        PERSON_CTX,
+      );
+      equal(big.status, "applied", JSON.stringify(big));
+      sql.all(
+        "INSERT INTO files (sha256, r2Key, mime, bytes, class, encrypted, path) VALUES ('b1', 'r2/b1', 'application/pdf', ?, 'sensitive', 1, 'documents/files/big-scan.pdf')",
+        PACKET_BYTES + 1,
+      );
+      const withBig = mutate(
+        sql,
+        {
+          op: "patch",
+          noteId: n.tum,
+          baseRev: revOf(sql, n.tum),
+          ops: [
+            {
+              op: "set",
+              path: ["packet"],
+              value: [{ item: "../../documents/big-scan.md", name: "Scan.pdf" }],
+            },
+          ],
+        },
+        PERSON_CTX,
+      );
+      equal(withBig.status, "applied");
+      const tooBig = packetOf(sql, n.tum, T0);
+      ok("missing" in tooBig);
+      same(tooBig.missing, [
+        {
+          name: "Scan.pdf",
+          why: "documents/big-scan.md doesn't fit in one zip with the rest: download it from the site",
+        },
+      ]);
+      same(packet.missing, [
+        { name: "Karim_Nadia_Transcript.pdf", why: "documents/transcript-bsc.md has no stored file" },
+        { name: "Karim_Nadia_CV.pdf", why: "needs a file name of its own, like Karim_Nadia_CV.pdf" },
+      ]);
+
+      // Submitted: the CV the portal has stays as it was, for agents and the person alike, until it goes back.
+      const edit = (who: Context) =>
+        callTool(sql, "update", { id: cv, rev: revOf(sql, cv), set: { title: "CV for TUM, v2b" } }, who);
+      match(JSON.stringify(edit(writer)), /version sent with its application.*preparing/);
+      match(JSON.stringify(edit(PERSON_CTX)), /stays as it was/);
+      // Moving or changing the application in the same run doesn't thaw it: it's judged as the run found it.
+      const moved = mutateAll(
+        sql,
+        [
+          {
+            op: "move",
+            noteId: n.tum,
+            baseRev: revOf(sql, n.tum),
+            path: "applications/tum-2027/application.md",
+          },
+          // The move rewrites the CV's `for` first, a revision of its own.
+          {
+            op: "patch",
+            noteId: cv,
+            baseRev: revOf(sql, cv) + 1,
+            ops: [{ op: "set", path: ["title"], value: "CV for TUM, v2c" }],
+          },
+        ],
+        PERSON_CTX,
+      );
+      match(JSON.stringify(moved), /stays as it was/);
+      // The move alone goes through: following it, the frozen CV's `for` says what it said.
+      const alone = mutate(
+        sql,
+        {
+          op: "move",
+          noteId: n.tum,
+          baseRev: revOf(sql, n.tum),
+          path: "applications/tum-2027/application.md",
+        },
+        PERSON_CTX,
+      );
+      equal(alone.status, "applied", JSON.stringify(alone));
+      equal(status("preparing"), "applied");
+      match(JSON.stringify(edit(writer)), /"status":"applied"/);
+    },
+
   "draft hands over the current facts the connection may see, the application, an outline and the person's house rules":
     (sql, fixtures) => {
       const n = record(sql, fixtures);
@@ -1269,7 +1454,8 @@ export const toolCases: Record<string, Case> = {
       same(idsIn(floor["notes"]).toSorted(), [n.bsc, n.role].toSorted());
       equal(floor["for"], undefined);
       match(refused(sql, scoped, "draft", { kind: "sop", for: n.role }), /No application/);
-      match(refused(sql, scoped, "draft", { kind: "cv" }), /kind/);
+      match(refused(sql, scoped, "draft", { kind: "poem" }), /kind/);
+      match(refused(sql, scoped, "draft", {}), /needs kind/);
     },
 
   "ask verify checks each claim against the note's current value and flags uncited numbers and dates": (

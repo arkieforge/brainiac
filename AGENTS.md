@@ -213,6 +213,7 @@ files. Details: [Architecture](docs/internals/architecture.md), [Sync engine](do
   the stages, secrets and prod guards.
 - `apps/worker`: the one Worker and the `Base` Durable Object.
 - `apps/ocr`: OCR of photos and scans for the vault's checks, a Worker of its own with no URL, called over RPC.
+- `apps/typst`: Typst for drafts' PDFs, a Worker of its own with no URL, called over RPC by the site's downloads.
 - `packages/*`: shared code, added by the issues that need it.
 - `oxlint-plugin-brainiac/`: repo lint rules, each with tests. `scripts/`: doctor, setup, repo sync.
 - `.repos/`: read-only library source for reference (`vp run repos:sync`). Never import from it.

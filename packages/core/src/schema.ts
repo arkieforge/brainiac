@@ -262,6 +262,26 @@ export const BUILT_IN_TYPES: Manifest["types"] = {
       portal_login: { kind: "text", example: "secret:portal.tum" },
       status: { values: ["researching", "preparing", "submitted", "interview", "decision"], required: true },
       requirements: { kind: "requirements" },
+      // What the portal takes, in its order, each under the file name it wants: a Draft (rendered to PDF) or a
+      // Document with a file. Built into a zip on the site (packages/base/src/drafts.ts).
+      packet: { kind: "list", example: "[{item: cv-v2.md, name: Karim_Nadia_CV.pdf}]" },
+    },
+  },
+  // A CV, resume, statement of purpose, cover letter or essay the person's Claude wrote from the record with `draft`:
+  // the text is the body, in markdown, and `claims` holds the value each number, date and name in it comes from, so
+  // `draft {verify}` can check it again whenever the record changes. One application's drafts sit in its folder,
+  // one note per version (cv-v2.md); a draft for an application that is submitted or past it is frozen.
+  Draft: {
+    version: 1,
+    folder: "applications",
+    headline: "{title} · {kind}",
+    fields: {
+      kind: { values: ["cv", "resume", "sop", "cover-letter", "essay"], required: true },
+      for: { kind: "relation", example: "application.md" },
+      claims: {
+        kind: "list",
+        example: "[{note: ../../facts/education/bsc-northvale.md, field: cgpa, value: 3.82}]",
+      },
     },
   },
   // Someone in the record: a referee who writes the person's letters, an advisor, family for visa forms.

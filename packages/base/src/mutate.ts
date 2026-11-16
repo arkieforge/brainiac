@@ -172,6 +172,53 @@ function blindEdge(sql: Sql, reader: Principal, { before, after }: Effect): bool
   return blind(before, was) || blind(after, is);
 }
 
+/** An application's statuses once the portal has its files: the drafts sent with it stay as they were sent. */
+const SENT = new Set(["submitted", "interview", "decision"]);
+
+/**
+ * The application a change to a Draft would alter after it was sent (docs/product/features/applications.md):
+ * submitted versions are frozen. A new version is a new Draft; moving the application back to preparing thaws it.
+ * The application is read as the run found it, so moving, changing or deleting it in the same run freezes as well.
+ */
+function frozenBy(sql: Sql, { before, after }: Effect, started: Started): NoteRow | undefined {
+  if (!before || before.deletedAt !== null || before.type !== "Draft") return undefined;
+  if (
+    after.raw === before.raw &&
+    after.path === before.path &&
+    after.class === before.class &&
+    after.deletedAt === null
+  )
+    return undefined;
+  const relation: unknown = JSON.parse(before.fm)["for"];
+  if (typeof relation !== "string") return undefined;
+  let key: string | undefined;
+  try {
+    key = isUlid(relation) ? undefined : pathKey(resolveRelation(before.path, relation));
+  } catch (error) {
+    if (!(error instanceof PathError)) throw error;
+  }
+  const found = [...started.values()].find(
+    (note) =>
+      note !== undefined &&
+      note.deletedAt === null &&
+      (isUlid(relation) ? note.id === relation : key !== undefined && pathKey(note.path) === key),
+  );
+  const application = found ?? relationTarget(sql, before, relation);
+  if (application?.type !== "Application" || !SENT.has(String(JSON.parse(application.fm)["status"])))
+    return undefined;
+  // A move of the application rewrites `for` to follow it: the draft still says what it said.
+  const { for: was, ...rest } = JSON.parse(before.fm);
+  const { for: is, ...now } = JSON.parse(after.fm);
+  const followed =
+    was !== is &&
+    after.deletedAt === null &&
+    after.path === before.path &&
+    deepEqual(rest, now) &&
+    splitNote(after.raw).body === splitNote(before.raw).body &&
+    relationTarget(sql, after, is)?.id === application.id;
+  return followed ? undefined : application;
+}
+
 /**
  * Runs `fn` in its own transaction (a savepoint inside the caller's), then judges what it did to each note it
  * wrote. Without the approval that effect needs, every write is rolled back and the result says what to sign.
@@ -214,6 +261,20 @@ function judged<T extends { readonly status: string }>(
               },
             ],
           });
+        for (const effect of effects) {
+          const application = frozenBy(sql, effect, started);
+          if (application)
+            throw new Held({
+              status: "invalid",
+              issues: [
+                {
+                  field: "status",
+                  // Never the application's title: the caller may not see it (a sensitive application).
+                  message: `${effect.before?.path} is the version sent with its application, so it stays as it was. Write a new version, or move the application back to preparing first.`,
+                },
+              ],
+            });
+        }
         const reader = connection ? principalOf(connection) : (ctx.reader ?? PERSON);
         if (reader !== PERSON && effects.some((effect) => blindEdge(sql, reader, effect)))
           throw new Held({

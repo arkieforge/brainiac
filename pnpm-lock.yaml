@@ -168,6 +168,7 @@ overrides:
 
 patchedDependencies:
   '@better-auth/oauth-provider@1.7.22': 31cbf49e3a19e31e59aeca361af2b0ec44490598df974fffc2ddb821e760e091
+  '@myriaddreamin/typst-ts-web-compiler@0.7.0': 57068b23693cb834d9de2cb3941afd884bd8e768ce6f0c36b995c947a33d0b90
   tesseract-wasm@0.11.0: cd4a091aea0176c3bcb11d22cb8ea6733c7454660a3369c112f11e4f69d94959
 
 importers:
@@ -250,6 +251,22 @@ importers:
         specifier: 0.11.0
         version: 0.11.0(patch_hash=cd4a091aea0176c3bcb11d22cb8ea6733c7454660a3369c112f11e4f69d94959)
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20261114.1
+        version: 5.20261114.1
+      miniflare:
+        specifier: 4.20260730.0
+        version: 4.20260730.0(@types/node@24.19.2)
+
+  apps/typst:
+    dependencies:
+      '@myriaddreamin/typst-ts-web-compiler':
+        specifier: 0.7.0
+        version: 0.7.0(patch_hash=57068b23693cb834d9de2cb3941afd884bd8e768ce6f0c36b995c947a33d0b90)
+    devDependencies:
+      '@brainiac/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@cloudflare/workers-types':
         specifier: 5.20261114.1
         version: 5.20261114.1
@@ -1521,6 +1538,9 @@ packages:
   '@modelcontextprotocol/server@2.4.0':
     resolution: {integrity: sha512-rgR9yxSaAJ+bcsi/XroT/S2AfPiIWloXAnrdfYSCms9ivVju0ishu/wW0J21Ho6+ZOR1r7RyeRbjiRuF87ix5Q==}
     engines: {node: '>=20'}
+
+  '@myriaddreamin/typst-ts-web-compiler@0.7.0':
+    resolution: {integrity: sha512-nMwMcfOBy5pABPDuVM7/u8425SxhPUM+OJe6daqqgVOT3+neCTz4JKwx2L8XasfEHTNvd0cUI07LR9q5ADo7Gw==}
 
   '@napi-rs/canvas-android-arm64@1.1.1':
     resolution: {integrity: sha512-rSEp3y+/YXw6TxSx4/NHSAFxumZrkMoXy2WiVqpKGT8oF5GHOUDzTKj45e5cvzophX4iFaxwKs3+/gNkJ7FmzQ==}
@@ -5626,6 +5646,8 @@ snapshots:
     dependencies:
       '@modelcontextprotocol/core': 2.4.0
       zod: 4.6.7
+
+  '@myriaddreamin/typst-ts-web-compiler@0.7.0(patch_hash=57068b23693cb834d9de2cb3941afd884bd8e768ce6f0c36b995c947a33d0b90)': {}
 
   '@napi-rs/canvas-android-arm64@1.1.1':
     optional: true

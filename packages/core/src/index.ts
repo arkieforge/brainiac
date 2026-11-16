@@ -110,3 +110,4 @@ export {
   type ReviewNote,
   type Stage,
 } from "./review.ts";
+export { typstOf } from "./typst.ts";

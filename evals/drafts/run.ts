@@ -64,18 +64,19 @@ function world(c: Case) {
     if (put.status !== "applied") throw new Error(`${c.id}: ${JSON.stringify(put)}`);
   }
   // The person's own Claude: it may read everything, sensitive notes included.
-  const reader = connection(sql, "read", true);
+  const reader = connection(sql, c.level ?? "read", true);
   const facts = factsOf(listNotes(sql).flatMap((n) => (project(n, reader.connection) ? [n.raw] : [])));
   return { sql, reader, facts };
 }
 
 const rows: Row[] = [];
-for (const c of options.cases) {
-  const { sql, reader, facts } = world(c);
-  const mcp = await serve(sql);
-  try {
-    rows.push(
-      ...(await sampled(options.samples, true, async (sample) => {
+for (const c of options.cases)
+  rows.push(
+    ...(await sampled(options.samples, true, async (sample) => {
+      // A record of its own per sample: a draft one sample saved is never the next one's to find.
+      const { sql, reader, facts } = world(c);
+      const mcp = await serve(sql);
+      try {
         const done = await run({
           prompt: c.prompt,
           model: options.model,
@@ -100,12 +101,11 @@ for (const c of options.cases) {
           usage: done.usage,
           ...(done.costUsd !== undefined && { costUsd: done.costUsd }),
         };
-      })),
-    );
-  } finally {
-    mcp.close();
-  }
-}
+      } finally {
+        mcp.close();
+      }
+    })),
+  );
 
 const passed = report(options.out, {
   name: "drafts",

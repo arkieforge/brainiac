@@ -787,6 +787,12 @@ function photoOf(sql: Sql, connection: Connection, noteId: string) {
   if (!canSee(connection, SIDECAR)) return undefined;
   const note = getNote(sql, noteId);
   if (!note || note.deletedAt !== null || !canSee(connection, note)) return undefined;
+  const file = fileOf(sql, note);
+  return file && showable(file) ? { note, file } : undefined;
+}
+
+/** The stored file a sidecar note's `file:` names, if any. */
+export function fileOf(sql: Sql, note: NoteRow): FileRow | undefined {
   const path = JSON.parse(note.fm)["file"];
   if (typeof path !== "string") return undefined;
   let key: string;
@@ -796,10 +802,9 @@ function photoOf(sql: Sql, connection: Connection, noteId: string) {
     if (error instanceof PathError) return undefined;
     throw error;
   }
-  const file = sql
+  return sql
     .all<FileRow>(`SELECT ${COLUMNS} FROM files WHERE path IS NOT NULL`)
     .find((row) => pathKey(row.path ?? "") === key);
-  return file && showable(file) ? { note, file } : undefined;
 }
 
 function photoView(sql: Sql, connection: Connection, note: NoteRow, file: FileRow): PhotoView {

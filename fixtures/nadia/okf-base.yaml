@@ -68,6 +68,7 @@ types:
       portal_login: {kind: text, example: "secret:portal.tum"}
       status: {values: [researching, preparing, submitted, interview, decision], required: true}
       requirements: {kind: requirements}
+      packet: {kind: list}
   Document:
     version: 1
     folder: documents

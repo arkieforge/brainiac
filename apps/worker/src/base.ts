@@ -55,6 +55,9 @@ import {
   type SecretInput,
   type SecretView,
   type Digest,
+  draftRendering,
+  packetOf,
+  type Rendering,
   type FileToken,
   type Extracted,
   type FileView,
@@ -139,6 +142,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
 import { checkSignature, type Approver } from "./approvals.ts";
+import type { PacketFiles, PacketParts } from "./drafts.ts";
 import type { Env } from "./env.ts";
 import type { Models } from "./jobs.ts";
 
@@ -376,6 +380,46 @@ export class Base extends DurableObject<Env> {
   emails(email?: Email, on?: boolean): Record<Email, boolean> {
     if (email !== undefined && on !== undefined) setEmail(this.sql, email, on);
     return emails(this.sql);
+  }
+
+  /**
+   * A saved Draft as Typst source, for the site's download route (the person's session only): it renders only
+   * while every claim in it matches the record.
+   */
+  draftRendering(id: string): Rendering | { readonly error: string } {
+    return draftRendering(this.sql, id, Date.now());
+  }
+
+  /**
+   * An application's packet for the site's download route (the person's session only): its drafts as Typst
+   * source and its cleared files' bytes, in the packet's order, and what the person adds by hand.
+   */
+  async packet(id: string): Promise<PacketFiles> {
+    const packet = packetOf(this.sql, id, Date.now());
+    if ("error" in packet) return packet;
+    const key = await this.dataKey();
+    const parts: PacketParts = [];
+    const missing = [...packet.missing];
+    // One file at a time, so only one sealed copy is in memory beside what the zip will hold.
+    for (const part of packet.parts) {
+      if (part.kind === "draft") {
+        parts.push({ name: part.name, source: part.source });
+        continue;
+      }
+      const object = await this.env.BLOBS.get(part.file.r2Key);
+      if (!object) {
+        // A bug, not a state: logged, and the packet still goes out with the file listed for the person.
+        console.error("packet file missing from R2", part.file.sha256);
+        missing.push({
+          name: part.name,
+          why: "is missing from storage: download it from the site, or upload it again",
+        });
+        continue;
+      }
+      const sealed = new Uint8Array(await object.arrayBuffer());
+      parts.push({ name: part.name, bytes: unseal(key, sealed, `file:${part.file.sha256}`) });
+    }
+    return { name: packet.name, parts, missing };
   }
 
   /**
