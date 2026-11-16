@@ -1157,7 +1157,7 @@ footer {
   border-top-color: var(--ink);
 }
 
-/* Council round 1 (#52): denser feature cells, readable phone terminal and rows, calmer texture. */
+/* Feature cells, the source excerpt, file rows and the phone layout. */
 .cross {
   display: none;
 }
@@ -1232,13 +1232,9 @@ footer {
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  .works > span:first-child {
-    flex-basis: 100%;
-    text-align: center;
-  }
 }
 
-/* Council round 2 (#52). */
+/* Headlines balance; table cells and the steps' +/− indicator. */
 .h2,
 .close .h2 {
   text-wrap: balance;
@@ -1300,7 +1296,7 @@ footer {
   }
 }
 
-/* Council round 2, Sol. */
+/* The source excerpt reads as a paper document; the phone hero is tighter. */
 .excerpt {
   border: 1px solid var(--line-2);
   box-shadow:
@@ -1331,7 +1327,7 @@ footer {
   }
 }
 
-/* Council round 3, Opus. */
+/* One-line strips, the footer logo in ink, steps on the title's baseline. */
 .works > * {
   flex: none;
   white-space: nowrap;
@@ -1364,10 +1360,24 @@ footer {
   }
 }
 
-/* Council round 3, Sol: the phone terminal scrolls its full lines. */
+/* On a phone the terminal and the works-with strip scroll sideways, fading at the edge. */
 @media (max-width: 640px) {
   .term .row {
     overflow: visible;
     width: max-content;
   }
+}
+@media (max-width: 640px) {
+  .works,
+  .term {
+    mask-image: linear-gradient(to right, #000 85%, transparent);
+  }
+}
+/* The reminder that is due today sits below the line, clear of the other labels. */
+.timeline {
+  margin-bottom: 26px;
+}
+.timeline .tick.hot {
+  bottom: -26px;
+  flex-direction: column-reverse;
 }
