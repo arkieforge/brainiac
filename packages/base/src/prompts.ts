@@ -25,8 +25,8 @@ Finish with a short list: what went where, what you asked me, and what is still 
     description: "Check an application's requirements against the record and list what's missing.",
     args: ApplicationArgs,
     text: ({ application }: typeof ApplicationArgs.infer) =>
-      `What's missing for my application "${application}"? Call describe first. Find the Application note with query (or get, for an id or path) and read its requirements.
-For each requirement, query the notes that would meet it and compare their values with what it asks, on the application's deadline. Count a requirement as met only when a stored value shows it.
+      `What's missing for my application "${application}"? Call describe first. Find the Application note with query (or get, for an id or path): its checks judge each requirement from stored values, as passing (with the notes that meet it), failing (with why) or unsure.
+Report them as they are, never judging a requirement from its words. A failing manual requirement is one I tick myself once it's done.
 ${RULES}
 Answer with each requirement as met, missing or unsure, the note and value behind it, and what to do next for anything not met. Change nothing unless I ask.`,
   },

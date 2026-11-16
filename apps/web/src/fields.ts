@@ -20,7 +20,7 @@ export interface Field {
   readonly name: string;
   readonly spec: FieldSpec;
   readonly value: unknown;
-  /** Lists and mappings show as text; editing them waits for a form of their own. */
+  /** Lists, mappings and requirements show as text; editing them waits for a form of their own. */
   readonly editable: boolean;
 }
 
@@ -60,7 +60,12 @@ export function fieldsOf(data: Readonly<Record<string, unknown>>, manifest: Mani
   return names.map((name) => {
     const spec = declared[name] ?? inferred(data[name] ?? "");
     const kind = kindOf(spec);
-    return { name, spec, value: data[name], editable: kind !== "list" && kind !== "mapping" };
+    return {
+      name,
+      spec,
+      value: data[name],
+      editable: kind !== "list" && kind !== "mapping" && kind !== "requirements",
+    };
   });
 }
 

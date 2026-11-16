@@ -366,7 +366,7 @@ export const connectionCases: Record<string, Case> = {
     ok("connection" in restrict(sql, proposer.id, { level: "read" }));
     const reader = getConnection(sql, proposer.id);
     ok(reader);
-    equal(mutate(sql, patchOf(sql, tum, [set("status", "decided")]), via(reader)).status, "forbidden");
+    equal(mutate(sql, patchOf(sql, tum, [set("status", "decision")]), via(reader)).status, "forbidden");
     equal(undoRun(sql, "anything", via(reader)).status, "forbidden");
     equal(field(sql, tum, "status"), "submitted");
   },

@@ -9,13 +9,15 @@ import { ownershipCode, titleHash } from "./profiles.ts";
 import {
   detect,
   headline,
+  meetsEdges,
   overview,
+  requirementsOf,
   reviewQueue,
   verifyOps,
   type Detector,
   type ReviewNote,
 } from "./review.ts";
-import { parseManifest } from "./schema.ts";
+import { parseManifest, validate } from "./schema.ts";
 
 const ROOT = join(import.meta.dirname, "../../../fixtures/nadia");
 const manifest = parseManifest(readFileSync(join(ROOT, "okf-base.yaml"), "utf8"));
@@ -207,7 +209,7 @@ describe("detectors", () => {
       `${OLD_IELTS.id}:expired:expires`,
     ]);
     // A decided application relies on nothing.
-    const decided = replace(notes, edited(TUM, { status: "decided" }));
+    const decided = replace(notes, edited(TUM, { status: "decision" }));
     expect(found(decided).filter((c) => c.includes(":expired:"))).toEqual([]);
   });
 
@@ -662,7 +664,7 @@ describe("links", () => {
   });
 
   it("a dead link nothing open relies on, a live one, and a block for another address raise nothing", () => {
-    const decided = replace(fixture, edited(TUM, { status: "decided" }));
+    const decided = replace(fixture, edited(TUM, { status: "decision" }));
     const forTum = { for: "../applications/tum-msc-informatics-2027/application.md" };
     expect(linkChecks([...fixture, link({ synced: dead })])).toEqual([]);
     expect(linkChecks([...decided, link({ ...forTum, synced: dead })])).toEqual([]);
@@ -687,6 +689,124 @@ describe("links", () => {
         related: [TUM.id],
       },
     ]);
+  });
+});
+
+const TRANSCRIPT = at("documents/transcript-bsc.md");
+const judged = (notes: readonly ReviewNote[], application = TUM) =>
+  requirementsOf(application, notes, NOW).map(({ need, status, why }) => ({ need, status, why }));
+const withRequirements = (requirements: unknown[]) => edited(TUM, { requirements });
+/** A fictional letter, received for TUM unless `data` says otherwise. */
+const letter = (path: string, data: Record<string, unknown>) =>
+  note(path, {
+    type: "Letter",
+    status: "received",
+    for: "../applications/tum-msc-informatics-2027/application.md",
+    ...data,
+  });
+
+describe("requirements", () => {
+  const IELTS_CHECK = {
+    type: "TestScore",
+    test: "ielts-academic",
+    field: "overall",
+    gte: 6.5,
+    valid_on: "deadline",
+  };
+
+  it("the fixture TUM application lacks exactly the letters and the manual motivation", () => {
+    expect(requirementsOf(TUM, fixture, NOW)).toEqual([
+      { need: "Bachelor transcript", status: "met", by: [TRANSCRIPT.id] },
+      // The March score is superseded, so only November's meets it.
+      { need: "IELTS 6.5 or higher, valid on the deadline", status: "met", by: [IELTS.id] },
+      {
+        need: "Two recommendation letters",
+        status: "missing",
+        by: [],
+        why: "No Letter with status received for this application, 2 needed",
+      },
+      {
+        need: "Motivation for the specialization (portal question 4)",
+        status: "missing",
+        by: [],
+        why: "Not ticked yet: the person marks it done (done: true)",
+      },
+    ]);
+    expect(meetsEdges(fixture, NOW)).toEqual([
+      { from: TRANSCRIPT.id, to: TUM.id },
+      { from: IELTS.id, to: TUM.id },
+    ]);
+  });
+
+  it("thresholds, counts and validity come from the check, never from the words of its need", () => {
+    // The words say 9.0; the check says 6.5, and only the check counts.
+    const words = withRequirements([{ need: "IELTS 9.0 overall", check: IELTS_CHECK }]);
+    expect(judged(fixture, words)).toEqual([{ need: "IELTS 9.0 overall", status: "met", why: undefined }]);
+    // A need with no typed check is no requirement Brainiac can judge: it says so instead of reading the text.
+    const untyped = withRequirements([{ need: "IELTS 6.5 or higher", check: "IELTS 6.5 or higher" }]);
+    const [only] = judged(fixture, untyped);
+    expect(only?.status).toBe("missing");
+    expect(only?.why).toMatch(/^Its check can't run: check must be/);
+  });
+
+  it("a failing check names the stored values that fail it", () => {
+    const strict = withRequirements([{ need: "IELTS 8.5", check: { ...IELTS_CHECK, gte: 8.5 } }]);
+    expect(judged(fixture, strict)[0]?.why).toBe(
+      "IELTS Academic, November 2026: overall 8, needs at least 8.5",
+    );
+    // A field inside a mapping is read where it sits: November's writing band is 7.
+    const writing = { ...IELTS_CHECK, field: "sections.writing" };
+    expect(
+      judged(fixture, withRequirements([{ need: "Writing 7", check: { ...writing, gte: 7 } }]))[0]?.status,
+    ).toBe("met");
+    expect(
+      judged(fixture, withRequirements([{ need: "Writing 7.5", check: { ...writing, gte: 7.5 } }]))[0]?.why,
+    ).toBe("IELTS Academic, November 2026: sections.writing 7, needs at least 7.5");
+    // Without the November score, the March one runs out before the deadline.
+    const march = fixture.filter((n) => n.id !== IELTS.id);
+    expect(judged(march)[1]).toEqual({
+      need: "IELTS 6.5 or higher, valid on the deadline",
+      status: "missing",
+      why: "IELTS Academic, March 2025: expires 2027-03-15, before deadline 2027-05-31",
+    });
+    // An application without the date its check is valid on meets nothing, rather than guess a date.
+    expect(judged(fixture, edited(TUM, { deadline: undefined }))[1]?.why).toBe(
+      "TUM MSc Informatics, Winter 2027 has no deadline to check it on",
+    );
+  });
+
+  it("counts take that many matching notes, and `for: this` only notes for this application", () => {
+    const one = letter("letters/okafor-tum.md", {});
+    const elsewhere = letter("letters/okafor-kth.md", { for: "../applications/kth/application.md" });
+    const asked = letter("letters/lee-tum.md", { status: "requested" });
+    expect(judged([...fixture, one, elsewhere, asked])[2]?.why).toBe("1 of 2 needed");
+    const two = letter("letters/lee-tum.md", {});
+    expect(requirementsOf(TUM, [...fixture, one, two], NOW)[2]).toEqual({
+      need: "Two recommendation letters",
+      status: "met",
+      by: [one.id, two.id],
+    });
+  });
+
+  it("a manual check is met only once the person ticks it", () => {
+    const ticked = withRequirements([{ need: "Motivation", check: "manual", done: true }]);
+    expect(judged(fixture, ticked)).toEqual([{ need: "Motivation", status: "met", why: undefined }]);
+  });
+
+  it("the manifest refuses a check that isn't typed", () => {
+    const issues = (requirements: unknown) =>
+      validate(manifest, { ...TUM.data, requirements }).map((issue) => issue.message);
+    expect(issues(TUM.data["requirements"])).toEqual([]);
+    expect(issues([{ need: "IELTS 6.5", check: "IELTS 6.5" }])).toEqual([
+      expect.stringMatching(/^requirements value at \[0\]\.check must be a typed check like/),
+    ]);
+    expect(issues([{ need: "IELTS 6.5", check: { type: "TestScore", gte: 6.5 } }])).toEqual([
+      expect.stringMatching(/\[0\]\.check must be a check naming the field its bound compares/),
+    ]);
+    expect(issues([{ need: "Transcript", check: { type: "Document" }, done: true }])).toEqual([
+      expect.stringMatching(/\[0\] must be done only with check: manual/),
+    ]);
+    expect(issues([{ need: "Letters", check: { type: "Letter", count_gte: 0 } }])[0]).toMatch(/count_gte/);
   });
 });
 

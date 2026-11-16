@@ -66,8 +66,8 @@ types:
       deadline: {kind: date, required: true}
       portal: {kind: text, example: "https://campus.tum.de"}
       portal_login: {kind: text, example: "secret:portal.tum"}
-      status: {values: [preparing, submitted, decided], required: true}
-      requirements: {kind: list}
+      status: {values: [researching, preparing, submitted, interview, decision], required: true}
+      requirements: {kind: requirements}
   Document:
     version: 1
     folder: documents

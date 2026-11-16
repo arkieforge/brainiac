@@ -657,15 +657,20 @@ export const toolCases: Record<string, Case> = {
     const edited = call(sql, writer, "update", {
       id: n.tum,
       rev: 1,
-      set: { status: "submitted", "requirements.3.check": null },
+      set: { status: "submitted", "requirements.3.done": true, portal: null },
       section: [{ heading: "Plan", content: "Letters asked for in January.\n" }],
       link: { referees: n.okafor },
     });
     same([edited["status"], edited["rev"]], ["applied", 2]);
     const data = fieldsOf(sql, n.tum);
     same(
-      [data["status"], (data["requirements"] as Record<string, unknown>[])[3]?.["check"], data["referees"]],
-      ["submitted", null, "../../people/dr-okafor.md"],
+      [
+        data["status"],
+        (data["requirements"] as Record<string, unknown>[])[3]?.["done"],
+        data["portal"],
+        data["referees"],
+      ],
+      ["submitted", true, null, "../../people/dr-okafor.md"],
     );
     ok(getNote(sql, n.tum)?.raw.includes("## Plan\n\nLetters asked for in January.\n"));
     // Linking a list adds once; unlinking removes it.
@@ -888,10 +893,13 @@ export const toolCases: Record<string, Case> = {
     equal(made["status"], "applied");
     same(fieldsOf(sql, String(made["id"]))["proves"], ["../facts/education/bsc-northvale.md"]);
     equal(
-      call(sql, writer, "update", { id: n.tum, rev: 1, link: { requirements: n.transcript } })["status"],
+      call(sql, writer, "update", { id: n.transcript, rev: 1, link: { proves: n.role } })["status"],
       "applied",
     );
-    same((fieldsOf(sql, n.tum)["requirements"] as unknown[]).at(-1), "../../documents/transcript-bsc.md");
+    same(fieldsOf(sql, n.transcript)["proves"], [
+      "../facts/education/bsc-northvale.md",
+      "../facts/roles/acme-intern-2025.md",
+    ]);
   },
 
   "a proposal on a note made sensitive since leaves the lists of connections without the scope": (
@@ -972,6 +980,97 @@ export const toolCases: Record<string, Case> = {
     match(refused(sql, floor, "search", { text: " " }), /empty/);
   },
 
+  "an application's checks say what it lacks, from stored values, and meets edges hold only while one passes":
+    (sql, fixtures) => {
+      const n = record(sql, fixtures);
+      const person = { ...PERSON_CTX };
+      const checks = (ctx: Context) =>
+        rows(sql, ctx, { type: "Application", fields: ["checks"] })[0]?.fields["checks"];
+      const MISSING = [
+        {
+          need: "Two recommendation letters",
+          why: "No Letter with status received for this application, 2 needed",
+        },
+        {
+          need: "Motivation for the specialization (portal question 4)",
+          why: "Not ticked yet: the person marks it done (done: true)",
+        },
+      ];
+      same(checks(person), {
+        passing: [
+          { need: "Bachelor transcript", by: [n.transcript] },
+          { need: "IELTS 6.5 or higher, valid on the deadline", by: [n.ielts] },
+        ],
+        failing: MISSING,
+      });
+      // get carries the same checks, and the filter reads them like fields.
+      const [got] = call(sql, person, "get", { ids: [n.tum], body: false })["notes"] as Record<
+        string,
+        unknown
+      >[];
+      same(got?.["checks"], checks(person));
+      same(ids(sql, person, { type: "Application", where: { "checks.failing": { exists: true } } }), [n.tum]);
+      same(ids(sql, person, { type: "Application", where: { "checks.failing.need": { text: "letters" } } }), [
+        n.tum,
+      ]);
+
+      // A connection without the sensitive scope can't see test scores, so it can't call that check failing; the
+      // letters it can, being typed checks too, are unsure as well, and the manual one is plainly not ticked.
+      const floor = as(connection(sql));
+      const seen = checks(floor) as Record<string, { need: string; why: string }[]>;
+      same(seen["passing"], [{ need: "Bachelor transcript", by: [n.transcript] }]);
+      same(seen["failing"], [MISSING[1]]);
+      same(
+        seen["unsure"]?.map((u) => u.need),
+        ["IELTS 6.5 or higher, valid on the deadline", "Two recommendation letters"],
+      );
+      ok(seen["unsure"]?.every((u) => u.why.endsWith("so one it can't see may meet it")));
+
+      // Raise the bar past the November score: the check fails with the stored value, and its meets edge is gone.
+      const scoped = as(connection(sql, { level: "write", sensitive: true, holdDays: 0 }));
+      const meets = () =>
+        (call(sql, scoped, "related", { id: n.ielts })["groups"] as { field: string; notes: unknown }[])
+          .filter((g) => g.field === "meets")
+          .flatMap((g) => idsIn(g.notes));
+      same(meets(), [n.tum]);
+      const raised = call(sql, scoped, "update", {
+        id: n.tum,
+        rev: 1,
+        set: { "requirements.1.check.gte": 8.5 },
+      });
+      equal(raised["status"], "applied");
+      same(meets(), []);
+      same((checks(scoped) as Record<string, unknown[]>)["failing"]?.[0], {
+        need: "IELTS 6.5 or higher, valid on the deadline",
+        why: "IELTS Academic, November 2026: overall 8, needs at least 8.5",
+      });
+      // A note whose own `for` names the application is listed as meeting it, not only as being for it.
+      const page = call(sql, scoped, "create", {
+        type: "Link",
+        fields: { title: "TUM funding page", url: "https://example.org/tum-funding" },
+        link: { for: n.tum },
+      });
+      const withLink = call(sql, scoped, "update", {
+        id: n.tum,
+        rev: 2,
+        append: { requirements: { need: "Funding page", check: { type: "Link", for: "this" } } },
+      });
+      equal(withLink["status"], "applied");
+      same(
+        (call(sql, scoped, "related", { id: String(page["id"]) })["groups"] as { field: string }[]).map(
+          (g) => g.field,
+        ),
+        ["meets"],
+      );
+      // A threshold only in words is no check: the record refuses it.
+      const untyped = call(sql, scoped, "update", {
+        id: n.tum,
+        rev: revOf(sql, n.tum),
+        set: { "requirements.1.check": "IELTS 8.5" },
+      });
+      equal(untyped["status"], "invalid");
+    },
+
   "related walks links both ways up to depth, grouped by field, and only to notes the connection may see": (
     sql,
     fixtures,
@@ -989,9 +1088,12 @@ export const toolCases: Record<string, Case> = {
     same(call(sql, scoped, "related", { id: n.trf })["groups"], [
       { field: "proves", direction: "out", notes: [note("ielts", 1, n.trf)] },
     ]);
+    // The November score meets TUM's IELTS requirement, and so does the transcript its transcript one.
     same(call(sql, scoped, "related", { id: n.trf, depth: 3 })["groups"], [
       { field: "proves", direction: "out", notes: [note("ielts", 1, n.trf)] },
+      { field: "meets", direction: "out", notes: [note("tum", 2, n.ielts)] },
       { field: "supersedes", direction: "out", notes: [note("oldIelts", 2, n.ielts)] },
+      { field: "meets", direction: "in", notes: [note("transcript", 3, n.tum)] },
     ]);
     // Linked both ways (it proves the BSc, which cites it), the transcript is listed once.
     same(call(sql, scoped, "related", { id: n.bsc })["groups"], [

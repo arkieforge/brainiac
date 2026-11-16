@@ -23,6 +23,7 @@ import {
 import { type, type Type } from "arktype";
 
 import { datesIn, uncited } from "./answers.ts";
+import { checksOf, type Checks } from "./applications.ts";
 import type { NeedsApproval } from "./approvals.ts";
 import { recordAudit } from "./audit.ts";
 import { inBackground, principalOf } from "./connections.ts";
@@ -252,10 +253,22 @@ function liveVisible(sql: Sql, ctx: Context, noteType?: string): NoteRow[] | str
   return rows.filter((note) => project(note, principal(ctx)) !== undefined);
 }
 
-/** A row `query` pages through; a note's carries the note, for its path and rev. */
-type QueryRow = Row & { readonly note?: NoteRow };
+/** A row `query` pages through; a note's carries the note, for its path and rev, and an application's its checks. */
+type QueryRow = Row & { readonly note?: NoteRow; readonly checks?: Checks };
 
 const noteRow = (note: NoteRow): QueryRow => ({ id: note.id, data: fieldsOf(note), text: note.raw, note });
+
+/** An application's row with its requirement checks beside its fields, so `checks.failing` filters like one. */
+function withChecks(sql: Sql, ctx: Context, row: QueryRow): QueryRow {
+  if (!row.note) return row;
+  const checks = checksOf(sql, principal(ctx), row.note, ctx.now);
+  return { ...row, data: { ...row.data, checks }, checks };
+}
+
+/** Records in the call's audit row the notes an application's passing checks name. */
+const showChecks = (ctx: Call, checks: Checks | undefined) => {
+  for (const { by } of checks?.passing ?? []) for (const id of by) ctx.shown.add(id);
+};
 
 interface ProposalRow {
   readonly id: string;
@@ -414,7 +427,8 @@ where: {"<field>": {<operator>: <value>}}, dotted paths for nested fields ("sect
 - Dates compare as dates in UTC; text compares ignoring case. text finds words in a field; the top-level text finds words anywhere in the note.
 sort: fields, "-" for newest or largest first (default ["-date"]; questions come soonest deadline first). fields: which fields each row returns (default type and title).
 Pages hold up to limit rows (default 20, at most 100); pass next as cursor for the next page.
-type "Proposal" lists proposals (yours: true for this connection's), type "Question" the person's questions: gaps the record found (a field its type asks for that is empty) and ones agents asked, soonest deadline first, each with the note and field its answer goes to and the input it takes. To record the person's reply, update that note's field, which closes the question; "still there" (ongoing) is set {current: true}, and "not applicable" is append {not_applicable: "<field>"}. An asked question that names no field, or whose reply keeps the value it has, takes set {status: "answered", answer} on its own id; "not applicable" there is set {status: "not-applicable"}. type "Check" what Brainiac's checks flag (a value that disagrees with its document or another note, an impossible value, missing proof, a duplicate, a name spelled two ways, an expired item an application uses, one of the person's profiles saying something else than the record, with the text to paste there, a saved link an open application relies on that is gone), each with its evidence and any fix. Show a check to the person; only they decide it.`,
+type "Proposal" lists proposals (yours: true for this connection's), type "Question" the person's questions: gaps the record found (a field its type asks for that is empty) and ones agents asked, soonest deadline first, each with the note and field its answer goes to and the input it takes. To record the person's reply, update that note's field, which closes the question; "still there" (ongoing) is set {current: true}, and "not applicable" is append {not_applicable: "<field>"}. An asked question that names no field, or whose reply keeps the value it has, takes set {status: "answered", answer} on its own id; "not applicable" there is set {status: "not-applicable"}. type "Check" what Brainiac's checks flag (a value that disagrees with its document or another note, an impossible value, missing proof, a duplicate, a name spelled two ways, an expired item an application uses, one of the person's profiles saying something else than the record, with the text to paste there, a saved link an open application relies on that is gone), each with its evidence and any fix. Show a check to the person; only they decide it.
+type "Application" rows also carry checks (ask for fields ["checks"]), computed from the record, never stored: each requirement as passing (with the notes that meet it), failing (with why, from stored values) or unsure (a note this connection can't see may meet it). Report those as they are; never judge a requirement from its words. {"checks.failing": {"exists": true}} finds applications that lack something.`,
   type({
     "+": "reject",
     ...FilterArgs,
@@ -437,7 +451,9 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
           ? questionRows(sql, ctx)
           : args.type === "Proposal"
             ? proposalRows(sql, ctx)
-            : notes.map(noteRow);
+            : notes.map((note) =>
+                note.type === "Application" ? withChecks(sql, ctx, noteRow(note)) : noteRow(note),
+              );
     if (typeof rows === "string") return fail(rows);
     const page = paginate(rows, {
       ...args,
@@ -445,7 +461,8 @@ type "Proposal" lists proposals (yours: true for this connection's), type "Quest
     });
     if ("error" in page) return fail(page.error);
     // A proposal or question row names the notes it is about, which the caller may see (checked above).
-    for (const { id, data, note } of page.rows) {
+    for (const { id, data, note, checks } of page.rows) {
+      showChecks(ctx, checks);
       if (note) ctx.shown.add(id);
       else
         for (const ref of [data["note"], data["about"], data["notes"]].flat())
@@ -518,7 +535,7 @@ function atPath(sql: Sql, ctx: Context, live: readonly string[], path: string): 
 }
 
 const get = tool(
-  `One or more notes by id or path, with their fields, body and rev (send rev back with update). verified lists the fields the person checked; treat every other value as unverified and say so when you quote it. history: the last 20 revisions. Notes you can't see are listed in missing, like notes that don't exist.`,
+  `One or more notes by id or path, with their fields, body and rev (send rev back with update). verified lists the fields the person checked; treat every other value as unverified and say so when you quote it. history: the last 20 revisions. An Application comes with checks: each requirement passing, failing or unsure, as query gives them. Notes you can't see are listed in missing, like notes that don't exist.`,
   type({
     "+": "reject",
     "ids?": "string[] | null",
@@ -542,6 +559,8 @@ const get = tool(
       }
       ctx.shown.add(note.id);
       const fields = fieldsOf(note);
+      const checks = note.type === "Application" ? checksOf(sql, principal(ctx), note, ctx.now) : undefined;
+      showChecks(ctx, checks);
       found.push({
         id: note.id,
         path: note.path,
@@ -549,6 +568,7 @@ const get = tool(
         class: note.class,
         fields,
         verified: verifiedOf(fields),
+        ...(checks && { checks }),
         ...(args.body !== false && { body: splitNote(note.raw).body }),
         ...(args.history && {
           history: sql
@@ -1365,6 +1385,7 @@ const searchTool = tool(
     if (args.text.trim() === "") return fail("text is empty: say what to search for.");
     const results = search(sql, scoped(ctx, args.type), args.text, {
       limit: args.limit ?? 20,
+      now: ctx.now,
       ...(ctx.vector && { vector: ctx.vector }),
     });
     const hits = results.hits.flatMap((hit): Record<string, unknown>[] => {
@@ -1392,7 +1413,7 @@ const searchTool = tool(
 );
 
 const related = tool(
-  `Every note linked to one note, up to depth links away (default 1, at most 3): the notes its relations and body links name (direction "out") and the notes whose relations or links name it ("in"), grouped by the field that links them, like supersedes, proves or sources. Each note says which note it was reached from (from) and how far (depth), so a chain reads back to the start.`,
+  `Every note linked to one note, up to depth links away (default 1, at most 3): the notes its relations and body links name (direction "out") and the notes whose relations or links name it ("in"), grouped by the field that links them, like supersedes, proves or sources. meets links a note to an application whose requirement it meets, only while the check passes. Each note says which note it was reached from (from) and how far (depth), so a chain reads back to the start.`,
   type({
     "+": "reject",
     id: "string",
@@ -1411,7 +1432,13 @@ const related = tool(
     for (let depth = 1; depth <= (args.depth ?? 1) && frontier.length > 0; depth++) {
       const next: string[] = [];
       // Every neighbor of the hop, so a cut at limit always says more.
-      for (const { noteId, via } of neighbors(sql, principal(ctx), frontier, Number.POSITIVE_INFINITY)) {
+      for (const { noteId, via } of neighbors(
+        sql,
+        principal(ctx),
+        frontier,
+        Number.POSITIVE_INFINITY,
+        ctx.now,
+      )) {
         const found = getNote(sql, noteId);
         const note = found && found.deletedAt === null ? project(found, principal(ctx)) : undefined;
         if (seen.has(noteId) || !note) continue;
@@ -1484,6 +1511,7 @@ function context(sql: Sql, ctx: Call, question: string, limit: number): Answer {
   const results = search(sql, reader, question, {
     anyWord: true,
     limit,
+    now: ctx.now,
     ...(ctx.vector && { vector: ctx.vector }),
   });
   const me = project(getNoteByPath(sql, "me.md"), reader);
