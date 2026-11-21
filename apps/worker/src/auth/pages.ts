@@ -1,6 +1,6 @@
 // The pages auth needs before the web app exists (#50): sign in or up, enroll passkeys, and let an MCP client
 // in. Plain HTML with a little inline script; the WebAuthn ceremonies use the browser's own JSON helpers.
-import type { AuditCall, Connection } from "@brainiac/base";
+import type { AuditCall, Connection, PlanView } from "@brainiac/base";
 
 import type { ConnectedApp } from "./connected-apps.ts";
 import { canApprove, type ApprovingPasskey } from "./approving.ts";
@@ -145,6 +145,7 @@ export function accountPage(
   connections: readonly Activity[] = [],
   github?: GithubSection,
   orcid?: OrcidSection,
+  plan?: PlanSection,
   now = new Date(),
 ): Response {
   const step = nextPasskeyStep(passkeys);
@@ -222,6 +223,17 @@ export function accountPage(
       }
 <p class="note">You sign in to ORCID to prove the iD is yours. Each of your works that isn't in your record yet becomes a paper for you to accept, and a paper whose registry names your iD shows which author you are.</p></section>`
     : "";
+  const limits = plan?.view.limits;
+  const planSection =
+    plan && limits
+      ? `<section><h2>Plan</h2>${plan.paid && plan.view.plan === "free" ? '<p role="status">Thanks. Pro turns on as soon as Polar confirms the payment, usually within a minute. Reload to see it.</p>' : ""}
+<p>${plan.view.plan === "pro" ? "Pro" : "Free"}: ${plan.view.notes}${Number.isFinite(limits.notes) ? ` of ${limits.notes}` : ""} notes, ${megabytes(plan.view.bytes)} of ${megabytes(limits.bytes)} of files.</p>
+${
+  plan.view.plan === "pro"
+    ? '<button type="button" class="quiet" id="billing-portal">Manage billing</button><p class="note">Invoices, your card, and cancelling, on Polar.</p>'
+    : '<button type="button" id="billing-checkout">Upgrade to Pro, $6 a month</button><p class="note">Pro has no note limit and holds 10 GB of files. Polar takes the payment and handles tax.</p>'
+}</section>`
+      : "";
   return page(
     "Your account",
     `<p>Signed in as ${escape(email)}.</p>
@@ -231,6 +243,7 @@ ${rows ? `<section><h2>Passkeys</h2><ul>${rows}</ul>${step === "none" ? '<button
 ${appRows ? `<section><h2>Connected apps</h2><ul>${appRows}</ul><p class="note">A disconnected app can't renew its access, and loses it within an hour. Connecting it again asks you again.</p></section>` : ""}
 ${githubSection}
 ${orcidSection}
+${planSection}
 ${activityRows ? `<section><h2>What your connections did</h2>${activityRows}<p class="note">Each connection's last 50 calls: the notes it read or changed, when it used your approval, and which calls background filing made with nobody there.</p></section>` : ""}
 <button type="button" class="quiet" id="sign-out">Sign out</button>`,
     `if (new URLSearchParams(location.search).has("signed-out")) {
@@ -282,6 +295,14 @@ for (const button of document.querySelectorAll("[data-github]")) {
     location.reload();
   });
 }
+for (const [id, path] of [["billing-checkout", "/billing/checkout"], ["billing-portal", "/billing/portal"]]) {
+  const button = document.getElementById(id);
+  if (button) button.onclick = run(async () => {
+    const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    if (!res.ok) throw new Error("Couldn't reach Polar. Try again.");
+    location.href = (await res.json()).url;
+  });
+}
 const orcidUnlink = document.getElementById("orcid-unlink");
 if (orcidUnlink) orcidUnlink.onclick = run(async () => {
   if (!confirm("Unlink your ORCID iD? Your papers stay, without the author positions it gave them.")) return;
@@ -320,6 +341,18 @@ const ORCID_OUTCOMES: Readonly<Record<string, string>> = {
   denied: "ORCID wasn't linked: you didn't allow it on ORCID.",
   failed: "That didn't link. Start again from Link your ORCID iD.",
 };
+
+/** The account page's plan section: shown only on a stage with billing (`view.limits` set). */
+export interface PlanSection {
+  readonly view: PlanView;
+  /** Polar's checkout just sent the person back (`?billing=paid`); the webhook may not have landed yet. */
+  readonly paid: boolean;
+}
+
+const megabytes = (bytes: number) =>
+  bytes >= 1024 ** 3
+    ? `${Number((bytes / 1024 ** 3).toFixed(1))} GB`
+    : `${Number((bytes / 1024 ** 2).toFixed(1))} MB`;
 
 /** The account page's ORCID section: shown only on a stage with an ORCID client. */
 export interface OrcidSection {

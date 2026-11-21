@@ -45,6 +45,7 @@ import { DAY_MS, holds, manifestOf, recordHeld, type Action, type Proposed } fro
 import { enqueue } from "./jobs.ts";
 import { getNote, putNote, type NoteClass, type NoteRow } from "./notes.ts";
 import { changeTypes, brokenNotes, revertTypes, type TypeChange } from "./organize.ts";
+import { overLimit } from "./plan.ts";
 import { chunkNote, putChunks } from "./search.ts";
 import type { Sql } from "./sql.ts";
 
@@ -598,6 +599,8 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
     const clash = live.find((row) => findClash([row.path], path) !== undefined);
     // Never names the other note: it may be one the caller can't see, and a sync edit carries no connection.
     if (clash !== undefined) return invalid("path", `${path} is taken.`);
+    const full = overLimit(sql, ctx.now, { notes: 1 });
+    if (full !== undefined) return invalid("plan", full);
     return write(
       sql,
       started,
@@ -645,6 +648,8 @@ function applyOne(sql: Sql, started: Started, mutation: Mutation, ctx: Context):
   if (Array.isArray(data)) return { status: "invalid", issues: data };
   const taken = deleted ? findClash(livePaths(sql), note.path) : undefined;
   if (taken !== undefined) return invalid("path", `${note.path} is taken since this note was deleted.`);
+  const full = deleted ? overLimit(sql, ctx.now, { notes: 1 }) : undefined;
+  if (full !== undefined) return invalid("plan", full);
   return write(
     sql,
     started,
@@ -1044,7 +1049,12 @@ function undoing(
         // Deleted by the run: undoing restores it, if its path is still free.
         if (d.live?.before === true) {
           if (now.live && !held?.live) continue;
-          if (held?.live || findClash(livePaths(sql), note.path) !== undefined)
+          // A taken path, or a plan with no room for it, makes it the person's call.
+          if (
+            held?.live ||
+            findClash(livePaths(sql), note.path) !== undefined ||
+            overLimit(sql, ctx.now, { notes: 1 }) !== undefined
+          )
             hold(note.id, inverseFrom(now, d));
           else {
             write(sql, started, undo, undoRunId, note, { ...note, deletedAt: null }, "restore");
