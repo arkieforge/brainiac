@@ -78,25 +78,25 @@ const unbase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCode
 /**
  * Whether Polar sent this body (Standard Webhooks, https://www.standardwebhooks.com): an HMAC-SHA256 over
  * `<webhook-id>.<webhook-timestamp>.<body>`, keyed by the secret's bytes (base64 after `whsec_`), listed in
- * `webhook-signature` as space-separated `v1,<base64>`. Polar's secrets from 8 September 2026 on are this kind.
+ * `webhook-signature` as space-separated `v1,<base64>`. Polar's secrets from 8 September 2026 on are this kind; an
+ * older one is keyed by the UTF-8 bytes of the whole `whsec_...` string, so both keys are tried, as Polar's SDK does.
  */
 export async function verified(secret: string, headers: Headers, body: string, now: number) {
   const id = headers.get("webhook-id");
   const timestamp = Number(headers.get("webhook-timestamp"));
   const signatures = headers.get("webhook-signature")?.split(" ") ?? [];
   if (!id || !Number.isSafeInteger(timestamp) || Math.abs(now / 1000 - timestamp) > TOLERANCE_S) return false;
-  let key;
+  const raws = [new TextEncoder().encode(secret)];
   try {
-    key = await crypto.subtle.importKey(
-      "raw",
-      unbase64(secret.replace(/^whsec_/, "")),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"],
-    );
+    raws.unshift(unbase64(secret.replace(/^whsec_/, "")));
   } catch {
-    return false;
+    // Not base64 after the prefix: only the older kind can match.
   }
+  const keys = await Promise.all(
+    raws.map((raw) =>
+      crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]),
+    ),
+  );
   const signed = new TextEncoder().encode(`${id}.${timestamp}.${body}`);
   for (const signature of signatures) {
     const [version, value] = signature.split(",");
@@ -108,7 +108,7 @@ export async function verified(secret: string, headers: Headers, body: string, n
       continue;
     }
     // `verify` compares in constant time.
-    if (await crypto.subtle.verify("HMAC", key, given, signed)) return true;
+    for (const key of keys) if (await crypto.subtle.verify("HMAC", key, given, signed)) return true;
   }
   return false;
 }

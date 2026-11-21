@@ -98,7 +98,7 @@ export function overLimit(
   if (more.notes !== undefined) {
     const notes = countNotes(sql);
     if (notes + more.notes > limits.notes)
-      return `Your ${plan} plan holds ${limits.notes} notes, and this record has ${notes}. Delete some, or make room another way.${upgrade}`;
+      return `Your ${plan} plan holds ${limits.notes} notes, and this record is full. Delete some, or make room another way.${upgrade}`;
   }
   if (more.bytes !== undefined && countBytes(sql) + more.bytes > limits.bytes)
     return `Your ${plan} plan holds ${Math.round(limits.bytes / MB)} MB of files, and this one doesn't fit. Every file the record keeps counts, deleted ones too.${upgrade}`;

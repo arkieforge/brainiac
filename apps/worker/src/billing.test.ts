@@ -77,6 +77,23 @@ it("takes only bodies signed with the secret, within the replay window", async (
   expect(await verified(whsec("c29tZW9uZSBlbHNl"), headers(VECTOR.signature), VECTOR.body, now)).toBe(false);
   expect(await verified(VECTOR.secret, headers(VECTOR.signature), VECTOR.body, now + 6 * 60_000)).toBe(false);
   expect(await verified(VECTOR.secret, headers("v2,whatever"), VECTOR.body, now)).toBe(false);
+
+  // A secret made before 8 September 2026 keys the HMAC with the UTF-8 bytes of the whole string.
+  const old = whsec("older-polar-secret");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(old),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${VECTOR.id}.${VECTOR.timestamp}.${VECTOR.body}`),
+  );
+  const oldSignature = `v1,${btoa(String.fromCharCode(...new Uint8Array(mac)))}`;
+  expect(await verified(old, headers(oldSignature), VECTOR.body, now)).toBe(true);
 });
 
 it("reads Pro from an active subscription to the Pro product, and free otherwise", () => {

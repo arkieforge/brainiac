@@ -752,18 +752,26 @@ export class Base extends DurableObject<Env> {
       ...(input.name !== undefined && { name: input.name }),
     };
     // Checked again with no await before recording: another upload may have filled the plan while R2 answered.
-    if (!getFile(this.sql, sha256)) {
+    const fresh = !getFile(this.sql, sha256);
+    if (fresh) {
       const full = overLimit(this.sql, Date.now(), { notes: 1, bytes: bytes.byteLength });
       if (full !== undefined) {
-        await this.env.BLOBS.delete(r2Key);
-        // Blobs are named by their bytes: a same-file upload that recorded while the delete ran gets its blob back.
-        if (getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
+        await this.#dropBlob(r2Key, sha256, sealed);
         return { error: full };
       }
     }
     const result = recordUpload(this.sql, key, upload, ctx);
     this.changed(before);
+    // A new file the record didn't keep (a passport's second note past the plan's cap, say) leaves no blob behind.
+    if (fresh && "error" in result && !getFile(this.sql, sha256)) await this.#dropBlob(r2Key, sha256, sealed);
     return result;
+  }
+
+  /** Deletes a blob the record didn't keep. Blobs are named by their bytes: a same-file upload that recorded while the
+   * delete ran gets its blob back. */
+  async #dropBlob(r2Key: string, sha256: string, sealed: Uint8Array): Promise<void> {
+    await this.env.BLOBS.delete(r2Key);
+    if (getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
   }
 
   /** What the caller may know about a file: a connection gets only a summary of one that isn't cleared. */
