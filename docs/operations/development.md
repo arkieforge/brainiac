@@ -19,7 +19,7 @@ links the main checkout's `.env`.
 | `vp test run [files]`               | Tests (Vitest through Vite+)                                                                        |
 | `vp run typecheck`                  | `effect-tsgo` type check in every workspace                                                         |
 | `vp run knip`                       | Unused files, exports and dependencies                                                              |
-| `vp run dev`                        | Local Worker and site on `localhost:1337`, with your own Neon branch (stage `dev_$USER`)            |
+| `vp run dev`                        | Local Worker and site on `localhost:1337` (one per machine: a second stops), your own Neon branch   |
 | `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
 | `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
 | `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
