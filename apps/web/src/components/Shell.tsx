@@ -223,7 +223,7 @@ export function Shell({
         )}
         <main className="main">{children}</main>
         <Palette open={palette} onOpenChange={setPalette} />
-        <Toaster position="bottom-center" theme="dark" />
+        <Toaster position="bottom-center" theme="light" />
       </div>
     </MotionConfig>
   );

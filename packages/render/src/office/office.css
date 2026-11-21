@@ -101,7 +101,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgb(0 0 0 / 80%);
+  background: color-mix(in srgb, var(--bg-raised) 85%, transparent);
 }
 .office-notes p {
   margin: 4px 0;

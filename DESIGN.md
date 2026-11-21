@@ -2,20 +2,25 @@
 name: Brainiac
 description: A person's record as typed notes with sources, kept by their own Claude and checked by them; quiet Workbench chrome with tactile character.
 colors:
-  bg: "#000000"
-  bg-raised: "#0a0a0b"
-  bg-input: "#111113"
-  bg-hover: "#18181b"
-  border: "#1f1f23"
-  border-strong: "#2a2a30"
-  fg: "#fafafa"
-  fg-muted: "#a1a1aa"
-  fg-faint: "#71717a"
-  accent: "#6ea8ff"
-  accent-ink: "#000000"
-  ok: "#4ade80"
-  warn: "#fbbf24"
-  danger: "#f87171"
+  bg: "#f5f1e8"
+  bg-raised: "#fbf9f3"
+  bg-input: "#efe9dc"
+  bg-hover: "#ebe4d5"
+  border: "#e0d8c7"
+  border-strong: "#d2c8b3"
+  fg: "#1c1a16"
+  fg-prose: "#2e2a24"
+  fg-muted: "#57514a"
+  fg-faint: "#6a6357"
+  accent: "#ad411b"
+  accent-ink: "#ffffff"
+  ok: "#17643a"
+  warn: "#92560a"
+  danger: "#b42318"
+  overlay: "rgb(28 26 22 / 0.4)"
+  shadow: "rgb(28 26 22 / 0.18)"
+  paper: "#ffffff"
+  ink: "#16140f"
 typography:
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, Inter, Segoe UI, system-ui, sans-serif"
@@ -61,21 +66,26 @@ motion:
 ## Overview
 
 Workbench chrome with tactile character. The frame follows T3 Code: a bar, the record's tree on the left, one
-pane, the note's fields in a rail. True black, dense, quiet, one accent; the record's values carry the screen.
+pane, the note's fields in a rail. Warm cream and ink, dense, quiet, one terracotta accent; the record's values carry the screen.
 Character comes from objects you can almost touch, not from glow: Pip the sticker mascot, a postage-stamp primary
 button, a cardboard file box, drop frames that open as a file comes near, and stamps on a review card. Approved in
-the #51 rounds (Workbench, then the tactile direction drawn from Pin UI's craft and stick-it-up's stickers).
+the #51 rounds (Workbench, then the tactile direction drawn from Pin UI's craft and stick-it-up's stickers). The
+palette is the public site's (#52), so the app and the site read as one product (#188).
 
 Tokens live only in `apps/web/src/styles.css` on `:root`, exposed to Tailwind through `@theme inline`
 (`bg-raised`, `text-faint`, `border-line-strong`...). `apps/web/src/motion.ts` mirrors the timing for JS.
 
 ## Colors
 
-- **Ground**: `bg` true black. Surfaces step up one shade at a time: `bg-raised` (editor source, cards, file
-  view), `bg-input` (fields, active line), `bg-hover` (selected row, hover, active nav).
-- **Text**: `fg` for values and titles, `fg-muted` for prose and secondary text, `fg-faint` for labels and paths.
+- **Ground**: `bg` warm cream paper. `bg-raised` is a lighter sheet (editor source, cards, file view); `bg-input`
+  (fields, active line) and `bg-hover` (selected row, hover, active nav) step darker, one shade at a time.
+- **Text**: `fg` ink for values and titles, `fg-prose` for rendered markdown, `fg-muted` for secondary text,
+  `fg-faint` for labels and paths. Every text colour, accent and states included, is at least 4.5:1 on every
+  surface; that is why `accent` and `warn` sit a shade darker than the site's `#b4441c` and `#9a5b0b`.
 - **Accent** `accent` marks the one primary action on a screen (the stamp, Correct) and focus rings.
 - **Meaning**: `ok` for verified, `warn` for sensitive, unchecked or held, `danger` for wrong or conflicting.
+- **Not the page**: `overlay` dims the page under a dialog or drawer, `shadow` sits under art, `paper` is a
+  document's own white page (PDF, sandboxed HTML), `ink` is the letterbox behind a video. No surface is black.
 - **Art** (stickers, the file box) keeps its own colours; it is decoration, never a state.
 
 ### Named Rules
