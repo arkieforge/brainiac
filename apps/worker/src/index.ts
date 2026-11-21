@@ -10,9 +10,11 @@ import {
   type Activity,
   type GithubSection,
   type OrcidSection,
+  type PlanSection,
 } from "./auth/pages.ts";
 import { vouchedUntil, type ApprovingPasskey } from "./auth/approving.ts";
 import type { JobMessage } from "./base.ts";
+import { checkoutUrl, polarApp, portalUrl, webhook as polarWebhook } from "./billing.ts";
 import type { Env } from "./env.ts";
 import { DIGEST_CRON, sendDigests } from "./digest.ts";
 import { cliLogin, cliLogout, openSync, type SignedIn } from "./devices.ts";
@@ -31,7 +33,7 @@ import {
 } from "./connectors/github.ts";
 import { callback as orcidCallback, linkUrl as orcidLinkUrl, orcidApp } from "./connectors/orcid.ts";
 import type { Records } from "./mcp/handler.ts";
-import { baseOf } from "./registry.ts";
+import { baseOf, findBase } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
 import { rewrapRecords, VAULT_SWEEP_CRON, waitingToRewrap } from "./vault-rotation.ts";
 
@@ -211,6 +213,7 @@ async function account(
   record: (userId: string) => ReturnType<typeof recordOf>,
   github?: (userId: string) => Promise<GithubSection>,
   orcid?: (userId: string) => Promise<OrcidSection>,
+  plan?: (userId: string) => Promise<PlanSection | undefined>,
 ): Promise<Response> {
   // Straight from Neon: enrolling the sign-up passkey updates the session row, not the cached cookie.
   const session = await auth.api.getSession({
@@ -218,12 +221,13 @@ async function account(
     query: { disableCookieCache: true },
   });
   if (!session) return Response.redirect(new URL("/sign-in", request.url).toString(), 303);
-  const [passkeys, apps, connections, githubSection, orcidSection] = await Promise.all([
+  const [passkeys, apps, connections, githubSection, orcidSection, planSection] = await Promise.all([
     auth.api.listPasskeys({ headers: request.headers }),
     auth.api.listConnectedApps({ headers: request.headers }),
     record(session.user.id).then(async (base): Promise<Activity[]> => (base ? await base.activity() : [])),
     github?.(session.user.id),
     orcid?.(session.user.id),
+    plan?.(session.user.id),
   ]);
   return accountPage(
     session.user.email,
@@ -233,6 +237,7 @@ async function account(
     connections,
     githubSection,
     orcidSection,
+    planSection,
   );
 }
 
@@ -334,6 +339,46 @@ async function routeOrcid(request: Request, env: Env, ctx: ExecutionContext, url
   });
 }
 
+/**
+ * Billing's routes (billing.ts): Polar's webhook, and for the signed-in person the way to Polar's checkout and to
+ * its customer portal. Not found on a stage without Polar.
+ */
+async function routeBilling(request: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  const app = polarApp(env);
+  if (!app) return new Response("Not found", { status: 404 });
+  if (url.pathname === "/billing/webhook") {
+    // No session and no auth setup: Polar's signature is the only way in.
+    const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
+    try {
+      return await polarWebhook(request, app, {
+        // Found, never made: a customer this stage has no record for (the sandbox is shared by every non-prod
+        // stage, or one made by hand in Polar) is acknowledged and dropped.
+        record: async (userId) => {
+          const row = await findBase(pool, userId);
+          return row && row.deletedAt === null ? recordById(env, row.id) : undefined;
+        },
+        now: Date.now(),
+      });
+    } finally {
+      ctx.waitUntil(pool.end());
+    }
+  }
+  return withAuth(request, env, ctx, async (auth) => {
+    // JSON only, so another site's form can't post here with the person's cookie.
+    if (request.method !== "POST" || request.headers.get("content-type") !== "application/json")
+      return new Response("Expected JSON", { status: 415 });
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session) return new Response("Sign in first", { status: 401 });
+    switch (url.pathname) {
+      case "/billing/checkout":
+        return Response.json({ url: await checkoutUrl(app, fetch, session.user, url.origin) });
+      case "/billing/portal":
+        return Response.json({ url: await portalUrl(app, fetch, session.user.id, url.origin) });
+    }
+    return new Response("Not found", { status: 404 });
+  });
+}
+
 // OAuth discovery, at the root where MCP clients look for it. The issuer is `<origin>/api/auth`, so a client may
 // ask under either RFC 8414's path insertion or OIDC's path appending.
 const AUTH_SERVER_METADATA = new Set([
@@ -399,6 +444,7 @@ export default {
     }
     if (pathname.startsWith("/connectors/github/")) return routeGithub(request, env, ctx, url);
     if (pathname.startsWith("/connectors/orcid/")) return routeOrcid(request, env, ctx, url);
+    if (pathname.startsWith("/billing/")) return routeBilling(request, env, ctx, url);
     if (pathname === "/account") {
       const app = githubApp(env);
       const orcid = orcidApp(env);
@@ -425,6 +471,10 @@ export default {
                 outcome: url.searchParams.get("orcid"),
               };
             }),
+          async (userId) => {
+            const record = await recordOf(env, pool, userId);
+            return record && { view: await record.plan(), paid: url.searchParams.get("billing") === "paid" };
+          },
         ),
       );
     }

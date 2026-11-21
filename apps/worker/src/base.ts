@@ -106,11 +106,15 @@ import {
   migrate,
   mutate,
   nextWake,
+  overLimit,
+  planOf,
   purge,
   putChunks,
   reindex,
   schemaVersion,
   serve,
+  setBilling,
+  setPlan,
   undoRun,
   type Answer,
   type Approved,
@@ -127,6 +131,8 @@ import {
   type MutationResult,
   type NoteRow,
   type Opened,
+  type PlanState,
+  type PlanView,
   type Principal,
   type Results,
   type Sql,
@@ -142,6 +148,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { DurableObject } from "cloudflare:workers";
 
 import { checkSignature, type Approver } from "./approvals.ts";
+import { polarApp } from "./billing.ts";
 import type { PacketFiles, PacketParts } from "./drafts.ts";
 import type { Env } from "./env.ts";
 import type { Models } from "./jobs.ts";
@@ -232,6 +239,8 @@ export class Base extends DurableObject<Env> {
     this.#proposals = proposalsRev(this.sql);
     this.#manifest = manifestVersion(this.sql);
     if (reindex(this.sql) || from !== to) this.wake();
+    // Plan limits apply only on a stage that can take payment (billing.ts), so nobody is refused before Pro exists.
+    setBilling(this.sql, polarApp(env) !== undefined);
     // While a rotation runs (infra/README.md#rotating-the-vault-key), the record moves its data key onto the new
     // vault key the first time it wakes, off the request it woke for.
     if (env.VAULT_KEY_PREVIOUS)
@@ -242,6 +251,16 @@ export class Base extends DurableObject<Env> {
 
   schemaVersion(): number {
     return schemaVersion(this.sql);
+  }
+
+  /** The record's plan and what it holds, for the account page. */
+  plan(): PlanView {
+    return planOf(this.sql, Date.now());
+  }
+
+  /** Polar's word on the plan (billing.ts), from its signed webhook; an older word arriving late changes nothing. */
+  setPlan(state: PlanState): boolean {
+    return setPlan(this.sql, state);
   }
 
   /** The caller as the record knows it: a connection's grants come from its own table, never the caller. */
@@ -318,6 +337,11 @@ export class Base extends DurableObject<Env> {
       ...(via.origin !== undefined && { origin: via.origin }),
     });
     this.changed(before);
+    this.env.USAGE?.writeDataPoint({
+      indexes: [this.ctx.id.toString()],
+      blobs: ["tool", name],
+      doubles: [1],
+    });
     return answer.ok && answer.attach !== undefined ? this.#withPhoto(answer, via) : answer;
   }
 
@@ -702,7 +726,17 @@ export class Base extends DurableObject<Env> {
     const key = await this.dataKey();
     const { sha256, sealed } = sealFile(key, bytes);
     const r2Key = `blobs/${this.ctx.id.toString()}/${sha256}`;
-    if (!getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
+    if (!getFile(this.sql, sha256)) {
+      // A file the plan can't hold, or its sidecar note, never reaches R2.
+      const full = overLimit(this.sql, Date.now(), { notes: 1, bytes: bytes.byteLength });
+      if (full !== undefined) return { error: full };
+      await this.env.BLOBS.put(r2Key, sealed);
+      this.env.USAGE?.writeDataPoint({
+        indexes: [this.ctx.id.toString()],
+        blobs: ["upload", input.mime],
+        doubles: [bytes.byteLength],
+      });
+    }
     // The puts awaited: the connection may have changed meanwhile, so it is loaded again.
     const ctx = this.context(caller);
     if ("status" in ctx) return ctx;
@@ -717,9 +751,27 @@ export class Base extends DurableObject<Env> {
       ...(input.kind !== undefined && { kind: input.kind }),
       ...(input.name !== undefined && { name: input.name }),
     };
+    // Checked again with no await before recording: another upload may have filled the plan while R2 answered.
+    const fresh = !getFile(this.sql, sha256);
+    if (fresh) {
+      const full = overLimit(this.sql, Date.now(), { notes: 1, bytes: bytes.byteLength });
+      if (full !== undefined) {
+        await this.#dropBlob(r2Key, sha256, sealed);
+        return { error: full };
+      }
+    }
     const result = recordUpload(this.sql, key, upload, ctx);
     this.changed(before);
+    // A new file the record didn't keep (a passport's second note past the plan's cap, say) leaves no blob behind.
+    if (fresh && "error" in result && !getFile(this.sql, sha256)) await this.#dropBlob(r2Key, sha256, sealed);
     return result;
+  }
+
+  /** Deletes a blob the record didn't keep. Blobs are named by their bytes: a same-file upload that recorded while the
+   * delete ran gets its blob back. */
+  async #dropBlob(r2Key: string, sha256: string, sealed: Uint8Array): Promise<void> {
+    await this.env.BLOBS.delete(r2Key);
+    if (getFile(this.sql, sha256)) await this.env.BLOBS.put(r2Key, sealed);
   }
 
   /** What the caller may know about a file: a connection gets only a summary of one that isn't cleared. */
@@ -1093,7 +1145,8 @@ export class Base extends DurableObject<Env> {
    */
   async installLink(jobId: string, seen: LinkSeen, pdf?: Uint8Array): Promise<"installed" | "dropped"> {
     let snapshot;
-    if (pdf) {
+    // A plan with no room for the snapshot (or its sidecar note) gets the link check without it.
+    if (pdf && overLimit(this.sql, Date.now(), { notes: 1, bytes: pdf.byteLength }) === undefined) {
       const key = await this.dataKey();
       const { sha256, sealed } = sealFile(key, pdf);
       const r2Key = `blobs/${this.ctx.id.toString()}/${sha256}`;

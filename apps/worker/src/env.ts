@@ -21,7 +21,7 @@ export interface Env {
    */
   VAULT_KEY_PREVIOUS?: SecretsStoreSecret;
   JOBS: Queue<JobMessage>;
-  /** Postgres (this stage's Neon branch) for accounts, billing and the base registry. */
+  /** Postgres (this stage's Neon branch) for accounts and the base registry. */
   HYPERDRIVE: Hyperdrive;
   /** Signs sessions and encrypts the JWT keys; generated per stage by alchemy.run.ts. */
   BETTER_AUTH_SECRET: string;
@@ -42,6 +42,12 @@ export interface Env {
   ORCID_CLIENT_SECRET?: string;
   /** treg (docs/operations/services.md), for drift checks of the person's own profiles; off until it exists. */
   TREG_TOKEN?: string;
+  /** Polar, for Pro (billing.ts); billing and every record's limits are off until all three exist. */
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_WEBHOOK_SECRET?: string;
+  POLAR_PRODUCT_ID?: string;
+  /** Analytics Engine: one point per tool call and upload, by record, to measure what each costs to run. */
+  USAGE?: AnalyticsEngineDataset;
   /** Browser Rendering, for a saved link's PDF snapshot (connectors/links.ts); a stage without it takes none. */
   BROWSER?: BrowserRun;
   /** Cloudflare Email Service, bound only once a sending address is set up (infra/README.md). */

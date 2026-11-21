@@ -1,6 +1,6 @@
 # Architecture
 
-Each person's record lives in **its own Durable Object with its own SQLite database**: the record, its change feed, its search index and its live connections. Neon holds what is shared across users (accounts, billing, the base registry). R2 holds files. One Worker serves every hostname. All of it is declared in one `alchemy.run.ts`.
+Each person's record lives in **its own Durable Object with its own SQLite database**: the record, its change feed, its search index and its live connections. Neon holds what is shared across users (accounts and the base registry). R2 holds files. One Worker serves every hostname. All of it is declared in one `alchemy.run.ts`.
 
 ![Clients connect to one Worker serving <domain> (site and MCP) and usercontent.<domain>. The Worker routes to each person's Base Durable Object, which holds raw notes, the change feed, approvals, a jobs outbox, FTS5, vectors and graph edges, and keeps live WebSockets. A DO alarm dispatches jobs to a Queue and Workflows, which call Workers AI and install results back into the DO only if the note revision still matches. Neon via Hyperdrive holds accounts and the registry; R2 holds files.](../assets/architecture.svg)
 

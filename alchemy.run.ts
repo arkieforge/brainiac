@@ -49,7 +49,7 @@ export default Alchemy.Stack(
       const blobs = yield* Cloudflare.R2.Bucket("blobs", { name: name("blobs"), forceDestroy: !prod });
       const jobs = yield* Cloudflare.Queues.Queue("jobs", { name: name("jobs") });
 
-      // Accounts, billing state and the base registry. Each stage gets its own branch of the Doppler
+      // Accounts and the base registry. Each stage gets its own branch of the Doppler
       // config's Neon project (brainiac-dev, or brainiac-prod for prod), so a preview never sees prod
       // data. The projects are made once outside Alchemy (infra/README.md), so no stage can delete one.
       // Better Auth's tables come from infra/migrations, applied (forward only) before the Worker updates. That
@@ -62,7 +62,7 @@ export default Alchemy.Stack(
       const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("hyperdrive", {
         name: name("hyperdrive"),
         origin: db.origin,
-        // Sessions, approvals and billing must never be read stale.
+        // Sessions and approvals must never be read stale.
         caching: { disabled: true },
       });
 
@@ -239,6 +239,12 @@ export default Alchemy.Stack(
           ...(yield* secretIf("ORCID_CLIENT_SECRET")),
           // Drift checks through treg (apps/worker/src/connectors/profiles.ts); off until it is set.
           ...(yield* secretIf("TREG_TOKEN")),
+          // Pro through Polar (apps/worker/src/billing.ts): Polar's sandbox off prod; off until all three are set.
+          ...(yield* secretIf("POLAR_ACCESS_TOKEN")),
+          ...(yield* secretIf("POLAR_WEBHOOK_SECRET")),
+          ...(yield* secretIf("POLAR_PRODUCT_ID")),
+          // What each record costs to run: a point per tool call and upload (apps/worker/src/base.ts).
+          USAGE: yield* Cloudflare.AnalyticsEngine.Dataset("usage", { dataset: name("usage") }),
           ...email,
         },
       });

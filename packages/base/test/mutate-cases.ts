@@ -1,7 +1,7 @@
 // Conformance cases for the mutation path, the jobs outbox and undo; cases.ts runs them on both engines.
 import { deepStrictEqual as same, equal, ok } from "node:assert/strict";
 
-import { parseNote } from "@brainiac/core";
+import { parseNote, ulid } from "@brainiac/core";
 
 import {
   CHANGES_MS,
@@ -19,7 +19,10 @@ import {
   purge,
   putChunks,
   PERSON,
+  planOf,
   search,
+  setBilling,
+  setPlan,
   TOMBSTONE_MS,
   undoRun,
   type Context,
@@ -607,5 +610,39 @@ export const mutateCases: Record<string, Case> = {
     applied(mutate(sql, { op: "delete", noteId, baseRev: 2 }, by(T0 + 2)));
     const result = undo(sql, run, by(T0 + 3));
     same([result.undone, result.conflicts], [[], []]);
+  },
+  "a free record takes 300 notes once billing is on, and Pro or billing off takes more": (sql) => {
+    migrate(sql);
+    const note = (i: number) => ({
+      op: "create" as const,
+      path: `facts/n${i}.md`,
+      raw: `---\nid: ${ulid(T0 + i)}\ntitle: Note ${i}\n---\n`,
+      class: "normal" as const,
+    });
+    setBilling(sql, true);
+    for (let i = 0; i < 300; i++) applied(mutate(sql, note(i), by()));
+    const full = mutate(sql, note(300), by());
+    ok(full.status === "invalid" && full.issues[0]?.field === "plan", JSON.stringify(full));
+    equal(planOf(sql, T0).notes, 300);
+
+    // Pro from Polar lifts it; an older word from Polar arriving late changes nothing.
+    ok(setPlan(sql, { plan: "pro", until: T0 + 30 * 86_400_000, at: T0 + 2 }));
+    equal(setPlan(sql, { plan: "free", until: null, at: T0 + 1 }), false);
+    applied(mutate(sql, note(300), by()));
+    // A Pro period that ended is free again, and turning billing off lifts every limit.
+    const lapsed = mutate(sql, note(301), by(T0 + 31 * 86_400_000));
+    ok(lapsed.status === "invalid", JSON.stringify(lapsed));
+    setBilling(sql, false);
+    const extra = applied(mutate(sql, note(301), by(T0 + 31 * 86_400_000)));
+    equal(planOf(sql, T0).limits, null);
+
+    // Undoing a delete on a full free record holds the note for the person instead of putting it back.
+    setBilling(sql, true);
+    const run = "01M6RUN000000000000000000P";
+    const later = T0 + 32 * 86_400_000;
+    applied(mutate(sql, { op: "delete", noteId: extra.noteId, baseRev: 1 }, by(later, run)));
+    const result = undo(sql, run, by(later + 1));
+    same([result.undone, result.conflicts.length], [[], 1]);
+    ok(getNote(sql, extra.noteId)?.deletedAt !== null);
   },
 };
