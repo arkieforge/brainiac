@@ -164,6 +164,7 @@ export default Alchemy.Stack(
         // One image is two Tesseract passes, about a second each locally; room for slower CPUs and large scans.
         limits: { cpuMs: 60_000 },
         env: { IMAGES: Cloudflare.Images.Images() },
+        dev: { port: 1338 },
       });
 
       // Typst for drafts (apps/typst): its own Worker, so the compiler's 28 MB of wasm stays out of the main one's
@@ -176,12 +177,16 @@ export default Alchemy.Stack(
         workersDev: false,
         // A CV compiles in well under a second locally; room for a long packet on a slower CPU.
         limits: { cpuMs: 30_000 },
+        dev: { port: 1339 },
       });
 
       const worker = yield* Cloudflare.Worker("worker", {
         name: name("worker"),
         ...(domain && usercontent && { domain: { name: domain, aliases: [usercontent] } }),
         main: "apps/worker/src/index.ts",
+        // The site's own port under `vp run dev`: the dev scripts, usercontent.localhost and the docs all say 1337,
+        // so the helper Workers above, which start first, keep off it and this one fails rather than drift.
+        dev: { port: 1337, strictPort: true },
         // A path that is a built file is served straight from the edge; every other one runs the Worker, which
         // answers its own routes and hands the rest of the pages the web app's shell (apps/worker/src/index.ts).
         // The build's output hash is set whenever it memoizes, which it does by default.
@@ -254,6 +259,7 @@ export default Alchemy.Stack(
       });
       yield* Cloudflare.Worker("marketing", {
         name: name("marketing"),
+        dev: { port: 1340 },
         assets: { directory: marketing.outdir, hash: marketing.hash.output.as<string>() },
       });
 
