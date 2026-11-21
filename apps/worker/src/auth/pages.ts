@@ -25,12 +25,11 @@ const page = (title: string, body: string, script: string, head = "") =>
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · Brainiac</title>${head}
 <style>
-body{font:16px/1.5 system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1a1a1a;background:#fff}
-h1{font-size:1.5rem}form,section{margin:1.5rem 0}input,button{font:inherit;padding:.5rem .75rem;border-radius:.5rem;border:1px solid #bbb}
-input{width:100%;box-sizing:border-box;margin:.25rem 0}button{cursor:pointer;background:#1a1a1a;color:#fff;border:0;margin:.25rem 0}
-button.quiet{background:none;color:#1a1a1a;border:1px solid #bbb}.note{color:#555;font-size:.9rem}#error{color:#b00020}
-ul{padding:0;list-style:none}li{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-bottom:1px solid #eee}
-@media (prefers-color-scheme:dark){body{background:#111;color:#eee}button{background:#eee;color:#111}button.quiet{color:#eee}.note{color:#aaa}li{border-color:#333}}
+body{font:16px/1.5 system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1c1a16;background:#f5f1e8;color-scheme:light}
+h1{font-size:1.5rem}a{color:#ad411b}form,section{margin:1.5rem 0}input,button{font:inherit;padding:.5rem .75rem;border-radius:.5rem;border:1px solid #d2c8b3}
+input{width:100%;box-sizing:border-box;margin:.25rem 0;background:#fbf9f3;color:inherit}button{cursor:pointer;background:#1c1a16;color:#f5f1e8;border:0;margin:.25rem 0}
+button.quiet{background:none;color:#1c1a16;border:1px solid #d2c8b3}.note{color:#57514a;font-size:.9rem}#error{color:#b42318}
+ul{padding:0;list-style:none}li{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-bottom:1px solid #e0d8c7}
 </style></head><body><h1>${title}</h1>${body}<p id="error" role="alert"></p>
 <script>
 const api = async (path, init = {}) => {
