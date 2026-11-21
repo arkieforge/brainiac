@@ -118,4 +118,10 @@ it("sets the plan on the person's record only for a verified body", async () => 
   expect(set).toEqual([
     ["user-nadia", { plan: "pro", until: null, at: Date.parse("2026-11-21T10:00:00.000Z") }],
   ]);
+
+  // A customer with no record here is acknowledged; a record that fails makes Polar retry.
+  const unknown = { record: async () => undefined, now };
+  expect((await webhook(post(await signed(body, timestamp)), app, unknown)).status).toBe(202);
+  const down = { record: () => Promise.reject(new Error("the record is down")), now };
+  await expect(webhook(post(await signed(body, timestamp)), app, down)).rejects.toThrow("the record is down");
 });

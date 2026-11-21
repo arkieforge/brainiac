@@ -2,8 +2,6 @@
 // holds 10 GB. Limits apply only once the record is told billing is on (`setBilling`, from the Worker when the
 // stage has Polar), so a stage without billing, and a laptop's copy, never refuse. Polar's word on the plan lands
 // with `setPlan`; the record keeps the newest one.
-import { pathKey, PathError, resolveFile } from "@brainiac/core";
-
 import type { Sql } from "./sql.ts";
 
 const MB = 1024 * 1024;
@@ -62,34 +60,17 @@ export function setPlan(sql: Sql, state: PlanState): boolean {
   return true;
 }
 
-// Questions are the record asking the person, so a full record can still ask.
+// Every live note counts, whoever wrote it: a type is only a field, so none can be left out.
 const countNotes = (sql: Sql) =>
-  sql.all<{ n: number }>(
-    "SELECT count(*) AS n FROM notes WHERE deletedAt IS NULL AND type IS NOT 'Question'",
-  )[0]?.n ?? 0;
+  sql.all<{ n: number }>("SELECT count(*) AS n FROM notes WHERE deletedAt IS NULL")[0]?.n ?? 0;
 
 /**
- * The bytes of the files a live note still names (its `file:`), so deleting a file's note frees its room. Resolved
- * as the vault finds a sidecar (vault.ts `sidecarOf`).
+ * Every file the record keeps, whichever note names it, so no edit or delete moves bytes out of the count.
+ * shortcut: nothing deletes a file yet, so a deleted file's room never comes back; when files can be deleted
+ * (blob and row, once no note names them), its bytes leave with it.
  */
-function countBytes(sql: Sql): number {
-  const named = new Set<string>();
-  for (const note of sql.all<{ path: string; fm: string }>(
-    "SELECT path, fm FROM notes WHERE deletedAt IS NULL",
-  )) {
-    const file: unknown = JSON.parse(note.fm)["file"];
-    if (typeof file !== "string") continue;
-    try {
-      named.add(pathKey(resolveFile(note.path, file)));
-    } catch (error) {
-      if (!(error instanceof PathError)) throw error;
-    }
-  }
-  let bytes = 0;
-  for (const file of sql.all<{ path: string | null; bytes: number }>("SELECT path, bytes FROM files"))
-    if (file.path !== null && named.has(pathKey(file.path))) bytes += file.bytes;
-  return bytes;
-}
+const countBytes = (sql: Sql) =>
+  sql.all<{ n: number }>("SELECT coalesce(sum(bytes), 0) AS n FROM files")[0]?.n ?? 0;
 
 export function planOf(sql: Sql, now: number): PlanView {
   const plan = current(sql, now);
@@ -120,6 +101,6 @@ export function overLimit(
       return `Your ${plan} plan holds ${limits.notes} notes, and this record has ${notes}. Delete some, or make room another way.${upgrade}`;
   }
   if (more.bytes !== undefined && countBytes(sql) + more.bytes > limits.bytes)
-    return `Your ${plan} plan holds ${Math.round(limits.bytes / MB)} MB of files, and this one doesn't fit. Deleting a file's note frees its room.${upgrade}`;
+    return `Your ${plan} plan holds ${Math.round(limits.bytes / MB)} MB of files, and this one doesn't fit. Every file the record keeps counts, deleted ones too.${upgrade}`;
   return undefined;
 }

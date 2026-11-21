@@ -231,7 +231,7 @@ export function accountPage(
 ${
   plan.view.plan === "pro"
     ? '<button type="button" class="quiet" id="billing-portal">Manage billing</button><p class="note">Invoices, your card, and cancelling, on Polar.</p>'
-    : '<button type="button" id="billing-checkout">Upgrade to Pro, $6 a month</button><p class="note">Pro has no note limit and holds 10 GB of files. Polar takes the payment and handles tax.</p>'
+    : '<button type="button" id="billing-checkout">Upgrade to Pro, $6 a month</button><p class="note">Pro has no note limit and holds 10 GB of files. Polar takes the payment and handles tax. Every file you have uploaded counts, deleted ones too.</p>'
 }</section>`
       : "";
   return page(

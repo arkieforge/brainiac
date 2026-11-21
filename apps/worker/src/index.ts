@@ -33,7 +33,7 @@ import {
 } from "./connectors/github.ts";
 import { callback as orcidCallback, linkUrl as orcidLinkUrl, orcidApp } from "./connectors/orcid.ts";
 import type { Records } from "./mcp/handler.ts";
-import { baseOf } from "./registry.ts";
+import { baseOf, findBase } from "./registry.ts";
 import { routeSite, type Session } from "./site.ts";
 import { rewrapRecords, VAULT_SWEEP_CRON, waitingToRewrap } from "./vault-rotation.ts";
 
@@ -351,7 +351,12 @@ async function routeBilling(request: Request, env: Env, ctx: ExecutionContext, u
     const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
     try {
       return await polarWebhook(request, app, {
-        record: (userId) => recordOf(env, pool, userId),
+        // Found, never made: a customer this stage has no record for (the sandbox is shared by every non-prod
+        // stage, or one made by hand in Polar) is acknowledged and dropped.
+        record: async (userId) => {
+          const row = await findBase(pool, userId);
+          return row && row.deletedAt === null ? recordById(env, row.id) : undefined;
+        },
         now: Date.now(),
       });
     } finally {

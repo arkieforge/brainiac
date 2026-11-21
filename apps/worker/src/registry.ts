@@ -12,13 +12,7 @@ export interface Db {
  * the winner's row in a statement of its own, so both get the same record.
  */
 export async function baseOf(db: Db, ownerId: string, newId: () => string): Promise<string | undefined> {
-  const find = async () => {
-    const { rows } = await db.query<{ id: string; deletedAt: Date | null }>(
-      `select "id", "deletedAt" from "bases" where "ownerId" = $1`,
-      [ownerId],
-    );
-    return rows[0];
-  };
+  const find = () => findBase(db, ownerId);
   let row = await find();
   if (!row) {
     const { rows } = await db.query<{ id: string }>(
@@ -29,4 +23,13 @@ export async function baseOf(db: Db, ownerId: string, newId: () => string): Prom
   }
   if (!row) throw new Error(`The registry has no record for ${ownerId}, even after making one.`);
   return row.deletedAt === null ? row.id : undefined;
+}
+
+/** The registry's row for `ownerId`, without making one: for callers that must not create a record, like webhooks. */
+export async function findBase(db: Db, ownerId: string) {
+  const { rows } = await db.query<{ id: string; deletedAt: Date | null }>(
+    `select "id", "deletedAt" from "bases" where "ownerId" = $1`,
+    [ownerId],
+  );
+  return rows[0];
 }

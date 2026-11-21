@@ -633,7 +633,16 @@ export const mutateCases: Record<string, Case> = {
     const lapsed = mutate(sql, note(301), by(T0 + 31 * 86_400_000));
     ok(lapsed.status === "invalid", JSON.stringify(lapsed));
     setBilling(sql, false);
-    applied(mutate(sql, note(301), by(T0 + 31 * 86_400_000)));
+    const extra = applied(mutate(sql, note(301), by(T0 + 31 * 86_400_000)));
     equal(planOf(sql, T0).limits, null);
+
+    // Undoing a delete on a full free record holds the note for the person instead of putting it back.
+    setBilling(sql, true);
+    const run = "01M6RUN000000000000000000P";
+    const later = T0 + 32 * 86_400_000;
+    applied(mutate(sql, { op: "delete", noteId: extra.noteId, baseRev: 1 }, by(later, run)));
+    const result = undo(sql, run, by(later + 1));
+    same([result.undone, result.conflicts.length], [[], 1]);
+    ok(getNote(sql, extra.noteId)?.deletedAt !== null);
   },
 };

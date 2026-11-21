@@ -173,14 +173,7 @@ export async function webhook(
     return new Response("Not JSON", { status: 400 });
   }
   const plan = planFrom(app, payload);
-  if (plan) {
-    try {
-      await (await deps.record(plan.userId))?.setPlan(plan.state);
-    } catch (error) {
-      // A customer this stage has no account for (the sandbox is shared by every non-prod stage, or one made by
-      // hand in Polar): answered, so Polar doesn't retry it until it turns the endpoint off.
-      console.error("polar webhook for an unknown user", { error: String(error) });
-    }
-  }
+  // A customer with no record here is acknowledged; any other failure throws, so Polar retries it.
+  if (plan) await (await deps.record(plan.userId))?.setPlan(plan.state);
   return new Response(null, { status: 202 });
 }
