@@ -374,6 +374,8 @@ kbd,
 .tree {
   flex: 1;
   min-height: 0;
+  /* The tree's shadow root says `light dark`; the app is light whatever the OS says. */
+  color-scheme: light;
   --trees-bg-override: var(--bg);
   --trees-fg-override: var(--fg-muted);
   --trees-fg-muted-override: var(--fg-faint);

@@ -17,6 +17,10 @@ colors:
   ok: "#17643a"
   warn: "#92560a"
   danger: "#b42318"
+  overlay: "rgb(28 26 22 / 0.4)"
+  shadow: "rgb(28 26 22 / 0.18)"
+  paper: "#ffffff"
+  ink: "#16140f"
 typography:
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, Inter, Segoe UI, system-ui, sans-serif"

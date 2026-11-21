@@ -99,7 +99,7 @@ ${emailCodes ? "" : '<p class="note">Email codes aren\'t set up on this server y
 ${social ? `<section>${social}</section>` : ""}`,
     `const landsOn = ${JSON.stringify(landsOn).replace(/</g, "\\u003c")};
 let widget;
-window.onTurnstileLoad = () => { widget = turnstile.render("#turnstile", { sitekey: ${JSON.stringify(turnstileSiteKey)} }); };
+window.onTurnstileLoad = () => { widget = turnstile.render("#turnstile", { sitekey: ${JSON.stringify(turnstileSiteKey)}, theme: "light" }); };
 const captcha = () => {
   const token = turnstile.getResponse(widget);
   turnstile.reset(widget);
