@@ -10,6 +10,8 @@ Proof is output you saw yourself in this session. Match the proof to the change:
 | You changed                                   | Run                                                                                                                                | Evidence                                      |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | Any code                                      | `vp check` and `vp test run <files you touched>`                                                                                   | The command output                            |
+| Before a push                                 | `vp run check:changed`: CI's checks for what the branch changed                                                                    | The command output                            |
+| A site component's behaviour (focus, keys)    | `vp run test:browser`: `apps/web/src/**/*.browser.test.tsx` in headless Chromium                                                   | Output                                        |
 | Types, schemas, tool descriptions             | `vp run typecheck`                                                                                                                 | Output                                        |
 | A bug                                         | A test that fails on `main`, then passes                                                                                           | Both runs                                     |
 | Sync, merges, approvals                       | `vp test run packages/sync packages/core/src/merge.test.ts`                                                                        | Output, including the seed on failure         |
@@ -22,6 +24,7 @@ Proof is output you saw yourself in this session. Match the proof to the change:
 | Lint rules                                    | `vp test run oxlint-plugin-brainiac`                                                                                               | Output                                        |
 | `alchemy.run.ts`                              | `vp run plan --stage <stage>`, then the PR stage deploy in CI                                                                      | The plan, the CI job summary                  |
 | Sign-in, the account page, anything behind it | `vp run e2e --stage pr-<n>` (CI runs it on every preview); for a look yourself, `vp run dev:sign-in --stage pr-<n>` in the browser | The e2e output; screenshots with `--evidence` |
+| A bug a person sees on the site               | A scenario in `scripts/scenarios`, then `vp run scenarios:prove <scenario> --stage pr-<n>`: fails on `main`, passes on the fix     | The prove output                              |
 | Anything a signed-out visitor reaches         | After the preview deploys: `vp run doctor --stage pr-<n>`, then use it, then `vp run logs --stage pr-<n> --since 30m`              | Doctor output; no failed requests             |
 
 ## Rules

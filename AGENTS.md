@@ -122,15 +122,23 @@ calling work done, walk this list and say which entries applied:
 
 ## Verifying
 
-- Before you push: `vp check`, `vp test run`, `vp run typecheck` and `vp run knip`, the same checks CI runs.
+- Before you push: `vp run check:changed`, CI's checks cut to what your branch changed (format and lint of
+  changed files, typecheck, the tests that reach them, knip). CI still runs everything.
 - While you iterate: `vp test run <files>`, `vp run typecheck` (`effect-tsgo`, cached per package).
 - Test behaviour that can break: sync and merges, permissions and approvals, parsing, migrations, the logic a
   bug fix changed. Skip tests for what types guarantee, copy text, and mock-call mirrors.
 - Extend an existing test before adding one. Test at the lowest layer that fails on `main`.
-- No sleeps, polling loops, retries or per-test timeouts. A skipped test needs
-  `// quarantine: #<issue> <why>` on the line above (lint enforces it).
-- A bug fix starts with a test that fails on `main`. A purely visual bug gets before/after screenshots
-  instead.
+- No sleeps, polling loops, retries or per-test timeouts, and a skipped test needs
+  `// quarantine: #<issue> <why>` on the line above. Lint enforces all of it in test files.
+- Behaviour that needs a real browser (focus, keys, pointer, a component wired to its hooks) gets a
+  `*.browser.test.tsx` beside the component, run by `vp run test:browser` in headless Chromium (`vp test run`
+  skips them). Render with `await using screen = await render(<X />)` from `apps/web/test/render.tsx` and assert
+  with `expect.element` or `vi.waitFor`; with fake timers on, `vi.waitFor` advances them. Logic stays in node
+  tests. First run on a machine: `pnpm exec playwright install --only-shell chromium`.
+- A bug fix starts with a test that fails on `main`. A bug a person sees on the site can instead get a scenario
+  in `scripts/scenarios` (a real browser on a stage, a fresh account on the fixture student's seeded record):
+  `vp run scenarios:prove <scenario> --stage <pr-n|local>` shows it failing on `main` and passing on the fix.
+  A purely visual bug gets before/after screenshots instead.
 - `vp run doctor` when something about the environment looks wrong.
 - Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the
   [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from
@@ -141,7 +149,8 @@ calling work done, walk this list and say which entries applied:
 
 `evals/` checks how real models behave with Brainiac's model-facing text: MCP tool descriptions and
 schemas, the skill, prompts. Read [evals/README.md](evals/README.md) before changing that text, and add a
-case that fails before a fix.
+case that fails before a fix. What every agent session loads (tool descriptions and schemas, the skill) has a
+budget in `evals/context-budget.json`; CI fails a PR that grows it unless a maintainer adds `context-increase`.
 
 ## Workflow skills (tstack)
 

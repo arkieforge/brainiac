@@ -5,7 +5,9 @@
 //     address bar, POSTs it back in a header, and the answer sets the session cookie. The browser's own history list
 //     may still keep the link as opened, so treat it like a password.
 //   POST /dev/token[?as=<tag>], `authorization: Bearer <t>`   an access token for /mcp, for agents and scripts
-// `as` signs in a separate fixture account (ada.okafor+<tag>@example.edu), so an e2e run starts from a new one.
+//   POST /dev/seed[?as=<tag>], the same header, `{ notes }`   fills an empty record with the fixture's notes, made
+//     by the person through the record's own mutation path, so an agent testing the site isn't looking at nothing
+// `as` signs in a separate fixture account (nadia.karim+<tag>@example.edu), so an e2e run starts from a new one.
 // `vp run dev:sign-in` and `vp run dev:token` build these for a stage. Never on prod: alchemy.run.ts doesn't bind the
 // token there, index.ts refuses /dev/ when STAGE is prod, and the deploy doctor fails if prod's Worker has it bound.
 import { betterAuth } from "better-auth";
@@ -14,9 +16,71 @@ import { testUtils } from "better-auth/plugins";
 import { type AuthConfig, authOptions, mcpResource } from "./auth/config.ts";
 import { DEV_CLIENT } from "./mcp/handler.ts";
 import { landing } from "./auth/pages.ts";
+import type { NoteClass } from "@brainiac/base";
 
-/** The fictional fixture student that tests, evals and screenshots use. Never a real person. */
-export const FIXTURE_STUDENT = { email: "ada.okafor@example.edu", name: "Ada Okafor" };
+/** The fictional fixture student that tests, evals and screenshots use (fixtures/README.md). Never a real person. */
+export const FIXTURE_STUDENT = { email: "nadia.karim@example.edu", name: "Nadia Karim" };
+
+/** One note for /dev/seed, as it is on disk under fixtures/nadia (scripts/dev-auth.ts reads them). */
+export interface SeedNote {
+  readonly path: string;
+  readonly raw: string;
+  readonly class: NoteClass;
+}
+
+/** What seeding needs of a person's record: the Base DO's own methods, over RPC. */
+export interface SeedRecord {
+  notes(caller: { readonly actor: string }): Promise<readonly unknown[] | { readonly status: "forbidden" }>;
+  mutate(
+    mutation: { readonly op: "create" } & SeedNote,
+    caller: { readonly actor: string },
+  ): Promise<{ readonly status: string }>;
+}
+
+/** The person, as the site speaks for them (site.ts). */
+const PERSON = { actor: "human" } as const;
+
+/** More than the fixture will ever hold; a body past it is a mistake, not a seed. */
+const MAX_SEED_NOTES = 200;
+
+/** The body of a /dev/seed request, or undefined when it isn't one. */
+function seedNotes(body: unknown): SeedNote[] | undefined {
+  if (!body || typeof body !== "object" || !("notes" in body) || !Array.isArray(body.notes)) return undefined;
+  if (body.notes.length > MAX_SEED_NOTES) return undefined;
+  const notes: SeedNote[] = [];
+  for (const note of body.notes) {
+    if (!note || typeof note !== "object") return undefined;
+    const { path, raw, class: cls } = note;
+    if (typeof path !== "string" || typeof raw !== "string") return undefined;
+    if (cls !== "normal" && cls !== "sensitive") return undefined;
+    notes.push({ path, raw, class: cls });
+  }
+  return notes;
+}
+
+/** What /dev/seed answers: notes made, notes the record already held (then none are made), and any it refused. */
+export interface Seeded {
+  readonly seeded: number;
+  readonly existing: number;
+  readonly refused: readonly { readonly path: string; readonly status: string }[];
+}
+
+/**
+ * Creates each note in `record` as the person, unless the record already holds notes: seeding is for a new
+ * account, and never adds to one someone has been using. A note the record doesn't apply (it needs the person's
+ * passkey, or doesn't parse) is reported, not forced.
+ */
+async function seed(record: SeedRecord, notes: readonly SeedNote[]): Promise<Seeded> {
+  const existing = await record.notes(PERSON);
+  if ("status" in existing) throw new Error("The record refused the person's own read.");
+  if (existing.length > 0) return { seeded: 0, existing: existing.length, refused: [] };
+  const refused: { path: string; status: string }[] = [];
+  for (const note of notes) {
+    const result = await record.mutate({ op: "create", ...note }, PERSON);
+    if (result.status !== "applied") refused.push({ path: note.path, status: result.status });
+  }
+  return { seeded: notes.length - refused.length, existing: 0, refused };
+}
 
 /** How long a dev access token for /mcp lasts. */
 const TOKEN_SECONDS = 60 * 60;
@@ -57,8 +121,16 @@ fetch(location.href, { method: "POST", headers: { authorization: "Bearer " + tok
   .catch((error) => { document.getElementById("status").textContent = error.message; });
 </script>`;
 
-/** Serves /dev/*. The caller has already checked this stage has a token and isn't prod. */
-export async function serveDev(request: Request, config: AuthConfig, token: string): Promise<Response> {
+/**
+ * Serves /dev/*. The caller has already checked this stage has a token and isn't prod. `recordOf` is the person's
+ * record from the base registry, made on first use (index.ts).
+ */
+export async function serveDev(
+  request: Request,
+  config: AuthConfig,
+  token: string,
+  recordOf: (userId: string) => Promise<SeedRecord | undefined>,
+): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/dev/sign-in" && request.method === "GET") {
     return new Response(SIGN_IN_PAGE, {
@@ -70,10 +142,14 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
   }
   const signIn = url.pathname === "/dev/sign-in" && request.method === "POST";
   const mint = url.pathname === "/dev/token" && request.method === "POST";
+  const seeding = url.pathname === "/dev/seed" && request.method === "POST";
   const given = /^Bearer (\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
   const email = fixtureEmail(url.searchParams.get("as"));
   // A wrong token looks the same as no dev sign-in at all.
-  if (!(signIn || mint) || !given || !email || !(await matches(given, token))) return notFound();
+  if (!(signIn || mint || seeding) || !given || !email || !(await matches(given, token))) return notFound();
+  const notes = seeding ? seedNotes(await request.json().catch(() => undefined)) : undefined;
+  if (seeding && !notes)
+    return Response.json({ error: "expected { notes: [{ path, raw, class }] }" }, { status: 400 });
 
   const auth = devAuth(config);
   const context = await auth.$context;
@@ -83,6 +159,12 @@ export async function serveDev(request: Request, config: AuthConfig, token: stri
     (await context.test.saveUser(
       context.test.createUser({ email, name: FIXTURE_STUDENT.name, emailVerified: true }),
     ));
+
+  if (notes) {
+    const record = await recordOf(user.id);
+    if (!record) return Response.json({ error: "this account's record was deleted" }, { status: 410 });
+    return Response.json(await seed(record, notes));
+  }
 
   if (mint) {
     const resource = mcpResource(url.origin);

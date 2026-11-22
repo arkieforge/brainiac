@@ -1,0 +1,23 @@
+{
+  "total": 30469,
+  "parts": {
+    "SKILL.md": 7363,
+    "tool add": 612,
+    "tool ask": 1842,
+    "tool create": 1326,
+    "tool describe": 634,
+    "tool draft": 1115,
+    "tool fill_form": 939,
+    "tool get": 796,
+    "tool import": 1333,
+    "tool inbox": 1058,
+    "tool organize": 3074,
+    "tool photos": 1114,
+    "tool query": 3320,
+    "tool related": 791,
+    "tool request_info": 944,
+    "tool search": 895,
+    "tool undo": 498,
+    "tool update": 2815
+  }
+}

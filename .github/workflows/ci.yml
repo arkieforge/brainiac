@@ -36,6 +36,9 @@ jobs:
             run: vp test run
           - name: Unused code
             run: knip
+          # The site's component tests in headless Chromium (apps/web *.browser.test.tsx).
+          - name: Browser tests
+            run: playwright install --with-deps --only-shell chromium && vp run test:browser
           # Paid eval runs stay local; CI proves each eval still loads its world and cases (graders run in Test).
           # Retrieval calls no model offline, so CI runs it whole, keyword-only.
           - name: Eval dry runs

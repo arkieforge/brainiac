@@ -26,6 +26,11 @@
   { "name": "type:epic", "color": "3e4b9e", "description": "A milestone's parent issue" },
   { "name": "type:decision", "color": "fef2c0", "description": "A call the owner has to make" },
   {
+    "name": "context-increase",
+    "color": "d4c5f9",
+    "description": "Accepts a PR that grows what every agent session loads (context-budget workflow)"
+  },
+  {
     "name": "council",
     "color": "5319e7",
     "description": "Run the council skill to 9.5 before filing the PR"

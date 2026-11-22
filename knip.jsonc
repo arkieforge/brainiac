@@ -6,8 +6,9 @@
   "ignoreBinaries": ["doppler"],
   "workspaces": {
     ".": {
-      // alchemy.run.ts is loaded by the alchemy CLI; scripts and evals run from package.json and t3.json.
-      "entry": ["alchemy.run.ts", "scripts/*.ts", "evals/*/run.ts"],
+      // alchemy.run.ts is loaded by the alchemy CLI; scripts and evals run from package.json and t3.json, and
+      // scripts/e2e.ts loads each scenario by its file name.
+      "entry": ["alchemy.run.ts", "scripts/*.ts", "scripts/scenarios/*.ts", "evals/*/run.ts"],
       "project": ["*.ts", "scripts/**/*.ts", "evals/**/*.ts"],
       // Loaded as a tsconfig plugin, so no import references it.
       "ignoreDependencies": ["@effect/language-service"],
@@ -22,8 +23,12 @@
     "packages/render": { "ignoreDependencies": ["vite"] },
     // Chrome's types are loaded through tsconfig "types".
     "apps/extension": { "ignoreDependencies": ["@types/chrome"] },
-    // TanStack Start loads its routes by file name.
-    "apps/web": { "entry": ["src/routes/**/*.tsx"] },
+    // TanStack Start loads its routes by file name. The browser test provider is imported through vite-plus's
+    // re-export (vite-plus/test/browser-playwright), with playwright as its peer.
+    "apps/web": {
+      "entry": ["src/routes/**/*.tsx"],
+      "ignoreDependencies": ["@vitest/browser-playwright", "playwright"],
+    },
     // workers-types is loaded through tsconfig "types"; tests start the Worker through scripts/ocr-worker.ts.
     "apps/ocr": { "ignoreDependencies": ["@cloudflare/workers-types"] },
     // The same for the Typst Worker (scripts/typst-worker.ts).

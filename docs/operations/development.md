@@ -19,15 +19,18 @@ links the main checkout's `.env`.
 | `vp test run [files]`               | Tests (Vitest through Vite+)                                                                        |
 | `vp run typecheck`                  | `effect-tsgo` type check in every workspace                                                         |
 | `vp run knip`                       | Unused files, exports and dependencies                                                              |
+| `vp run check:changed`              | CI's checks for what this branch changed; run before a push (`--base <ref>`, default `origin/main`) |
+| `vp run test:browser`               | The site's `*.browser.test.tsx` in headless Chromium                                                |
 | `vp run dev`                        | Local Worker and site on `localhost:1337` (one per machine: a second stops), your own Neon branch   |
 | `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
 | `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
 | `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
 | `vp run doctor`                     | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy)          |
 | `vp run logs --stage <name>`        | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                          |
-| `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student (`--stage local` for `vp run dev`)            |
+| `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student, her record seeded (`--stage local` for dev)  |
 | `vp run dev:token --stage <name>`   | An access token for that stage's `/mcp`, as the fixture student                                     |
-| `vp run e2e --stage <name>`         | Sign-in, a passkey, sign-out and passkey sign-in in a real browser (`--headed`, `--evidence <dir>`) |
+| `vp run e2e --stage <name>`         | The scenarios in `scripts/scenarios` in a real browser (`--scenario`, `--headed`, `--evidence`)     |
+| `vp run scenarios:prove <scenario>` | Shows a scenario failing on `main` and passing on `--stage <name>`, for a fix's proof               |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
@@ -84,9 +87,13 @@ Nobody signs in by hand on a dev stage. Every stage but prod has dev sign-in (`a
 on by `DEV_SIGN_IN_TOKEN` in Doppler `dev`, the way T3 Code's reusable dev credential works:
 
 - **A browser:** `vp run dev:sign-in --stage pr-12` prints a link. Open it once, in your browser or the agent's,
-  and you're the fictional fixture student (`ada.okafor@example.edu`). `--as <tag>` gives a separate fresh
-  account (`ada.okafor+<tag>@example.edu`); `--next /path` picks where it lands.
+  and you're the fictional fixture student, Nadia Karim (`nadia.karim@example.edu`). `--as <tag>` gives a
+  separate fresh account (`nadia.karim+<tag>@example.edu`); `--next /path` picks where it lands.
 - **An agent or script calling `/mcp`:** `vp run dev:token --stage pr-12` prints a one-hour access token.
+- **Test data:** an empty record is a bad test, so both commands first fill a new account's empty record with
+  Nadia's notes from `fixtures/nadia`, made by her through the record's own mutation path. A record that already
+  holds notes is left alone. Her November IELTS score arrives unverified, since verifying takes her passkey;
+  verify it on the site to test that flow. `--empty` skips the seed.
 - **Passkeys and approvals:** a dev session starts with no passkey. Add one on `/account` with Chrome's virtual
   authenticator (DevTools → More tools → WebAuthn) or a real one; on a fresh `--as` account the first one can
   approve at once, as on any new account. `vp run e2e` does this on its own.

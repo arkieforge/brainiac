@@ -417,7 +417,9 @@ export default {
       const token = env.DEV_SIGN_IN_TOKEN;
       if (!token || env.STAGE === "prod") return new Response("Not found", { status: 404 });
       const { serveDev } = await import("./dev.ts");
-      return withAuthConfig(request, env, ctx, (config) => serveDev(request, config, token));
+      return withAuthConfig(request, env, ctx, (config, _keepOpen, pool) =>
+        serveDev(request, config, token, (userId) => recordOf(env, pool, userId)),
+      );
     }
     if (AUTH_SERVER_METADATA.has(pathname)) {
       const { oauthProviderAuthServerMetadata } = await import("@better-auth/oauth-provider");

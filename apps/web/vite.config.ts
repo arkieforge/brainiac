@@ -2,6 +2,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import { playwright } from "vite-plus/test/browser-playwright";
+import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
 // SPA mode: the build prerenders one shell (no record data in it) that the Worker serves for every page, so
@@ -15,4 +17,31 @@ export default defineConfig({
     tanstackStart({ spa: { enabled: true, prerender: { outputPath: "/index.html" } } }),
     react(),
   ],
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: ["src/**/*.test.{ts,tsx}"],
+          exclude: ["src/**/*.browser.test.{ts,tsx}"],
+        },
+      },
+      // Behaviour that needs a real browser (focus, keyboard, pointer, layout), in headless Chromium.
+      {
+        extends: true,
+        test: {
+          name: "browser",
+          include: ["src/**/*.browser.test.{ts,tsx}"],
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            instances: [{ browser: "chromium" }],
+            screenshotFailures: false,
+          },
+        },
+      },
+    ],
+  },
 });
