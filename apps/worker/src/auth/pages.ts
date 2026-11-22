@@ -20,17 +20,40 @@ export const landing = (next: string | null, origin: string) => {
   return target?.origin === origin ? target.href : `${origin}/account`;
 };
 
-const page = (title: string, body: string, script: string, head = "") =>
+// The public site's ink mark (apps/marketing/public/mark-ink.svg), inline so these pages load nothing extra.
+const MARK = `<svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" fill="#1c1a16" d="M16 50a34 34 0 1 0 68 0a34 34 0 1 0 -68 0zM32.5 37a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM45.5 37a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM58.5 37a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM32.5 50a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM45.5 50a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM32.5 63a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0zM56.5 63a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0z"/><circle cx="63" cy="63" r="3.8" fill="#ffb000"/></svg>`;
+
+/** `heading` is HTML, for a two-tone title; `title` goes in the tab as plain text. */
+const page = (title: string, body: string, script: string, head = "", heading = title) =>
   new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · Brainiac</title>${head}
 <style>
-body{font:16px/1.5 system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;color:#1c1a16;background:#f5f1e8;color-scheme:light}
-h1{font-size:1.5rem}a{color:#ad411b}form,section{margin:1.5rem 0}input,button{font:inherit;padding:.5rem .75rem;border-radius:.5rem;border:1px solid #d2c8b3}
-input{width:100%;box-sizing:border-box;margin:.25rem 0;background:#fbf9f3;color:inherit}button{cursor:pointer;background:#1c1a16;color:#f5f1e8;border:0;margin:.25rem 0}
-button.quiet{background:none;color:#1c1a16;border:1px solid #d2c8b3}.note{color:#57514a;font-size:.9rem}#error{color:#b42318}
-ul{padding:0;list-style:none}li{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-bottom:1px solid #e0d8c7}
-</style></head><body><h1>${title}</h1>${body}<p id="error" role="alert"></p>
+:root{--bg:#f5f1e8;--raised:#fbf9f3;--hover:#ebe4d5;--line:#e0d8c7;--line-2:#d2c8b3;--fg:#1c1a16;--muted:#57514a;--faint:#6a6357;--accent:#ad411b;--danger:#b42318;--ink:#16140f;--ease:cubic-bezier(.23,1,.32,1);--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color-scheme:light}
+*{box-sizing:border-box}[hidden],input[type=hidden]{display:none!important}
+body{margin:0;min-height:100dvh;display:flex;flex-direction:column;font:14px/1.5 -apple-system,BlinkMacSystemFont,Inter,"Segoe UI",system-ui,sans-serif;color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+header,footer{display:flex;align-items:center;padding:22px 28px}
+header a{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;letter-spacing:-.01em;color:inherit;text-decoration:none}header svg{width:22px;height:22px}
+main{width:100%;max-width:calc(24rem + 32px);margin:4.5rem auto 3rem;padding:0 16px}
+footer{margin-top:auto;justify-content:flex-end;font:500 11px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase}footer a{color:var(--faint);text-decoration:none}
+h1{font-size:26px;line-height:1.15;font-weight:600;letter-spacing:-.025em;margin:0 0 26px}h1 span{display:block;color:var(--faint)}
+h2{font-size:15px;font-weight:600;margin:0 0 8px}a{color:var(--accent)}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+form,section{margin:0 0 1.5rem}label{display:block;font-size:12px;font-weight:500;color:var(--muted)}
+input{display:block;width:100%;height:44px;margin:6px 0 10px;padding:0 14px;font:inherit;font-size:15px;color:inherit;background:var(--raised);border:1px solid var(--line-2);border-radius:12px}
+input[name=otp]{font:500 20px var(--mono);letter-spacing:.4em}
+button{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:40px;padding:0 16px;font:inherit;font-weight:500;color:var(--raised);background:var(--ink);border:1px solid var(--ink);border-radius:999px;cursor:pointer;transition:background .12s var(--ease),transform .12s var(--ease)}
+button:hover{background:#2b2822}button:active{transform:scale(.97)}button svg{width:16px;height:16px}
+button.quiet{color:var(--fg);background:none;border-color:var(--line-2)}button.quiet:hover{background:var(--hover)}
+button.link{height:auto;padding:0;color:var(--muted);background:none;border:0;font-size:13px;font-weight:400;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
+.wide{width:100%;height:44px}.pair{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:10px}.links{display:flex;justify-content:space-between}
+.or{display:flex;align-items:center;gap:12px;margin:22px 0 18px;font:500 11px/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.note{color:var(--faint);font-size:12.5px}#error{color:var(--danger)}code{font:12.5px var(--mono)}
+ul{padding:0;margin:0 0 12px;list-style:none}li{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.6rem 0;border-bottom:1px solid var(--line)}
+details{padding:.5rem 0;border-bottom:1px solid var(--line)}summary{cursor:pointer}
+@media (max-width:600px){header,footer{padding:16px}main{margin-top:2.25rem}}@media (prefers-reduced-motion:reduce){button{transition:none}}
+</style></head><body><header><a href="/">${MARK}Brainiac</a></header>
+<main><h1>${heading}</h1>${body}<p id="error" role="alert"></p></main>
+<footer><a href="https://github.com/arkieforge/brainiac">GitHub</a></footer>
 <script>
 const api = async (path, init = {}) => {
   const res = await fetch("/api/auth" + path, { ...init, headers: { "content-type": "application/json", ...init.headers } });
@@ -81,38 +104,56 @@ export function signInPage({
   providers,
   emailCodes,
 }: SignInPageOptions): Response {
-  const labels = { google: "Google", github: "GitHub" };
   const social = providers
     .map(
-      (p) => `<button type="button" class="quiet" data-provider="${p}">Continue with ${labels[p]}</button>`,
+      (p) =>
+        `<button type="button" class="quiet wide" data-provider="${p}" aria-label="Continue with ${LOGINS[p].name}">${LOGINS[p].logo}${LOGINS[p].name}</button>`,
     )
-    .join(" ");
+    .join("");
+  // `data-start` marks what the code step hides, so the person sees only the code box until they back out.
   return page(
     "Sign in",
-    `<section><button type="button" id="passkey">Sign in with a passkey</button></section>
-${emailCodes ? "" : '<p class="note">Email codes aren\'t set up on this server yet.</p>'}
-<form id="email"${emailCodes ? "" : " hidden"}><label>New here, or no passkey with you? Get a code by email.
-<input type="email" name="email" required autocomplete="email"></label>
-<div id="turnstile"></div><button>Email me a code</button></form>
-<form id="code" hidden><label>Enter the code we sent.
-<input name="otp" required inputmode="numeric" autocomplete="one-time-code"></label><button>Continue</button></form>
-${social ? `<section>${social}</section>` : ""}`,
+    `<section data-start><button type="button" id="passkey" class="wide">${KEY}Sign in with a passkey</button></section>
+${emailCodes ? "" : '<p class="note" data-start>Email codes aren\'t set up on this server yet.</p>'}
+<div${emailCodes ? "" : " hidden"}><p class="or" data-start>or a code by email</p>
+<form id="email" data-start><label>Email<input type="email" name="email" required autocomplete="email" placeholder="you@example.com"></label>
+<button class="quiet wide">Email me a code</button><p class="note">New here? The code makes your account.</p></form>
+<form id="code" hidden><p>We sent a code to <b id="sent-to"></b>.</p><label>Code
+<input name="otp" required inputmode="numeric" autocomplete="one-time-code"></label><button class="wide">Continue</button>
+<p class="links"><button type="button" class="link" id="other-email">Use another email</button><button type="button" class="link" id="resend">Send again</button></p></form></div>
+<div id="turnstile"></div>
+${social ? `<p class="or" data-start>or</p><section class="pair" data-start>${social}</section>` : ""}`,
     `const landsOn = ${JSON.stringify(landsOn).replace(/</g, "\\u003c")};
 let widget;
-window.onTurnstileLoad = () => { widget = turnstile.render("#turnstile", { sitekey: ${JSON.stringify(turnstileSiteKey)}, theme: "light" }); };
+// Shown only when Cloudflare needs a click; it passes silently otherwise.
+window.onTurnstileLoad = () => { widget = turnstile.render("#turnstile", { sitekey: ${JSON.stringify(turnstileSiteKey)}, theme: "light", appearance: "interaction-only", size: "flexible" }); };
 const captcha = () => {
   const token = turnstile.getResponse(widget);
   turnstile.reset(widget);
-  if (!token) throw new Error("Wait for the check above to finish, then try again.");
+  if (!token) throw new Error("Wait a moment for the security check, then try again.");
   return { "x-captcha-response": token };
 };
+const heading = document.querySelector("h1");
+const startHeading = heading.innerHTML;
+const codeStep = (on) => {
+  for (const el of document.querySelectorAll("[data-start]")) el.hidden = on;
+  document.getElementById("code").hidden = !on;
+  heading.innerHTML = on ? "Check your email" : startHeading;
+};
 let email;
+const sendCode = () => api("/email-otp/send-verification-otp", { method: "POST", headers: captcha(), body: JSON.stringify({ email, type: "sign-in" }) });
 document.getElementById("passkey").onclick = run(async () => next(await passkeySignIn(), landsOn));
 document.getElementById("email").onsubmit = run(async (event) => {
   email = new FormData(event.target).get("email");
-  await api("/email-otp/send-verification-otp", { method: "POST", headers: captcha(), body: JSON.stringify({ email, type: "sign-in" }) });
-  event.target.hidden = true;
-  document.getElementById("code").hidden = false;
+  await sendCode();
+  document.getElementById("sent-to").textContent = email;
+  codeStep(true);
+  document.querySelector("#code input").focus();
+});
+document.getElementById("other-email").onclick = () => codeStep(false);
+document.getElementById("resend").onclick = run(async (event) => {
+  await sendCode();
+  event.target.textContent = "Sent again";
 });
 document.getElementById("code").onsubmit = run(async (event) => {
   const otp = new FormData(event.target).get("otp");
@@ -125,8 +166,23 @@ for (const button of document.querySelectorAll("[data-provider]")) {
   });
 }`,
     `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit" async defer></script>`,
+    "Sign in <span>to your record.</span>",
   );
 }
+
+// Phosphor's key (fill), as in the app.
+const KEY = `<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216.57 39.43a80 80 0 0 0-132.66 81.35L28.69 176A15.86 15.86 0 0 0 24 187.31V216a16 16 0 0 0 16 16h32a8 8 0 0 0 8-8v-16h16a8 8 0 0 0 8-8v-16h16a8 8 0 0 0 5.66-2.34l9.56-9.57A79.73 79.73 0 0 0 160 176h.1a80 80 0 0 0 56.47-136.57ZM180 92a16 16 0 1 1 16-16 16 16 0 0 1-16 16Z"/></svg>`;
+
+const LOGINS = {
+  google: {
+    name: "Google",
+    logo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.09A6.6 6.6 0 0 1 5.5 12c0-.73.13-1.43.34-2.09V7.07H2.18A11 11 0 0 0 1 12c0 1.78.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A10.6 10.6 0 0 0 12 1 11 11 0 0 0 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/></svg>`,
+  },
+  github: {
+    name: "GitHub",
+    logo: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`,
+  },
+};
 
 const PROMPTS = {
   enroll:
