@@ -10,6 +10,14 @@ inputs:
   e2e:
     description: Run `vp run e2e` against the stage after the doctor (previews only; prod has no dev sign-in)
     default: "false"
+# Set as soon as the deploy prints them, so they're there even when the doctor or e2e fails after it.
+outputs:
+  app:
+    description: The app's URL (the Worker)
+    value: ${{ steps.deploy.outputs.app }}
+  site:
+    description: The public site's URL (apps/marketing)
+    value: ${{ steps.deploy.outputs.site }}
 runs:
   using: composite
   steps:
@@ -18,7 +26,8 @@ runs:
     # warnings, since that is how a rename shows up; in prod, RemovalPolicy.protect fails those plans.
     # --adopt takes over resources under our own pinned names (brainiac-<id>-<stage>) that state doesn't
     # know yet, such as those Alchemy 0.94 made; nothing else on the account uses those names.
-    - shell: bash
+    - id: deploy
+      shell: bash
       env:
         DOPPLER_TOKEN: ${{ inputs.doppler-token }}
         STAGE: ${{ inputs.stage }}
@@ -34,8 +43,10 @@ runs:
           grep -m1 -oE 'Plan: .*' deploy.log || echo "no plan (see the job log)"
           grep -oE "\[[^]]+$plan" deploy.log || true
           echo '```'
-          grep -oE "url: '[^']+'" deploy.log || true
+          grep -oE "(url|site): '[^']+'" deploy.log || true
         } >> "$GITHUB_STEP_SUMMARY"
+        echo "app=$(grep -m1 -oE "url: 'https://[^']+'" deploy.log | cut -d"'" -f2)" >> "$GITHUB_OUTPUT"
+        echo "site=$(grep -m1 -oE "site: 'https://[^']+'" deploy.log | cut -d"'" -f2)" >> "$GITHUB_OUTPUT"
         grep -oE '\[[^]]+\] (replace|delete)$' deploy.log | sed 's/^/::warning title=Alchemy::/' || true
         exit $status
     # The stage as a signed-out visitor sees it (scripts/doctor.ts). A FAIL fails the job, so a deploy that

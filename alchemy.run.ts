@@ -263,13 +263,14 @@ export default Alchemy.Stack(
         outdir: "dist",
         env: { PUBLIC_APP_ORIGIN: domain ? `https://${domain}` : worker.url.as<string>() },
       });
-      yield* Cloudflare.Worker("marketing", {
+      const site = yield* Cloudflare.Worker("marketing", {
         name: name("marketing"),
         dev: { port: 1340 },
         assets: { directory: marketing.outdir, hash: marketing.hash.output.as<string>() },
       });
 
-      return { url: worker.url };
+      // The deploy action reads both from the log for the job summary and the PR's preview comment.
+      return { url: worker.url, site: site.url };
     });
 
     // In prod, any plan that would replace or delete a resource (a rename, a removed declaration,

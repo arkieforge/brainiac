@@ -8,6 +8,9 @@ to the site, phones and any laptop that keeps a local copy, and people manage it
 already use (Claude Code, claude.ai, T3 Code) through MCP. Brainiac runs no model of its own and needs no
 API key.
 
+- **Live**: the app at [brainiac.sou-hardo.com](https://brainiac.sou-hardo.com), the public site at
+  [brainiac-marketing-prod.snuggycat.workers.dev](https://brainiac-marketing-prod.snuggycat.workers.dev).
+  Every PR gets its own preview, linked in a comment on the PR.
 - **Docs**: [`docs/`](docs/README.md): product, internals, operations. [The contract](docs/internals/contract.md)
   wins over everything else.
 - **Tracker**: issues grouped by milestone (M0 record + sync, M1 retrieval + filing + trust,
@@ -29,4 +32,4 @@ workflow.
 
 ## Status
 
-Planning is done; M0 has started. Nothing is deployed yet.
+Planning is done; M0 has started. Every push to `main` deploys to the live URLs above once CI passes.

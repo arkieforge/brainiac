@@ -6,12 +6,12 @@ This folder also holds the Neon migrations for the shared tables, and will hold 
 
 ## Stages
 
-| Stage        | Runs from                                                              | Doppler config | Neon project    |
-| ------------ | ---------------------------------------------------------------------- | -------------- | --------------- |
-| `dev_$USER`  | `vp run dev` (local Worker on `localhost:1337`)                        | `dev`          | `brainiac-dev`  |
-| `live_$USER` | `vp run deploy` (your own cloud stage)                                 | `dev`          | `brainiac-dev`  |
-| `pr-<n>`     | CI on every push to a same-repo PR; `preview-cleanup.yml` destroys it  | `dev`          | `brainiac-dev`  |
-| `prod`       | CI on every push to `main`, after the checks pass. Never from a laptop | `prd`          | `brainiac-prod` |
+| Stage        | Runs from                                                                                             | Doppler config | Neon project    |
+| ------------ | ----------------------------------------------------------------------------------------------------- | -------------- | --------------- |
+| `dev_$USER`  | `vp run dev` (local Worker on `localhost:1337`)                                                       | `dev`          | `brainiac-dev`  |
+| `live_$USER` | `vp run deploy` (your own cloud stage)                                                                | `dev`          | `brainiac-dev`  |
+| `pr-<n>`     | CI on every push to a same-repo PR, which links it in a PR comment; `preview-cleanup.yml` destroys it | `dev`          | `brainiac-dev`  |
+| `prod`       | CI on every push to `main`, after the checks pass. Never from a laptop                                | `prd`          | `brainiac-prod` |
 
 Every stage gets its own Worker, R2 bucket, queue, Hyperdrive and a Neon branch named after the stage, cut
 from that project's `main`. Cloudflare resources are named `brainiac-<id>-<stage>` (underscores become
