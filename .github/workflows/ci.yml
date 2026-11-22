@@ -106,11 +106,15 @@ jobs:
   # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive. It runs beside the
   # checks rather than after them, so the preview is up as soon as possible.
   # Fork PRs get no secrets, so only same-repo PRs deploy. preview-cleanup.yml destroys it on close.
+  # One comment on the PR carries the links, edited on every push so it always names the commit it runs.
   preview:
     name: Deploy preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -119,11 +123,31 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: ./.github/actions/deploy
+      - id: deploy
+        uses: ./.github/actions/deploy
         with:
           stage: pr-${{ github.event.pull_request.number }}
           doppler-token: ${{ secrets.DOPPLER_TOKEN_DEV }}
           e2e: "true"
+      - if: ${{ !cancelled() && steps.deploy.outputs.app != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          APP: ${{ steps.deploy.outputs.app }}
+          SITE: ${{ steps.deploy.outputs.site }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR" --edit-last --create-if-none --body "### Preview
+
+          | | |
+          | --- | --- |
+          | App | $APP |
+          | Public site | $SITE |
+          | Commit | \`${SHA:0:7}\` ([checks]($RUN)) |
+
+          Sign up with a passkey. It has its own empty database, deleted when this PR closes."
 
   # Prod deploys only from here, after every check passes. The prd token lives in the production environment,
   # which only main can use.

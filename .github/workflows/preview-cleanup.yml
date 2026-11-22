@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   # Tears down the pr-<n> stage ci.yml deployed, Neon branch included. Same group as the deploy, so they
@@ -27,3 +28,12 @@ jobs:
       - run: doppler run -- alchemy destroy --stage pr-${{ github.event.pull_request.number }} --yes --no-input
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_DEV }}
+      # Only edits ci.yml's preview comment; a PR that never deployed has none to edit.
+      - run: |
+          gh pr comment "$PR" --edit-last --body "### Preview
+
+          Deleted when this PR closed." || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
