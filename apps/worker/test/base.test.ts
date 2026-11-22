@@ -119,6 +119,23 @@ describe("Base DO", () => {
     expect(await base.find(agent, "okafor")).toEqual([]);
   });
 
+  it("seeds a new record all or none, once, and never one that holds notes", async () => {
+    const base = await record("seed");
+    const fixture = (path: string, at = path) => ({
+      op: "create" as const,
+      path: at,
+      raw: readFileSync(join(FIXTURES, path), "utf8"),
+      class: "normal" as const,
+    });
+    // One note the record refuses (a path outside the record) and nothing is made, not even the good one.
+    expect(
+      (await base().seedIfEmpty([fixture(PAPER), fixture(PROFILE, "../out.md")], human)).status,
+    ).not.toBe("applied");
+    expect(await base().notes(human)).toEqual([]);
+    expect((await base().seedIfEmpty([fixture(PAPER), fixture(PROFILE)], human)).status).toBe("applied");
+    expect(await base().seedIfEmpty([fixture(TUM)], human)).toEqual({ status: "notEmpty", notes: 2 });
+  });
+
   it("undoes a run through the DO", async () => {
     const base = (await record("undo"))();
     const { noteId } = await create(base);

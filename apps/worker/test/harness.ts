@@ -305,7 +305,7 @@ const fakeSession =
     const user = /(?:^|; )user=([\w-]+)/.exec(request.headers.get("cookie") ?? "")?.[1];
     // The fixture student (fictional).
     if (user === undefined) return undefined;
-    return { email: "ada.okafor@example.edu", baseId: env.BASE.idFromName(user).toString() };
+    return { email: "nadia.karim@example.edu", baseId: env.BASE.idFromName(user).toString() };
   };
 
 /**

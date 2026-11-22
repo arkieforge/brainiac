@@ -30,8 +30,9 @@ jobs:
       - run: |
           main=$(git show "HEAD^1:$BUDGET" 2>/dev/null || true)
           if [ -z "$main" ]; then echo "main has no context budget yet."; exit 0; fi
-          was=$(jq .total <<<"$main")
-          now=$(jq .total "$BUDGET")
+          # -e fails the job on a total that isn't a number, rather than letting the comparison below error past it.
+          was=$(jq -e '.total | numbers' <<<"$main")
+          now=$(jq -e '.total | numbers' "$BUDGET")
           echo "Context every agent session loads: main $was chars, this PR $now chars."
           # Each part that changed, so the reviewer sees where the growth is.
           jq -r -n --argjson a "$main" --slurpfile b "$BUDGET" '

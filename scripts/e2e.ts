@@ -3,11 +3,11 @@
 // with no person signing in, like T3 Code's scenarios. Each scenario gets a fresh fixture account from the dev
 // sign-in link, its record seeded with the fixture student's notes unless it asks for an empty one, and Chrome's
 // virtual authenticator for its passkeys, so the ceremonies are the real ones.
-//   --scenario <name>  run only this one (repeatable); the name is its file's, without .ts
+//   --scenario <name>  run only this one (repeatable); the names are in scripts/scenarios/index.ts
 //   --headed           show the browser
 //   --evidence <dir>   save a screenshot after each step (default: only on failure, to the system temp dir)
 // CI runs it on every preview after the doctor (.github/actions/deploy). Never prod: it has no dev sign-in.
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -15,34 +15,33 @@ import { parseArgs } from "node:util";
 import { chromium, type Browser } from "playwright";
 
 import { seed, signInLink } from "./dev-auth.ts";
+import { SCENARIOS } from "./scenarios/index.ts";
 import type { Scenario } from "./scenarios/scenario.ts";
 
 const STEP_MS = 15_000;
-const SCENARIOS = join(import.meta.dirname, "scenarios");
 
-/** Every scenario's name: the files in scripts/scenarios but the shared types. */
-export const scenarioNames = () =>
-  readdirSync(SCENARIOS)
-    .filter((file) => file.endsWith(".ts") && file !== "scenario.ts")
-    .map((file) => file.slice(0, -3))
-    .toSorted();
+/** A scenario's name, as scripts/scenarios/index.ts lists it. */
+export type ScenarioName = keyof typeof SCENARIOS;
 
-/** How a scenario run went: `failure` is the step that failed and why, with the token already taken out. */
+export const isScenario = (name: string): name is ScenarioName => Object.hasOwn(SCENARIOS, name);
+
+/** How a scenario run went. */
 export interface Outcome {
   readonly name: string;
+  /** Why it failed, with the token taken out; absent when it passed. */
   readonly failure?: string;
+  /** The scenario's own step that failed; absent when it passed, or failed before its first step (seed, sign-in). */
+  readonly step?: string;
 }
 
 /** Runs one scenario on `stage` in its own browser context, printing each step as it passes. */
-export async function runScenario(
+async function runScenario(
   browser: Browser,
   stage: string,
-  name: string,
+  name: ScenarioName,
   evidence: string | undefined,
 ): Promise<Outcome> {
-  if (!scenarioNames().includes(name))
-    return { name, failure: `no scenario ${name}; there are ${scenarioNames().join(", ")}` };
-  const { default: scenario }: { default: Scenario } = await import(join(SCENARIOS, `${name}.ts`));
+  const scenario: Scenario = SCENARIOS[name];
   // A new account each run: a first passkey on a new, verified account can approve at once, with no wait.
   // Tags are at most 40 characters (dev.ts); the time stays whole so no two runs share an account.
   const tag = `${name.slice(0, 30)}-${Date.now().toString(36)}`;
@@ -69,13 +68,12 @@ export async function runScenario(
   if (evidence) mkdirSync(join(evidence, name), { recursive: true });
 
   let current = "seed the record";
+  let inSteps = false;
   try {
-    if (!scenario.empty) {
-      const seeded = await seed(origin, token, tag);
-      if (seeded.refused.length > 0) throw new Error(`the seed refused ${JSON.stringify(seeded.refused)}`);
-    }
+    if (!scenario.empty) await seed(origin, token, tag);
     current = "open the dev sign-in link";
     await page.goto(url);
+    inSteps = true;
     for (const step of scenario.steps) {
       current = step.name;
       await step.run(page, account);
@@ -94,7 +92,7 @@ export async function runScenario(
     const why = redact(error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error));
     const failure = `${current}: ${why}${alert ? `\n      page says: ${alert}` : ""}\n      screenshot: ${shot}`;
     console.log(`FAIL  ${name} › ${failure}`);
-    return { name, failure };
+    return { name, failure, ...(inSteps && { step: current }) };
   } finally {
     await context.close();
   }
@@ -103,13 +101,13 @@ export async function runScenario(
 /** Runs `names` (every scenario when empty) on `stage`, one browser for all, and returns how each went. */
 export async function runScenarios(
   stage: string,
-  names: readonly string[],
+  names: readonly ScenarioName[],
   opts: { readonly headed?: boolean | undefined; readonly evidence?: string | undefined } = {},
 ): Promise<Outcome[]> {
   const browser = await chromium.launch({ headless: !opts.headed });
   try {
     const outcomes: Outcome[] = [];
-    for (const name of names.length > 0 ? names : scenarioNames())
+    for (const name of names.length > 0 ? names : Object.keys(SCENARIOS).filter(isScenario))
       outcomes.push(await runScenario(browser, stage, name, opts.evidence));
     return outcomes;
   } finally {
@@ -127,7 +125,11 @@ async function main() {
     },
   });
   if (!values.stage) throw new Error("Pass --stage, e.g. --stage pr-12 or --stage local.");
-  const outcomes = await runScenarios(values.stage, values.scenario ?? [], values);
+  const names = values.scenario ?? [];
+  const unknown = names.filter((name) => !isScenario(name));
+  if (unknown.length > 0)
+    throw new Error(`No scenario ${unknown.join(", ")}; there are ${Object.keys(SCENARIOS).join(", ")}.`);
+  const outcomes = await runScenarios(values.stage, names.filter(isScenario), values);
   const failed = outcomes.filter((outcome) => outcome.failure);
   console.log(`\n${outcomes.length - failed.length} of ${outcomes.length} scenarios passed.`);
   if (failed.length > 0) process.exitCode = 1;

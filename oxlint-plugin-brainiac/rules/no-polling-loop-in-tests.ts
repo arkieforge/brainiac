@@ -26,11 +26,13 @@ const isNode = (value: unknown): value is ESTree.Node =>
 
 // A loop that awaits until a condition turns true is a poll: it passes when the machine is fast enough and spins
 // or times out when it isn't. Await the thing that makes the condition true (a promise, an event, a queue, the
-// jobs dispatcher) instead. Loops over a list (`for ... of`, a counted `for`) are fine.
+// jobs dispatcher) instead. Loops over a list (`for ... of`, a counted `for`) are fine. Reading a stream to its end
+// (`while (true) { const { done } = await reader.read() ... }`) is the one honest awaiting loop: disable the rule
+// on that line with a reason.
 export default defineRule({
   meta: {
     type: "problem",
-    docs: { description: "Disallow `while` and `do ... while` loops that await, in tests." },
+    docs: { description: "Disallow `while`, `do ... while` and `for (;;)` loops that await, in tests." },
   },
   create(context) {
     if (!isTestFile(context.filename)) return {};
@@ -45,6 +47,10 @@ export default defineRule({
       },
       DoWhileStatement(node) {
         if (awaits(node.body) || awaits(node.test)) report(node);
+      },
+      // A `for` with no update step loops until something in its body breaks out: a poll in other words.
+      ForStatement(node) {
+        if (!node.update && (awaits(node.body) || awaits(node.test))) report(node);
       },
     };
   },

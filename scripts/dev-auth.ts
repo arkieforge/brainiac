@@ -50,38 +50,29 @@ export function fixtureNotes() {
     }));
 }
 
-/** Fills the fixture account's record on `origin` (the `as` one, if given) with fixtureNotes() if it is empty. */
+/**
+ * Fills the fixture account's record on `origin` (the `as` one, if given) with fixtureNotes(), all or none, if it
+ * is empty. Throws with the record's reason when it refuses the seed.
+ */
 export async function seed(origin: string, token: string, as: string | undefined): Promise<Seeded> {
   const res = await fetch(`${origin}/dev/seed${as ? `?as=${encodeURIComponent(as)}` : ""}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ notes: fixtureNotes() }),
   });
-  if (!res.ok) throw new Error(`/dev/seed answered ${res.status}. Is the stage deployed with this branch?`);
-  const body: unknown = await res.json();
-  if (!isSeeded(body)) throw new Error(`/dev/seed answered ${JSON.stringify(body)}, not a seed result.`);
-  return body;
-}
-
-/** Whether `body` is /dev/seed's answer (dev.ts); a stage running other code may answer something else. */
-function isSeeded(body: unknown): body is Seeded {
-  if (!body || typeof body !== "object" || !("seeded" in body && "existing" in body && "refused" in body))
-    return false;
-  const { seeded, existing, refused } = body;
-  return (
-    typeof seeded === "number" &&
-    typeof existing === "number" &&
-    Array.isArray(refused) &&
-    refused.every(
-      (item: unknown) =>
-        typeof item === "object" &&
-        item !== null &&
-        "path" in item &&
-        typeof item.path === "string" &&
-        "status" in item &&
-        typeof item.status === "string",
-    )
-  );
+  const body: unknown = await res.json().catch(() => undefined);
+  if (res.status === 404)
+    throw new Error("/dev/seed answered 404: this stage runs code from before seeding.");
+  if (!res.ok) throw new Error(`/dev/seed answered ${res.status}: ${JSON.stringify(body)}`);
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("seeded" in body && "existing" in body) ||
+    typeof body.seeded !== "number" ||
+    typeof body.existing !== "number"
+  )
+    throw new Error(`/dev/seed answered ${JSON.stringify(body)}, not a seed result.`);
+  return { seeded: body.seeded, existing: body.existing };
 }
 
 async function main() {
@@ -106,7 +97,6 @@ async function main() {
     if (seeded.existing > 0)
       console.error(`The record already holds ${seeded.existing} notes; left as it is.`);
     else console.error(`Seeded ${seeded.seeded} fixture notes.`);
-    for (const { path, status } of seeded.refused) console.error(`WARN: ${path} wasn't seeded (${status}).`);
   }
   if (command === "sign-in") {
     console.log(url);

@@ -15,7 +15,8 @@ function calleeName(callee: ESTree.Node): string | undefined {
 
 // A test that sleeps passes on a fast machine and fails on a slow one, and one that times itself measures the
 // machine. Wait for the thing itself instead: await the promise or event, drain the queue, advance fake timers
-// (`vi.useFakeTimers`), or in a browser test `expect.element(...)` / `vi.waitFor(...)`.
+// (`vi.useFakeTimers`) past the code under test's own timers, or in a browser test `expect.element(...)` /
+// `vi.waitFor(...)`. A test scheduling a timer of its own is waiting, fake clock or not.
 export default defineRule({
   meta: {
     type: "problem",
@@ -41,7 +42,7 @@ export default defineRule({
         else if (name && WAITS.has(name))
           context.report({
             node,
-            message: `${name}() waits on the real clock: await the event itself, or use fake timers.`,
+            message: `${name}() makes the test wait: await the event itself, or advance fake timers.`,
           });
         else if (
           name === "addEventListener" &&

@@ -3,11 +3,13 @@
 // push. CI still runs every check in full.
 //   format and lint   the changed files only
 //   typecheck         every package (cached per package, so unchanged ones cost nothing)
-//   tests             those whose imports reach a changed file (Vitest's --changed), plus the workerd suites that
-//                     bundle a Worker by path, which no import graph shows
+//   tests             those whose imports reach a changed file (Vitest's --changed), plus the ones that reach files
+//                     without importing them, which no import graph shows: workerd suites bundle a Worker by path,
+//                     and tests read the fixtures and the agent skill from disk (then every test runs)
+//   browser tests     the site's, when the site or a package it uses changed
 //   unused code       knip over the repo, since a change can orphan a file it never touched
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -19,19 +21,20 @@ const git = (...args: string[]) => {
   return out.stdout.split("\n").filter(Boolean);
 };
 
-/** Files changed since the branch left `base`, committed or not, that still exist. */
+/** Files changed since the branch left `base`, committed or not, deleted ones included. */
 function changedFiles(base: string): string[] {
   const [from] = git("merge-base", base, "HEAD");
   if (!from) throw new Error(`No merge base with ${base}. Fetch it first: git fetch origin main`);
-  const files = [
-    ...git("diff", "--name-only", "--diff-filter=d", from),
-    ...git("ls-files", "--others", "--exclude-standard"),
-  ];
+  const files = [...git("diff", "--name-only", from), ...git("ls-files", "--others", "--exclude-standard")];
   return [...new Set(files)].toSorted();
 }
 
 /** Where a change can alter what a bundled Worker does: its app, the packages it bundles, or the bundlers. */
 const REACHES_A_WORKER = /^(apps\/(worker|ocr|typst)\/|packages\/|scripts\/(bundle|ocr|typst)-worker\.ts$)/;
+/** Files tests read from disk rather than import: the fixture student, and the skill the evals hand to a model. */
+const READ_BY_PATH = /^(fixtures\/|apps\/cli\/plugin\/)/;
+/** The site, and the packages it bundles. */
+const REACHES_THE_SITE = /^(apps\/web\/|packages\/)/;
 
 /** Test files that load a Worker into workerd from a bundle (scripts/bundle-worker.ts), found by what they import. */
 function bundledSuites(): string[] {
@@ -45,9 +48,14 @@ function bundledSuites(): string[] {
   );
 }
 
-/** The bundled suites to run for `changed`: all of them once anything a Worker bundles changed, else none. */
-export function suitesFor(changed: readonly string[], suites: readonly string[]): string[] {
-  return changed.some((path) => REACHES_A_WORKER.test(path)) ? [...suites] : [];
+/** Which tests `changed` calls for beyond what Vitest's import graph finds. */
+export function testsFor(changed: readonly string[], suites: readonly string[]) {
+  return {
+    /** Every test, since one read a changed file by path. */
+    all: changed.some((path) => READ_BY_PATH.test(path)),
+    bundled: changed.some((path) => REACHES_A_WORKER.test(path)) ? [...suites] : [],
+    browser: changed.some((path) => REACHES_THE_SITE.test(path)),
+  };
 }
 
 function run(name: string, cmd: string, args: string[]): boolean {
@@ -65,20 +73,26 @@ function main() {
     return;
   }
   console.log(`${changed.length} files changed since ${values.base}.`);
-  const suites = suitesFor(changed, bundledSuites());
+  const tests = testsFor(changed, bundledSuites());
+  // A deleted file has nothing to format or lint; its absence still picks the tests above.
+  const present = changed.filter((path) => existsSync(join(ROOT, path)));
   const results = [
-    run("Format and lint", "vp", ["check", "--no-error-on-unmatched-pattern", ...changed]),
+    present.length === 0 ||
+      run("Format and lint", "vp", ["check", "--no-error-on-unmatched-pattern", ...present]),
     run("Typecheck", "vp", ["run", "typecheck"]),
-    run("Tests", "vp", [
-      "test",
-      "run",
-      "--changed",
-      values.base,
-      "--passWithNoTests",
-      // Run once, below, rather than again here when the import graph happens to reach one.
-      ...suites.flatMap((suite) => ["--exclude", suite]),
-    ]),
-    suites.length === 0 || run("Bundled Worker tests", "vp", ["test", "run", ...suites]),
+    tests.all
+      ? run("Tests (all: a fixture or the skill changed)", "vp", ["test", "run"])
+      : run("Tests", "vp", [
+          "test",
+          "run",
+          "--changed",
+          values.base,
+          "--passWithNoTests",
+          // Run once, below, rather than again here when the import graph happens to reach one.
+          ...tests.bundled.flatMap((suite) => ["--exclude", suite]),
+        ]) &&
+        (tests.bundled.length === 0 || run("Bundled Worker tests", "vp", ["test", "run", ...tests.bundled])),
+    !tests.browser || run("Browser tests", "vp", ["run", "test:browser"]),
     run("Unused code", "vp", ["run", "knip"]),
   ];
   if (results.includes(false)) process.exitCode = 1;

@@ -10,6 +10,12 @@ describe("brainiac/no-polling-loop-in-tests", () => {
   rule.invalid("awaiting until true", `it("syncs", async () => { while (!done()) await tick(); });`, TEST);
   rule.invalid("awaiting in the condition", `it("syncs", async () => { while (!(await done())) {} });`, TEST);
   rule.invalid("do ... while", `it("syncs", async () => { do { await tick(); } while (!done()); });`, TEST);
+  rule.invalid(
+    "for (;;)",
+    `it("syncs", async () => { for (;;) { await tick(); if (done()) break; } });`,
+    TEST,
+  );
+  rule.valid("a counted for", `it("puts", async () => { for (let i = 0; i < 3; i++) await put(i); });`, TEST);
   rule.valid("over a list", `it("syncs", async () => { for (const n of notes) await put(n); });`, TEST);
   rule.valid("a loop that doesn't await", `it("counts", () => { let i = 0; while (i < 3) i++; });`, TEST);
   rule.valid(

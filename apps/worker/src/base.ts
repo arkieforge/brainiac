@@ -105,6 +105,7 @@ import {
   markDispatched,
   migrate,
   mutate,
+  mutateAll,
   nextWake,
   overLimit,
   planOf,
@@ -278,6 +279,24 @@ export class Base extends DurableObject<Env> {
     if ("status" in ctx) return ctx;
     const before = currentSeq(this.sql);
     const result = mutate(this.sql, mutation, ctx);
+    this.changed(before);
+    return result;
+  }
+
+  /**
+   * The dev seed (dev.ts): creates `mutations` as one change, all or none, only while the record holds no notes, so
+   * it never adds to a record someone uses. One synchronous call, so two seeds at once can't interleave.
+   */
+  seedIfEmpty(
+    mutations: readonly Mutation[],
+    caller: Caller,
+  ): ReturnType<typeof mutateAll> | { readonly status: "notEmpty"; readonly notes: number } {
+    const ctx = this.context(caller);
+    if ("status" in ctx) return ctx;
+    const notes = listNotes(this.sql).length;
+    if (notes > 0) return { status: "notEmpty", notes };
+    const before = currentSeq(this.sql);
+    const result = mutateAll(this.sql, mutations, ctx);
     this.changed(before);
     return result;
   }

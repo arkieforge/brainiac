@@ -28,13 +28,12 @@ export interface SeedNote {
   readonly class: NoteClass;
 }
 
-/** What seeding needs of a person's record: the Base DO's own methods, over RPC. */
+/** What seeding needs of a person's record: the Base DO's own method, over RPC. */
 export interface SeedRecord {
-  notes(caller: { readonly actor: string }): Promise<readonly unknown[] | { readonly status: "forbidden" }>;
-  mutate(
-    mutation: { readonly op: "create" } & SeedNote,
+  seedIfEmpty(
+    mutations: readonly ({ readonly op: "create" } & SeedNote)[],
     caller: { readonly actor: string },
-  ): Promise<{ readonly status: string }>;
+  ): Promise<{ readonly status: string; readonly notes?: unknown }>;
 }
 
 /** The person, as the site speaks for them (site.ts). */
@@ -58,28 +57,27 @@ function seedNotes(body: unknown): SeedNote[] | undefined {
   return notes;
 }
 
-/** What /dev/seed answers: notes made, notes the record already held (then none are made), and any it refused. */
+/** What /dev/seed answers: the notes it made, or, when the record already held some, how many (it makes none). */
 export interface Seeded {
   readonly seeded: number;
   readonly existing: number;
-  readonly refused: readonly { readonly path: string; readonly status: string }[];
 }
 
 /**
- * Creates each note in `record` as the person, unless the record already holds notes: seeding is for a new
- * account, and never adds to one someone has been using. A note the record doesn't apply (it needs the person's
- * passkey, or doesn't parse) is reported, not forced.
+ * Creates `notes` in `record` as the person, all or none, unless the record already holds notes: seeding is for a
+ * new account, never one someone has been using. A seed the record refuses (a note that doesn't parse, or one that
+ * would take the person's passkey) answers 422 with the record's reason, and nothing is made.
  */
-async function seed(record: SeedRecord, notes: readonly SeedNote[]): Promise<Seeded> {
-  const existing = await record.notes(PERSON);
-  if ("status" in existing) throw new Error("The record refused the person's own read.");
-  if (existing.length > 0) return { seeded: 0, existing: existing.length, refused: [] };
-  const refused: { path: string; status: string }[] = [];
-  for (const note of notes) {
-    const result = await record.mutate({ op: "create", ...note }, PERSON);
-    if (result.status !== "applied") refused.push({ path: note.path, status: result.status });
-  }
-  return { seeded: notes.length - refused.length, existing: 0, refused };
+async function seed(record: SeedRecord, notes: readonly SeedNote[]): Promise<Response> {
+  const result = await record.seedIfEmpty(
+    notes.map((note) => ({ op: "create", ...note })),
+    PERSON,
+  );
+  if (result.status === "applied")
+    return Response.json({ seeded: notes.length, existing: 0 } satisfies Seeded);
+  if (result.status === "notEmpty" && typeof result.notes === "number")
+    return Response.json({ seeded: 0, existing: result.notes } satisfies Seeded);
+  return Response.json({ error: "the record refused the seed", result }, { status: 422 });
 }
 
 /** How long a dev access token for /mcp lasts. */
@@ -163,7 +161,7 @@ export async function serveDev(
   if (notes) {
     const record = await recordOf(user.id);
     if (!record) return Response.json({ error: "this account's record was deleted" }, { status: 410 });
-    return Response.json(await seed(record, notes));
+    return seed(record, notes);
   }
 
   if (mint) {
