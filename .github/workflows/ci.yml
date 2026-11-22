@@ -106,7 +106,7 @@ jobs:
   # A pr-<n> stage per PR: its own Worker, R2 bucket, queue, Neon branch and Hyperdrive. It runs beside the
   # checks rather than after them, so the preview is up as soon as possible.
   # Fork PRs get no secrets, so only same-repo PRs deploy. preview-cleanup.yml destroys it on close.
-  # One comment on the PR carries the links, edited on every push so it always names the commit it runs.
+  # One comment on the PR carries the links, edited on every deploy so it names the commit the preview runs.
   preview:
     name: Deploy preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
