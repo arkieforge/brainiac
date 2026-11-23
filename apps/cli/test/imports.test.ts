@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { callTool, connect, listNotes, migrate, mutate } from "@brainiac/base";
 import { nodeSql } from "@brainiac/base/node";
 import JSZip from "jszip";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { importSources, readSource, scanReport, type Source } from "../src/imports.ts";
 
@@ -18,14 +18,12 @@ const EXPORT = join(FIXTURES, "imports/linkedin-export");
 const CV = join(FIXTURES, "imports/cv.pdf");
 const NADIA = join(FIXTURES, "nadia");
 
+// Read once, while the file loads: the first PDF a process reads loads pdf.js, which takes 6 to 10+ s on CI's
+// Windows runner. Loading a file has no time limit; a `beforeAll` has Vitest's 10 s one.
+const cv: Source = await readSource(CV);
+
 const scratch = mkdtempSync(join(tmpdir(), "brainiac-import-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
-
-// Read once for every test: the first PDF a process reads loads pdf.js, which took 6 s on CI's Windows runner.
-let cv: Source;
-beforeAll(async () => {
-  cv = await readSource(CV);
-});
 
 /** The export as LinkedIn sends it: a zip of its CSVs. */
 async function zipped(): Promise<string> {
