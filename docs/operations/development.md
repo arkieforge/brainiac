@@ -126,8 +126,11 @@ for the server and `--stage standalone` alike.
   - Google and GitHub sign-in, the GitHub and ORCID connectors, drift checks, link snapshots and billing are off,
     as on any stage without their settings.
   - Everything is in memory: stopping the server ends every account and record, so sign in again after a restart.
-  - Connections share one PGlite session, so transactions aren't isolated from each other. Fine for one person;
-    never put it in front of anyone else.
+  - Connections share one PGlite session, so transactions aren't isolated from each other: a write can be rolled
+    back with another connection's open transaction. A connection that goes away mid-transaction has its
+    transaction rolled back. Fine for one person; never put it in front of anyone else.
+- **Checking it:** `vp run doctor --stage standalone` runs a stage's signed-out checks against it, all but HTTPS
+  and stored logs, which it has neither of.
 
 ## Reference repos
 

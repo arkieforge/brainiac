@@ -19,9 +19,10 @@ laptop's copy offline. Logic anywhere else exists on one surface only. Read
 2. **The tool** in `tools.ts`: `tool(description, schema, run)`, listed in `TOOLS`. Thin: parse, call the logic,
    map the result with `outcome`. Schemas are arktype with `"+": "reject"`, optional arguments as
    `"name?": "T | null"`, since models send null for what they leave out.
-3. **Levels.** A read connection's change answers `READ_ONLY`; at propose level a change becomes a proposal. A
-   background run is narrowed already (`inBackground`), but decide whether it may call the tool at all: `add`,
-   `import` and `organize` refuse `ctx.background` (see "Filer access" in
+3. **Levels.** A read connection's change answers `READ_ONLY`; at propose level a note change generally becomes a
+   proposal, but check the tool's own rule (`add` writes an inbox item directly; `organize` refuses propose level). A
+   background run is narrowed already (`inBackground`), but decide whether it may call the tool at all: for example
+   `add`, `import`, `organize` and `update`'s `withdraw` refuse `ctx.background` (see "Filer access" in
    [security](../../../docs/internals/security.md)).
 4. **Approvals.** Anything on [the approval list](../../../docs/internals/contract.md#4-what-always-needs-your-approval)
    answers `needsApproval` with its link (`approval` in `tools.ts`), and the retry with `approval_id` applies it

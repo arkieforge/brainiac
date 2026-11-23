@@ -16,7 +16,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { Miniflare, Response } from "miniflare";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
-import { standalone } from "../../../scripts/doctor.ts";
+import { standalone, TURNSTILE_TEST_SITE_KEY } from "../../../scripts/doctor.ts";
 import { ocrWorker } from "../../../scripts/ocr-worker.ts";
 import { typstWorker } from "../../../scripts/typst-worker.ts";
 import { servePostgres } from "./postgres.ts";
@@ -53,6 +53,8 @@ const folderAssets = <W extends { assets: { directory: string } }>({ assets, ...
 
 const origin = `http://localhost:${port}`;
 const mf = new Miniflare({
+  // Loopback only: the dev sign-in token here is public, so nothing off this machine may reach the server.
+  host: "127.0.0.1",
   port,
   workers: [
     {
@@ -89,7 +91,7 @@ const mf = new Miniflare({
         USERCONTENT_ORIGIN: `http://usercontent.localhost:${port}`,
         EMAIL_FROM: "brainiac@localhost",
         // Cloudflare's published always-pass test keys, as every non-prod stage without its own (alchemy.run.ts).
-        TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
+        TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY,
         TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
       },
     },

@@ -54,7 +54,12 @@ it("without Workers AI, installs a note's chunks without vectors and leaves a PD
     })),
   } as unknown as MessageBatch<JobMessage>;
   // OCR is never reached: a PDF's images are read only beside its text layer.
-  const env = { BASE: { idFromString: (id: string) => id, get: () => record }, OCR: {} };
+  const env = { BASE: { idFromString: (id: string) => id, get: () => record }, OCR: {}, STAGE: "standalone" };
+  // Anywhere else a missing binding is a mistake: the batch fails and retries, and nothing is installed.
+  await expect(
+    consume(batch, { ...env, STAGE: "pr-1" } as unknown as Parameters<typeof consume>[1]),
+  ).rejects.toThrow(/Workers AI/);
+  expect(acked).toEqual([]);
   await consume(batch, env as unknown as Parameters<typeof consume>[1]);
   expect(acked.toSorted()).toEqual(["note", "pdf"]);
   expect(installed).toContainEqual(["note", true, false]);

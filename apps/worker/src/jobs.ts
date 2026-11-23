@@ -46,12 +46,16 @@ export interface Models {
  */
 export async function consume(
   batch: MessageBatch<JobMessage>,
-  env: Pick<Env, "BASE" | "TREG_TOKEN" | "BROWSER"> & { readonly AI?: Models; readonly OCR: Ocr },
+  env: Pick<Env, "BASE" | "TREG_TOKEN" | "BROWSER"> &
+    Partial<Pick<Env, "STAGE">> & { readonly AI?: Models; readonly OCR: Ocr },
   /** The outside world, for lookups: a test answers in its place. */
   web: Web = fetch,
   /** Sends a record's expiry reminder email; a stage that sends no email sends nothing, and counts them sent. */
   remind: Remind = async () => {},
 ): Promise<void> {
+  // Only the standalone dev server runs without Workers AI. A deployed stage missing it fails the batch, which
+  // retries, rather than indexing without vectors and leaving PDFs unread for good.
+  if (!env.AI && env.STAGE !== "standalone") throw new Error("Workers AI isn't bound on this stage.");
   // A batch's jobs run side by side, so a re-index backlog doesn't hold a fresh upload behind it one at a time. Its
   // OCR calls go one at a time: each holds an image's bytes in the OCR Worker's memory while it waits its turn.
   const ocr = oneAtATime(env.OCR);

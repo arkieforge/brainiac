@@ -1,4 +1,5 @@
 // The standalone dev server's Postgres (postgres.ts): connections sharing one PGlite the way the Worker's pools do.
+import { once } from "node:events";
 import { connect as dial, type AddressInfo, type Socket } from "node:net";
 
 import { PGlite } from "@electric-sql/pglite";
@@ -80,7 +81,7 @@ async function raw() {
   const started = ready();
   socket.write(STARTUP);
   await started;
-  return { send: (bytes: Buffer) => socket.write(bytes), ready };
+  return { send: (bytes: Buffer) => socket.write(bytes), ready, destroy: () => socket.destroy() };
 }
 
 it("runs a connection's extended query whole, even when another's arrives in the middle of it", async () => {
@@ -111,5 +112,29 @@ it("answers another connection's query inside an open transaction, which then co
   expect(seen.rows).toEqual([{ n: 1 }]);
   expect((await b.query(`select "name" from "user" where "id" = $1`, ["user-ada"])).rows).toEqual([
     { name: "Nadia Karim" },
+  ]);
+});
+
+it("rolls back the transaction of a connection that goes away in the middle of it", async () => {
+  // The server's end of A, to know when the bridge has seen it close.
+  const accepted = once(server, "connection");
+  const a = await raw();
+  const [serverSide]: Socket[] = await accepted;
+  if (!serverSide) throw new Error("no connection");
+  const answered = a.ready();
+  a.send(message("Q", text(`begin; insert into "user" ("id", "name") values ('user-gone', 'Left mid-way')`)));
+  await answered;
+  // A cancelled request: its socket closes with the transaction open.
+  const closed = once(serverSide, "close");
+  a.destroy();
+  await closed;
+  // B commits on its own, and A's half-done write is gone.
+  const url = `postgres://postgres:postgres@127.0.0.1:${port()}/postgres`;
+  const b = new Client(url);
+  closing.push(() => b.end());
+  await b.connect();
+  await b.query(`insert into "user" ("id", "name") values ($1, $2)`, ["user-next", "Next"]);
+  expect((await b.query(`select "id" from "user" where "id" in ('user-gone', 'user-next')`)).rows).toEqual([
+    { id: "user-next" },
   ]);
 });
