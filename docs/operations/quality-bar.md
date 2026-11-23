@@ -17,15 +17,17 @@ Target, to confirm with real usage: infrastructure cost well under $0.25 per act
 
 ## Fast, with numbers
 
-| Path                                                | Target (p95)             | Checked by                                    |
-| --------------------------------------------------- | ------------------------ | --------------------------------------------- |
-| First screen (returning user)                       | < 300 ms, from IndexedDB | Playwright trace on a preview stage, every PR |
-| Edit on site → other tab / phone                    | < 300 ms                 | Sync e2e with two browsers                    |
-| Edit on site → file on a laptop                     | < 1 s                    | Sync e2e with a simulated daemon              |
-| MCP `query` / `get` / `related`, warm DO            | < 80 ms server time      | Bench in workerd (Miniflare)                  |
-| MCP `search` / `ask context`, warm                  | < 150 ms                 | Bench on the fixture and a 20k-chunk record   |
-| Same, cold DO (after hibernation, vectors reloaded) | < 600 ms                 | Bench with forced eviction                    |
-| Upload → searchable (10-page PDF)                   | < 20 s                   | Ingest test                                   |
+| Path                                                | Target (p95)             | Checked by                                            |
+| --------------------------------------------------- | ------------------------ | ----------------------------------------------------- |
+| First screen (returning user)                       | < 300 ms, from IndexedDB | Playwright trace on a preview stage, every PR         |
+| Edit on site → other tab / phone                    | < 300 ms                 | Sync e2e with two browsers                            |
+| Edit on site → file on a laptop                     | < 1 s                    | Sync e2e with a simulated daemon                      |
+| MCP `query` / `get` / `related`, warm DO            | < 80 ms server time      | `vp run bench`, on the fixture, every PR              |
+| MCP `search` / `ask context`, warm                  | < 150 ms                 | `vp run bench`, on the fixture and a 20k-chunk record |
+| Same, cold DO (after hibernation, vectors reloaded) | < 600 ms                 | `vp run bench`, the instance evicted before each call |
+| Upload → searchable (10-page PDF)                   | < 20 s                   | Ingest test                                           |
+
+`vp run bench` (`apps/worker/bench`) runs the real Base DO and jobs consumer in workerd through Miniflare and fails when a p95 is over its target. It times each MCP tool call's round trip over RPC on localhost, from Node, because workerd's clock stands still during CPU work inside the DO: an upper bound on server time, without the network to Cloudflare. Questions are embedded by a stand-in as wide as bge-m3's vectors, so a Workers AI call's own time isn't in it. Cold means the instance was aborted, so the call pays the constructor and reads storage again; Miniflare can't evict the isolate, so module load isn't in it either.
 
 ## Tests (deterministic, every PR, free)
 

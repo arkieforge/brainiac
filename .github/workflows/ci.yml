@@ -36,6 +36,9 @@ jobs:
             run: vp test run
           - name: Unused code
             run: knip
+          # p95 of the MCP paths in workerd, on the fixture and a 20k-chunk record (docs/operations/quality-bar.md).
+          - name: Bench
+            run: vp run bench
           # The site's component tests in headless Chromium (apps/web *.browser.test.tsx).
           - name: Browser tests
             run: playwright install --with-deps --only-shell chromium && vp run test:browser

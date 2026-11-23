@@ -32,9 +32,9 @@
     "apps/ocr": { "ignoreDependencies": ["@cloudflare/workers-types"] },
     // The same for the Typst Worker (scripts/typst-worker.ts).
     "apps/typst": { "ignoreDependencies": ["@cloudflare/workers-types"] },
-    // test/harness.ts is bundled into workerd by base.test.ts.
+    // test/harness.ts is bundled into workerd by base.test.ts, and bench/worker.ts by bench/bench.ts (`vp run bench`).
     "apps/worker": {
-      "entry": ["src/index.ts", "test/harness.ts"],
+      "entry": ["src/index.ts", "test/harness.ts", "bench/*.ts"],
       // Bun runs the CLI for the stdio parity test, by path from its package's binary.
       "ignoreDependencies": ["@cloudflare/workers-types", "bun"],
     },

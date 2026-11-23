@@ -5,6 +5,7 @@
   "scripts": {
     "prepare": "vp config --no-agent",
     "dev": "doppler run -- alchemy dev",
+    "bench": "node apps/worker/bench/bench.ts",
     "deploy": "doppler run -- alchemy deploy",
     "plan": "doppler run -- alchemy plan",
     "destroy": "doppler run -- alchemy destroy",

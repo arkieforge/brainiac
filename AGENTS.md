@@ -136,10 +136,13 @@ calling work done, walk this list and say which entries applied:
   with `expect.element` or `vi.waitFor`; with fake timers on, `vi.waitFor` advances them. Logic stays in node
   tests. First run on a machine: `pnpm exec playwright install --only-shell chromium`.
 - A bug fix starts with a test that fails on `main`. A bug a person sees on the site can instead get a scenario
-  in `scripts/scenarios` (a real browser on a stage, a fresh account on the fixture student's seeded record):
+  in `scripts/scenarios` (a real browser on a stage, a fresh account on the fixture student's seeded record, and
+  `agent`, a scripted MCP agent on that account, for the agent's side of a flow at no model cost):
   `vp run scenarios:prove <scenario> --at "<step>" --stage <pr-n|local>` shows it failing on `main` at that step
   and passing on the fix. Add a new scenario to `scripts/scenarios/index.ts`.
   A purely visual bug gets before/after screenshots instead.
+- A change to a record's queries, search or tools: `vp run bench` measures their p95 in workerd against the
+  [quality bar](docs/operations/quality-bar.md) and fails over a target (CI runs it).
 - `vp run doctor` when something about the environment looks wrong.
 - Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the
   [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from

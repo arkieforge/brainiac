@@ -15,6 +15,7 @@ import { parseArgs } from "node:util";
 import { chromium, type Browser } from "playwright";
 
 import { seed, signInLink } from "./dev-auth.ts";
+import { scriptedAgent } from "./scenarios/agent.ts";
 import { SCENARIOS } from "./scenarios/index.ts";
 import type { Scenario } from "./scenarios/scenario.ts";
 
@@ -48,7 +49,7 @@ async function runScenario(
   const { origin, url, token } = await signInLink(stage, { as: tag, next: scenario.next });
   // Playwright quotes the URL it was loading in errors, and CI logs are public; the link carries the token.
   const redact = (text: string) => text.replaceAll(token, "***");
-  const account = { tag };
+  const account = { tag, agent: scriptedAgent(origin, token, tag) };
 
   const context = await browser.newContext();
   const page = await context.newPage();

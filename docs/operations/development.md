@@ -21,6 +21,7 @@ links the main checkout's `.env`.
 | `vp run knip`                       | Unused files, exports and dependencies                                                              |
 | `vp run check:changed`              | CI's checks for what this branch changed; run before a push (`--base <ref>`, default `origin/main`) |
 | `vp run test:browser`               | The site's `*.browser.test.tsx` in headless Chromium                                                |
+| `vp run bench`                      | p95 of the MCP paths in workerd against the quality bar's targets; fails over a target              |
 | `vp run dev`                        | Local Worker and site on `localhost:1337` (one per machine: a second stops), your own Neon branch   |
 | `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
 | `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
