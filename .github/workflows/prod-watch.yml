@@ -1,0 +1,35 @@
+name: prod-watch
+
+# Once a day, the prod doctor and the last day's failed requests (scripts/prod-watch.ts). Each problem no open
+# prod-watch issue names is filed as a bug, so agents pick up real failures before anyone reports them. A problem
+# whose issue was closed and that comes back gets a new one.
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Watch prod
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    # The prd token, for the doctor's binding check and prod's logs; the environment only lets main use it.
+    environment: production
+    concurrency:
+      group: prod-watch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+      - run: doppler run -- node scripts/prod-watch.ts
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_PRD }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

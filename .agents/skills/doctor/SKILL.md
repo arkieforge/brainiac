@@ -26,7 +26,9 @@ Work from the logs, not from guesses. Read-only throughout: never deploy prod, n
 
 1. **Get the facts.** Which stage (`prod`, `pr-<n>`, `live_<you>`), which hostname, roughly when, what the
    person did, and the error text. "Something went wrong" from a site page ends with `ref <id>`: that is the
-   request's Cloudflare ray id. Ask for a screenshot if there isn't one.
+   request's Cloudflare ray id. Ask for a screenshot if there isn't one. An issue labelled `prod-watch` came
+   from the daily watch (`scripts/prod-watch.ts`): its refs are the requests to read, and an expected failure
+   is closed as not planned so the watch stops filing it.
 2. **Check what's deployed.** `vp run doctor --stage <stage>` probes it signed out: the Worker, the database,
    the sign-in page's Turnstile key and email form, Turnstile on sign-up, the OAuth metadata, and whether
    stored logs are readable. Then `gh run list --branch main --limit 5` (prod) or the PR's checks: did the

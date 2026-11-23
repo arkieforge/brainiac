@@ -36,6 +36,11 @@
     "description": "Run the council skill to 9.5 before filing the PR"
   },
   {
+    "name": "prod-watch",
+    "color": "b60205",
+    "description": "Filed by the daily prod watch (prod-watch.yml) from prod's doctor and logs"
+  },
+  {
     "name": "needs-info",
     "color": "d876e3",
     "description": "Waiting on the author; closes after 14 days without a reply"

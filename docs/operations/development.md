@@ -30,6 +30,7 @@ links the main checkout's `.env`.
 | `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
 | `vp run doctor`                     | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy)          |
 | `vp run logs --stage <name>`        | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                          |
+| `vp run prod-watch`                 | Prod's doctor and last day of failed requests, each new problem filed as an issue (`--dry-run`)     |
 | `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student, her record seeded (`local`, `standalone`)    |
 | `vp run dev:token --stage <name>`   | An access token for that stage's `/mcp`, as the fixture student                                     |
 | `vp run e2e --stage <name>`         | The scenarios in `scripts/scenarios` in a real browser (`--scenario`, `--headed`, `--evidence`)     |
@@ -51,7 +52,7 @@ The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then li
 | `oxlint-plugin-brainiac` | Repo-specific lint rules, each with tests                                        |
 | `evals/`                 | Model-behaviour evals ([README](../../evals/README.md))                          |
 | `infra/`                 | Infrastructure notes and, later, database migrations                             |
-| `scripts/`               | Doctor, logs, worktree setup, reference-repo sync                                |
+| `scripts/`               | Doctor, logs, prod watch, worktree setup, reference-repo sync                    |
 | `assets/`                | Brand and icon sources                                                           |
 | `.agents/skills`         | Skills for agents working on this repo (`.claude/skills` links here)             |
 | `.repos/`                | Read-only reference checkouts, gitignored                                        |
