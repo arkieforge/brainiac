@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
+import { stageOrigin, waitForWorker } from "./doctor.ts";
 import { isScenario, runScenarios, type Outcome } from "./e2e.ts";
 import { SCENARIOS } from "./scenarios/index.ts";
 
@@ -50,6 +51,8 @@ async function withBaseStage<T>(commit: string, use: (stage: string) => Promise<
     try {
       // Inside the try: a deploy that fails halfway has still made resources to destroy.
       run("vp", ["run", "deploy", "--stage", stage, "--yes", "--no-input"], dir);
+      // A first deploy's workers.dev hostname takes a few seconds to answer.
+      await waitForWorker(await stageOrigin(stage));
       return await use(stage);
     } finally {
       run("vp", ["run", "destroy", "--stage", stage, "--yes", "--no-input"], dir);
@@ -75,7 +78,7 @@ async function main() {
   const { stage, at } = values;
   if (!name || !stage || !at)
     throw new Error(
-      'Usage: vp run scenarios:prove <scenario> --at "<step that shows the bug>" --stage <stage|local> [--base origin/main]',
+      'Usage: vp run scenarios:prove <scenario> --at "<step that shows the bug>" --stage <stage|local> [--base origin/main | --base-stage <stage>]',
     );
   if (!isScenario(name))
     throw new Error(`No scenario ${name}; there are ${Object.keys(SCENARIOS).join(", ")}.`);

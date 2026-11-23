@@ -18,7 +18,9 @@ it("adds the tests an import graph can't see, by what changed", () => {
   // Read from disk by tests and evals, and imported by the browser tests.
   expect(plan("fixtures/nadia/people/dr-okafor.md")).toEqual({ ...none, all: true, browser: true });
   expect(plan("apps/cli/plugin/skills/brainiac/SKILL.md").all).toBe(true);
+  expect(plan("infra/migrations/0001_auth.sql").all).toBe(true);
   // New or changed lint rules judge every file.
   expect(plan("oxlint-plugin-brainiac/rules/no-em-dash-copy.ts").lintAll).toBe(true);
   expect(plan("vite.config.ts").lintAll).toBe(true);
+  expect(plan("pnpm-lock.yaml").lintAll).toBe(true);
 });

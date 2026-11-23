@@ -221,7 +221,7 @@ export async function stageOrigin(stage: string) {
  * run right after a preview's first deploy failed every check that came early. Wait up to a minute for /health;
  * if it never answers, the checks run anyway and say so.
  */
-async function waitForWorker(origin: string) {
+export async function waitForWorker(origin: string) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const res = await get(`${origin}/health`).catch(() => undefined);
     if (res?.ok) return;

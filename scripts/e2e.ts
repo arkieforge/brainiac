@@ -73,8 +73,12 @@ async function runScenario(
     if (!scenario.empty) await seed(origin, token, tag);
     current = "sign in with the dev link";
     await page.goto(url);
-    // The link's page posts the token and then moves on; the steps start once the session exists.
+    // The link's page posts the token and then moves on; the steps start once the session works, so a sign-in that
+    // landed signed out fails here, before the steps, and never reads as the bug a step shows.
     await page.waitForURL((at) => !at.pathname.startsWith("/dev/"));
+    const session = await page.request.get(`${origin}/api/session`);
+    if (!session.ok())
+      throw new Error(`the dev sign-in left no session (/api/session answered ${session.status()})`);
     inSteps = true;
     for (const step of scenario.steps) {
       current = step.name;

@@ -15,26 +15,32 @@ import { parseArgs } from "node:util";
 
 const ROOT = join(import.meta.dirname, "..");
 
-const git = (...args: string[]) => {
+/** git's output split on `separator`. */
+const git = (args: string[], separator = "\n") => {
   const out = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
   if (out.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${out.stderr.trim()}`);
-  return out.stdout.split("\n").filter(Boolean);
+  return out.stdout.split(separator).filter(Boolean);
 };
 
 /** Files changed since `from`, committed or not, deleted ones included. */
 function changedFiles(from: string): string[] {
-  const files = [...git("diff", "--name-only", from), ...git("ls-files", "--others", "--exclude-standard")];
+  // -z: paths come NUL-separated and unquoted, so one with spaces or non-ASCII letters still matches the rules below.
+  const files = [
+    ...git(["diff", "--name-only", "-z", from], "\0"),
+    ...git(["ls-files", "-z", "--others", "--exclude-standard"], "\0"),
+  ];
   return [...new Set(files)].toSorted();
 }
 
 /** Where a change can alter what a bundled Worker does: its app, the packages it bundles, or the bundlers. */
 const REACHES_A_WORKER = /^(apps\/(worker|ocr|typst)\/|packages\/|scripts\/(bundle|ocr|typst)-worker\.ts$)/;
-/** Files tests read from disk rather than import: the fixture student, and the skill the evals hand to a model. */
-const READ_BY_PATH = /^(fixtures\/|apps\/cli\/plugin\/)/;
+/** Files tests read from disk rather than import: the fixture student, the skill the evals hand to a model, and
+ * the shared database's migrations. */
+const READ_BY_PATH = /^(fixtures\/|apps\/cli\/plugin\/|infra\/migrations\/)/;
 /** The site, the packages it bundles, and the fixture notes its browser tests import. */
 const REACHES_THE_SITE = /^(apps\/web\/|packages\/|fixtures\/)/;
-/** The lint rules and their config, which judge files nobody changed. */
-const LINTS_EVERYTHING = /^(oxlint-plugin-brainiac\/|vite\.config\.ts$)/;
+/** The lint rules, their config and the linter's own version, which judge files nobody changed. */
+const LINTS_EVERYTHING = /^(oxlint-plugin-brainiac\/|vite\.config\.ts$|package\.json$|pnpm-lock\.yaml$)/;
 
 /** Test files that load a Worker into workerd from a bundle (scripts/bundle-worker.ts), found by what they import. */
 function bundledSuites(): string[] {
@@ -69,7 +75,7 @@ function run(name: string, cmd: string, args: string[]): boolean {
 
 function main() {
   const { values } = parseArgs({ options: { base: { type: "string", default: "origin/main" } } });
-  const [from] = git("merge-base", values.base, "HEAD");
+  const [from] = git(["merge-base", values.base, "HEAD"]);
   if (!from) throw new Error(`No merge base with ${values.base}. Fetch it first: git fetch origin main`);
   const changed = changedFiles(from);
   if (changed.length === 0) {
