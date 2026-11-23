@@ -4,7 +4,7 @@ import { connect as dial, type AddressInfo, type Socket } from "node:net";
 
 import { PGlite } from "@electric-sql/pglite";
 import { Client } from "pg";
-import { afterAll, beforeAll, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, expect, it, vi } from "vite-plus/test";
 
 import { servePostgres } from "./postgres.ts";
 
@@ -121,7 +121,13 @@ async function rawWithServerSide() {
   const connection = await raw();
   const [serverSide]: Socket[] = await accepted;
   if (!serverSide) throw new Error("no connection");
-  return { ...connection, closed: () => once(serverSide, "close") };
+  return {
+    ...connection,
+    serverSide,
+    closed: () => once(serverSide, "close"),
+    /** Resolves once the bridge has read what was sent (its own data listener runs first). */
+    received: () => once(serverSide, "data"),
+  };
 }
 
 /** Sends one simple-protocol query and waits for its ReadyForQuery. */
@@ -168,10 +174,13 @@ it("keeps a transaction when another connection that read inside it goes away", 
 
 it("runs nothing a connection had queued once it has gone away", async () => {
   const a = await rawWithServerSide();
-  // Hold the session, so A's transaction waits in the queue when A goes away.
+  // Hold the session, so A's write waits in the queue when A goes away.
   const { promise: hold, resolve: release } = Promise.withResolvers<void>();
   const held = db.runExclusive(() => hold);
-  a.send(message("Q", text(`begin; insert into "user" ("id", "name") values ('user-queued', 'Queued')`)));
+  const received = a.received();
+  // An autocommit write: had it run, no rollback could take it back.
+  a.send(message("Q", text(`insert into "user" ("id", "name") values ('user-queued', 'Queued')`)));
+  await received;
   const closed = a.closed();
   a.destroy();
   await closed;
@@ -179,5 +188,25 @@ it("runs nothing a connection had queued once it has gone away", async () => {
   await held;
   expect(await seenAfterCommit(["user-queued", "user-after-queued"], "user-after-queued")).toEqual([
     { id: "user-after-queued" },
+  ]);
+});
+
+it("finishes an extended query whose connection goes away halfway, so the next connection's write lands", async () => {
+  const a = await rawWithServerSide();
+  // A's connection goes away right after its Parse runs, before its Sync: as a reload cancelling a slow query.
+  const run = db.execProtocolRaw.bind(db);
+  const spy = vi.spyOn(db, "execProtocolRaw").mockImplementation(async (bytes, options) => {
+    const reply = await run(bytes, options);
+    if (bytes[0] === "P".charCodeAt(0)) a.serverSide.destroy();
+    return reply;
+  });
+  const closed = a.closed();
+  a.send(
+    Buffer.concat([message("P", text(""), text("select from nowhere_at_all"), int(2, 0)), message("S")]),
+  );
+  await closed;
+  spy.mockRestore();
+  expect(await seenAfterCommit(["user-after-halfway"], "user-after-halfway")).toEqual([
+    { id: "user-after-halfway" },
   ]);
 });

@@ -78,9 +78,11 @@ export function servePostgres(db: PGlite): Server {
         unit = [];
         // PGlite's own lock is first come, first served, so one connection's units still run in order.
         db.runExclusive(async () => {
+          // A connection that went away while this waited for the lock: nothing of it runs any more. Checked once per
+          // unit, never between its messages: a unit stopped before its Sync would leave the session skipping
+          // every message until one, the next connection's writes included.
+          if (socket.destroyed) return;
           for (const each of messages) {
-            // A connection that went away while this waited for the lock: nothing of it runs any more.
-            if (socket.destroyed) return;
             const reply = await db.execProtocolRaw(each);
             // A reply that ends in ReadyForQuery ("Z", length 5) carries the transaction status last: I idle,
             // T in a transaction, E in a failed one.
