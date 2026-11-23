@@ -28,6 +28,7 @@
     "eval:retrieval": "node evals/retrieval/run.ts",
     "eval:structure": "node evals/structure/run.ts",
     "logs": "node scripts/logs.ts",
+    "prod-watch": "node scripts/prod-watch.ts",
     "repos:sync": "node scripts/sync-reference-repos.ts",
     "setup": "node scripts/setup-worktree.ts"
   },

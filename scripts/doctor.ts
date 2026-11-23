@@ -244,7 +244,7 @@ export async function waitForWorker(origin: string): Promise<boolean> {
 const NOT_STANDALONE = new Set(["Plain HTTP redirects to HTTPS", "Stored logs readable (vp run logs)"]);
 const noCloudflare = () => Promise.reject(new Error("a standalone server has no Cloudflare account"));
 
-async function stageCheckList(stage: string): Promise<Check[]> {
+export async function stageCheckList(stage: string): Promise<Check[]> {
   if (stage === "standalone") {
     return stageChecks(await stageOrigin(stage), false, noCloudflare, noCloudflare).filter(
       (check) => !NOT_STANDALONE.has(check.name),
@@ -283,13 +283,24 @@ async function stageCheckList(stage: string): Promise<Check[]> {
   return stageChecks(origin, stage === "prod", readLogs, bindingNames);
 }
 
-async function main() {
-  const { values } = parseArgs({ options: { stage: { type: "string" } } });
-  let failed = 0;
-  for (const check of values.stage ? await stageCheckList(values.stage) : checks) {
+/** Runs each check in order; a result is true or how to fix it, a thrown error counting as the fix. */
+export async function runChecks(list: Check[]) {
+  const results: { check: Check; result: string | true }[] = [];
+  for (const check of list) {
     const result = await Promise.resolve()
       .then(check.run)
       .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+    results.push({ check, result });
+  }
+  return results;
+}
+
+async function main() {
+  const { values } = parseArgs({ options: { stage: { type: "string" } } });
+  let failed = 0;
+  for (const { check, result } of await runChecks(
+    values.stage ? await stageCheckList(values.stage) : checks,
+  )) {
     const ok = result === true;
     if (!ok && !check.optional) failed++;
     console.log(

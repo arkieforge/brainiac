@@ -152,6 +152,8 @@ calling work done, walk this list and say which entries applied:
   [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from
   `vp run doctor --stage <stage>` and `vp run logs --stage <stage>`. CI runs the same doctor after every
   deploy and puts it in the job summary; a `FAIL` there fails the job, and babysitting the PR picks it up.
+  Daily, `prod-watch.yml` runs it and reads prod's failed requests, filing each new problem as a
+  `prod-watch` issue (ray refs and masked paths only, never log text): a ready brief for the `doctor` skill.
 
 ## Evals
 
@@ -235,7 +237,7 @@ files. Details: [Architecture](docs/internals/architecture.md), [Sync engine](do
 - `apps/extension`: the Chrome extension. Its id is pinned by the manifest's `key`; the site trusts that one
   origin (`EXTENSION_ORIGIN`) for the fill routes only.
 - `packages/*`: shared code, added by the issues that need it.
-- `oxlint-plugin-brainiac/`: repo lint rules, each with tests. `scripts/`: doctor, setup, repo sync.
+- `oxlint-plugin-brainiac/`: repo lint rules, each with tests. `scripts/`: doctor, prod watch, setup, repo sync.
 - `.repos/`: read-only library source for reference (`vp run repos:sync`). Never import from it.
 - [docs/](docs/README.md): product, internals, operations. The tracker is GitHub issues by milestone.
 

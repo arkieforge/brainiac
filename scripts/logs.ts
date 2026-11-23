@@ -155,7 +155,7 @@ export async function cloudflare(path: string, token: string, init: RequestInit 
   return body.result;
 }
 
-async function stored(
+export async function stored(
   accountId: string,
   token: string,
   script: string,
