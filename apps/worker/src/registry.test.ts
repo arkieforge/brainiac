@@ -23,7 +23,7 @@ beforeEach(async () => {
     await db.exec(readFileSync(join(MIGRATIONS, file), "utf8"));
   }
   await db.query(
-    `insert into "user" ("id", "name", "email", "emailVerified") values ($1, 'Ada Okafor', 'ada.okafor@example.edu', true), ($2, 'Ada Okafor', 'ada.okafor+other@example.edu', true)`,
+    `insert into "user" ("id", "name", "email", "emailVerified") values ($1, 'Nadia Karim', 'nadia.karim@example.edu', true), ($2, 'Nadia Karim', 'nadia.karim+other@example.edu', true)`,
     [ADA, OTHER],
   );
 });

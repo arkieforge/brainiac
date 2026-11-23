@@ -47,6 +47,14 @@ async function create(base: DurableObjectStub<TestBase>) {
   return result;
 }
 
+/** A create of the fixture note at `path`, placed at `at`. */
+const fixture = (path: string, at = path) => ({
+  op: "create" as const,
+  path: at,
+  raw: readFileSync(join(FIXTURES, path), "utf8"),
+  class: "normal" as const,
+});
+
 describe("Base DO", () => {
   it("a record from before a migration arms its alarm for what the migration added the first time it wakes", async () => {
     const base = await record("migrated");
@@ -117,6 +125,17 @@ describe("Base DO", () => {
     expect(await installed).toBe("installed");
     expect(await base.find(agent, "email")).toEqual([noteId]);
     expect(await base.find(agent, "okafor")).toEqual([]);
+  });
+
+  it("seeds a new record all or none, once, and never one that holds notes", async () => {
+    const base = await record("seed");
+    // One note the record refuses (a path outside the record) and nothing is made, not even the good one.
+    expect(
+      (await base().seedIfEmpty([fixture(PAPER), fixture(PROFILE, "../out.md")], human)).status,
+    ).not.toBe("applied");
+    expect(await base().notes(human)).toEqual([]);
+    expect((await base().seedIfEmpty([fixture(PAPER), fixture(PROFILE)], human)).status).toBe("applied");
+    expect(await base().seedIfEmpty([fixture(TUM)], human)).toEqual({ status: "notEmpty", notes: 2 });
   });
 
   it("undoes a run through the DO", async () => {

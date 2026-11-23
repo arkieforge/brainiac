@@ -61,8 +61,9 @@ runs:
         doppler run -- node scripts/doctor.ts --stage "$STAGE" 2>&1 | tee doctor.log || status=$?
         { echo "### Doctor"; echo '```'; cat doctor.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
         exit $status
-    # Signs in through the real pages with no person: the dev sign-in link, then real passkey ceremonies on
-    # Chrome's virtual authenticator (scripts/e2e.ts).
+    # The scenarios (scripts/scenarios) through the real pages with no person: a fresh dev sign-in account per
+    # scenario, its record seeded with the fixture student's notes, and Chrome's virtual authenticator for its
+    # passkey ceremonies (scripts/e2e.ts).
     - if: inputs.e2e == 'true'
       shell: bash
       env:

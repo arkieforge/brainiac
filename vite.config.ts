@@ -17,7 +17,8 @@ const IGNORED = [
 export default defineConfig({
   test: {
     environment: "node",
-    exclude: IGNORED,
+    // Browser tests run in Chromium from apps/web's own config (`vp run test:browser`), never in node.
+    exclude: [...IGNORED, "**/*.browser.test.{ts,tsx}"],
     allowOnly: !process.env.CI,
     // Flaky tests are fixed, not retried.
     retry: 0,
@@ -38,6 +39,9 @@ export default defineConfig({
     rules: {
       "brainiac/no-cross-app-import": "error",
       "brainiac/no-em-dash-copy": "error",
+      "brainiac/no-polling-loop-in-tests": "error",
+      "brainiac/no-real-time-in-tests": "error",
+      "brainiac/no-test-timeout-or-retry": "error",
       "brainiac/no-unreasoned-skip": "error",
     },
     overrides: [

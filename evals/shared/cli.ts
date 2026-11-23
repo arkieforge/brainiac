@@ -68,20 +68,21 @@ export function readBaseline(file: string): Map<string, number> {
 
 const percent = (rate: number) => `${Math.round(rate * 100)}%`;
 
+/** Each tool's description and input schema, as every agent's tool list carries them, by `tool <name>`. */
+export const toolTexts = () =>
+  Object.fromEntries(
+    Object.entries(TOOLS).map(([name, tool]) => [
+      `tool ${name}`,
+      tool.description + JSON.stringify(tool.input.toJsonSchema()),
+    ]),
+  );
+
 /**
  * `--context`: how much of what the model sees is Brainiac's, by part, so a wording change shows its cost. Tokens
  * are estimated at 4 characters each; no model is called to count them.
  */
 export function context(parts: Readonly<Record<string, string>>) {
-  const all = {
-    ...Object.fromEntries(
-      Object.entries(TOOLS).map(([name, tool]) => [
-        `tool ${name}`,
-        tool.description + JSON.stringify(tool.input.toJsonSchema()),
-      ]),
-    ),
-    ...parts,
-  };
+  const all = { ...toolTexts(), ...parts };
   for (const [part, text] of Object.entries(all))
     console.log(`${part}: ${text.length} chars, ~${Math.ceil(text.length / 4)} tokens`);
   const chars = Object.values(all).reduce((sum, text) => sum + text.length, 0);

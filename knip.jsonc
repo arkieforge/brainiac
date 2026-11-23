@@ -22,8 +22,12 @@
     "packages/render": { "ignoreDependencies": ["vite"] },
     // Chrome's types are loaded through tsconfig "types".
     "apps/extension": { "ignoreDependencies": ["@types/chrome"] },
-    // TanStack Start loads its routes by file name.
-    "apps/web": { "entry": ["src/routes/**/*.tsx"] },
+    // TanStack Start loads its routes by file name. The browser test provider is imported through vite-plus's
+    // re-export (vite-plus/test/browser-playwright), with playwright as its peer.
+    "apps/web": {
+      "entry": ["src/routes/**/*.tsx"],
+      "ignoreDependencies": ["@vitest/browser-playwright", "playwright"],
+    },
     // workers-types is loaded through tsconfig "types"; tests start the Worker through scripts/ocr-worker.ts.
     "apps/ocr": { "ignoreDependencies": ["@cloudflare/workers-types"] },
     // The same for the Typst Worker (scripts/typst-worker.ts).

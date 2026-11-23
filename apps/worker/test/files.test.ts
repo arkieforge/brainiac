@@ -150,7 +150,7 @@ describe("files", () => {
 
   it("keeps the uploader's filename for the person, and opens the file from its sidecar note", async () => {
     // A fictional student id in the name, as a real one might print a passport number.
-    const name = "Ada Okafor transcript 2019331001.pdf";
+    const name = "Nadia Karim transcript 2019331001.pdf";
     const res = await mf.dispatchFetch(`${SITE}/api/files`, {
       method: "POST",
       headers: {

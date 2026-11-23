@@ -34,7 +34,7 @@ import { createAuthenticator } from "./test-authenticator.ts";
 
 const ORIGIN = "https://brainiac.test";
 // The fixture student (fictional).
-const EMAIL = "ada.okafor@example.edu";
+const EMAIL = "nadia.karim@example.edu";
 
 /** The WebAuthn challenge from a ceremony's options. */
 const challenge = (body: unknown) => {

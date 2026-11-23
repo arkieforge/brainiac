@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createAuth, type AuthConfig } from "./auth/config.ts";
-import { FIXTURE_STUDENT, serveDev } from "./dev.ts";
+import { FIXTURE_STUDENT, serveDev, type SeedRecord } from "./dev.ts";
 import { serveMcp } from "./mcp/handler.ts";
 
 const ORIGIN = "https://brainiac.test";
@@ -14,7 +17,24 @@ const landsOn = async (res: Response) => {
   return body && typeof body === "object" && "location" in body ? body.location : undefined;
 };
 
-function setup() {
+type SeedAnswer = Awaited<ReturnType<SeedRecord["seedIfEmpty"]>>;
+
+/**
+ * A record that answers every seed with `answer` and keeps what it was asked. The real seedIfEmpty (all or none, only
+ * while empty) is tested on the Base DO in workerd (test/base.test.ts); this tests the route around it.
+ */
+function stubRecord(answer: SeedAnswer) {
+  const asked: Parameters<SeedRecord["seedIfEmpty"]>[] = [];
+  const record: SeedRecord = {
+    seedIfEmpty: async (...args) => {
+      asked.push(args);
+      return answer;
+    },
+  };
+  return { record, asked };
+}
+
+function setup(answer: SeedAnswer = { status: "applied" }) {
   const config: AuthConfig = {
     database: memoryAdapter({
       user: [],
@@ -33,6 +53,13 @@ function setup() {
     sendEmail: async () => {},
   };
   const auth = createAuth(config);
+  /** Each person's record by user id, made on first use like the base registry's. */
+  const bases = new Map<string, ReturnType<typeof stubRecord>>();
+  const recordOf = async (userId: string) => {
+    const base = bases.get(userId) ?? stubRecord(answer);
+    bases.set(userId, base);
+    return base.record;
+  };
   /** What the sign-in page does with the link: POST its query, the fragment's token in the header. */
   const signIn = (query: string, token = TOKEN) =>
     serveDev(
@@ -42,6 +69,7 @@ function setup() {
       }),
       config,
       TOKEN,
+      recordOf,
     );
   /** Who the cookie from a sign-in belongs to, as the real auth handler sees it. */
   const whoIs = async (res: Response) => {
@@ -49,7 +77,7 @@ function setup() {
     const session = await auth.api.getSession({ headers: new Headers({ cookie }) });
     return session?.user.email;
   };
-  return { config, auth, signIn, whoIs };
+  return { config, auth, signIn, whoIs, bases, recordOf };
 }
 
 describe("dev sign-in", () => {
@@ -65,9 +93,9 @@ describe("dev sign-in", () => {
   });
 
   it("serves the link's page without the token, and nothing without the right one", async () => {
-    const { config, signIn } = setup();
+    const { config, signIn, recordOf } = setup();
     // The token stays in the link's fragment, so the page itself needs none and sets nothing.
-    const page = await serveDev(new Request(`${ORIGIN}/dev/sign-in?as=x`), config, TOKEN);
+    const page = await serveDev(new Request(`${ORIGIN}/dev/sign-in?as=x`), config, TOKEN, recordOf);
     expect(page.status).toBe(200);
     expect(page.headers.get("set-cookie")).toBeNull();
     for (const token of ["", "wrong", `${TOKEN}x`]) {
@@ -79,7 +107,7 @@ describe("dev sign-in", () => {
 
   it("makes a separate fixture account per tag, and refuses tags that aren't plain", async () => {
     const { signIn, whoIs } = setup();
-    expect(await whoIs(await signIn("as=e2e-1"))).toBe("ada.okafor+e2e-1@example.edu");
+    expect(await whoIs(await signIn("as=e2e-1"))).toBe("nadia.karim+e2e-1@example.edu");
     expect((await signIn(`as=${encodeURIComponent("x@evil.example")}`)).status).toBe(404);
   });
 
@@ -99,8 +127,15 @@ describe("dev sign-in", () => {
   });
 });
 
+const noRecord = async () => undefined;
+
 const mint = (config: AuthConfig, authorization: string) =>
-  serveDev(new Request(`${ORIGIN}/dev/token`, { method: "POST", headers: { authorization } }), config, TOKEN);
+  serveDev(
+    new Request(`${ORIGIN}/dev/token`, { method: "POST", headers: { authorization } }),
+    config,
+    TOKEN,
+    noRecord,
+  );
 
 // initialize calls no tool, so the record is never asked anything.
 const unused = () => Promise.reject(new Error("initialize reaches no record"));
@@ -110,7 +145,7 @@ describe("dev token", () => {
     const { config, auth } = setup();
     expect((await mint(config, "Bearer wrong")).status).toBe(404);
     const get = new Request(`${ORIGIN}/dev/token`, { headers: { authorization: `Bearer ${TOKEN}` } });
-    expect((await serveDev(get, config, TOKEN)).status).toBe(404);
+    expect((await serveDev(get, config, TOKEN, noRecord)).status).toBe(404);
     const res = await mint(config, `Bearer ${TOKEN}`);
     expect(res.status).toBe(200);
     const body: unknown = await res.json();
@@ -144,5 +179,58 @@ describe("dev token", () => {
     expect((await initialize(true)).status).toBe(200);
     // No consent stands behind a dev token, so where dev tokens aren't taken (prod) it is refused.
     expect((await initialize(false)).status).toBe(401);
+  });
+});
+
+/** A fixture note, at `path` or where the fixture keeps it. */
+const note = (from: string, path = from) => ({
+  path,
+  raw: readFileSync(join(import.meta.dirname, "../../../fixtures/nadia", from), "utf8"),
+  class: "normal",
+});
+const ROLE = "facts/roles/acme-intern-2025.md";
+const PERSON = "people/dr-okafor.md";
+
+/** A /dev/seed request with `body`, as scripts/dev-auth.ts sends it. */
+const seedRequest = (body: unknown, authorization = `Bearer ${TOKEN}`, query = "") =>
+  new Request(`${ORIGIN}/dev/seed${query}`, {
+    method: "POST",
+    headers: { authorization },
+    body: JSON.stringify(body),
+  });
+
+describe("dev seed", () => {
+  it("hands the notes to the account's own record as creates by the person", async () => {
+    const { config, bases, recordOf } = setup();
+    const seed = (...args: Parameters<typeof seedRequest>) =>
+      serveDev(seedRequest(...args), config, TOKEN, recordOf);
+    const notes = [note(ROLE), note(PERSON)];
+
+    expect((await seed({ notes }, "Bearer wrong")).status).toBe(404);
+    expect((await seed({ notes: [{ path: "x.md", raw: 1, class: "normal" }] })).status).toBe(400);
+    expect(bases.size).toBe(0);
+
+    expect(await (await seed({ notes })).json()).toEqual({ seeded: 2, existing: 0 });
+    const [base] = bases.values();
+    expect(base?.asked).toEqual([[notes.map((n) => ({ op: "create", ...n })), { actor: "human" }]]);
+    // A tagged account gets a record of its own.
+    await seed({ notes }, `Bearer ${TOKEN}`, "?as=e2e-1");
+    expect(bases.size).toBe(2);
+  });
+
+  it("says how many notes a used record already held, and passes on a refusal", async () => {
+    const used = setup({ status: "notEmpty", notes: 3 });
+    const kept = await serveDev(seedRequest({ notes: [note(ROLE)] }), used.config, TOKEN, used.recordOf);
+    expect(await kept.json()).toEqual({ seeded: 0, existing: 3 });
+
+    const refusing = setup({ status: "invalid" });
+    const refused = await serveDev(
+      seedRequest({ notes: [note(ROLE)] }),
+      refusing.config,
+      TOKEN,
+      refusing.recordOf,
+    );
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toMatchObject({ result: { status: "invalid" } });
   });
 });

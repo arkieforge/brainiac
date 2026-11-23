@@ -1,0 +1,46 @@
+name: context-budget
+
+# Fails a PR that raises the context every agent session loads from Brainiac (each tool's description and schema,
+# and the agent skill) above main's. evals/context-budget.json holds it, and evals/shared/context-budget.test.ts
+# keeps that file equal to what the code measures, so the number can't be edited down. To accept growth on
+# purpose, a maintainer adds the context-increase label.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  budget:
+    name: Context budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    env:
+      BUDGET: evals/context-budget.json
+      ALLOW_INCREASE: ${{ contains(github.event.pull_request.labels.*.name, 'context-increase') }}
+    steps:
+      # The checkout is the PR merged onto main, so its first parent is main as the PR would land on it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: evals/context-budget.json
+          sparse-checkout-cone-mode: false
+      - run: |
+          main=$(git show "HEAD^1:$BUDGET" 2>/dev/null || true)
+          if [ -z "$main" ]; then echo "main has no context budget yet."; exit 0; fi
+          # -e fails the job on a total that isn't a number, rather than letting the comparison below error past it.
+          was=$(jq -e '.total | numbers' <<<"$main")
+          now=$(jq -e '.total | numbers' "$BUDGET")
+          echo "Context every agent session loads: main $was chars, this PR $now chars."
+          # Each part that changed, so the reviewer sees where the growth is.
+          jq -r -n --argjson a "$main" --slurpfile b "$BUDGET" '
+            ($a.parts + $b[0].parts | keys[]) as $k
+            | select($a.parts[$k] != $b[0].parts[$k])
+            | "  \($k): \($a.parts[$k] // 0) -> \($b[0].parts[$k] // 0)"'
+          if [ "$now" -gt "$was" ]; then
+            if [ "$ALLOW_INCREASE" = "true" ]; then echo "Grows by $((now - was)) chars, accepted by the context-increase label."; exit 0; fi
+            echo "::error::This PR adds $((now - was)) chars to what every agent loads. Cut it, or have a maintainer add the context-increase label."
+            exit 1
+          fi
