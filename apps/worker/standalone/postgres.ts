@@ -31,15 +31,23 @@ const ROLLBACK = (() => {
  * every later query on every connection would run inside it.
  */
 export function servePostgres(db: PGlite): Server {
-  /** The connection whose transaction is open, if any: the last whose reply ended "in a transaction". */
+  /**
+   * The connection whose transaction is open, if any: the one whose reply first left the session in a transaction.
+   * Others' queries inside it (Better Auth's second connection) don't take it over; the session going idle ends it.
+   */
   let owner: Socket | undefined;
   return createServer((socket) => {
+    // Under the lock, behind anything this connection still had queued (which is skipped, the socket being gone),
+    // so the owner checked is the one its last unit left. A Query message, since PGlite's exec() takes the lock
+    // itself and would wait on this very hold.
     socket.on("close", () => {
-      if (owner !== socket) return;
-      owner = undefined;
-      // As a Query message under the same lock the connections' messages take; PGlite's exec() takes that lock
-      // itself, so calling it here would wait on this very hold.
-      void db.runExclusive(() => db.execProtocolRaw(ROLLBACK)).catch(() => {});
+      void db
+        .runExclusive(async () => {
+          if (owner !== socket) return;
+          owner = undefined;
+          await db.execProtocolRaw(ROLLBACK);
+        })
+        .catch(() => {});
     });
     let started = false;
     let buffered = Buffer.alloc(0);
@@ -71,14 +79,15 @@ export function servePostgres(db: PGlite): Server {
         // PGlite's own lock is first come, first served, so one connection's units still run in order.
         db.runExclusive(async () => {
           for (const each of messages) {
+            // A connection that went away while this waited for the lock: nothing of it runs any more.
+            if (socket.destroyed) return;
             const reply = await db.execProtocolRaw(each);
             // A reply that ends in ReadyForQuery ("Z", length 5) carries the transaction status last: I idle,
             // T in a transaction, E in a failed one.
             if (reply.length >= 6 && reply[reply.length - 6] === READY) {
               const status = reply[reply.length - 1];
-              if (status === IDLE) {
-                if (owner === socket) owner = undefined;
-              } else owner = socket;
+              if (status === IDLE) owner = undefined;
+              else owner ??= socket;
             }
             socket.write(reply);
           }

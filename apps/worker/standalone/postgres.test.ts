@@ -115,26 +115,69 @@ it("answers another connection's query inside an open transaction, which then co
   ]);
 });
 
-it("rolls back the transaction of a connection that goes away in the middle of it", async () => {
-  // The server's end of A, to know when the bridge has seen it close.
+/** A raw connection and the server's end of it, to know when the bridge has seen it close. */
+async function rawWithServerSide() {
   const accepted = once(server, "connection");
-  const a = await raw();
+  const connection = await raw();
   const [serverSide]: Socket[] = await accepted;
   if (!serverSide) throw new Error("no connection");
-  const answered = a.ready();
-  a.send(message("Q", text(`begin; insert into "user" ("id", "name") values ('user-gone', 'Left mid-way')`)));
-  await answered;
-  // A cancelled request: its socket closes with the transaction open.
-  const closed = once(serverSide, "close");
-  a.destroy();
-  await closed;
-  // B commits on its own, and A's half-done write is gone.
-  const url = `postgres://postgres:postgres@127.0.0.1:${port()}/postgres`;
-  const b = new Client(url);
+  return { ...connection, closed: () => once(serverSide, "close") };
+}
+
+/** Sends one simple-protocol query and waits for its ReadyForQuery. */
+async function query(connection: Awaited<ReturnType<typeof raw>>, sql: string) {
+  const answered = connection.ready();
+  connection.send(message("Q", text(sql)));
+  return answered;
+}
+
+/** A pg client that commits on its own, and the ids of `ids` it then sees. */
+async function seenAfterCommit(ids: readonly string[], insert: string) {
+  const b = new Client(`postgres://postgres:postgres@127.0.0.1:${port()}/postgres`);
   closing.push(() => b.end());
   await b.connect();
-  await b.query(`insert into "user" ("id", "name") values ($1, $2)`, ["user-next", "Next"]);
-  expect((await b.query(`select "id" from "user" where "id" in ('user-gone', 'user-next')`)).rows).toEqual([
-    { id: "user-next" },
+  await b.query(`insert into "user" ("id", "name") values ($1, 'Next')`, [insert]);
+  const list = ids.map((id) => `'${id}'`).join(", ");
+  return (await b.query(`select "id" from "user" where "id" in (${list}) order by "id"`)).rows;
+}
+
+it("rolls back the transaction of a connection that goes away in the middle of it, whoever read inside it", async () => {
+  const a = await rawWithServerSide();
+  await query(a, `begin; insert into "user" ("id", "name") values ('user-gone', 'Left mid-way')`);
+  // Another connection's query inside A's transaction, as Better Auth's second connection does: A still owns it.
+  const reader = await raw();
+  await query(reader, "select 1");
+  // A cancelled request: its socket closes with the transaction open.
+  const closed = a.closed();
+  a.destroy();
+  await closed;
+  expect(await seenAfterCommit(["user-gone", "user-next"], "user-next")).toEqual([{ id: "user-next" }]);
+});
+
+it("keeps a transaction when another connection that read inside it goes away", async () => {
+  const a = await raw();
+  await query(a, `begin; insert into "user" ("id", "name") values ('user-kept', 'Kept')`);
+  const reader = await rawWithServerSide();
+  await query(reader, "select 1");
+  const closed = reader.closed();
+  reader.destroy();
+  await closed;
+  await query(a, "commit");
+  expect(await seenAfterCommit(["user-kept"], "user-after-kept")).toEqual([{ id: "user-kept" }]);
+});
+
+it("runs nothing a connection had queued once it has gone away", async () => {
+  const a = await rawWithServerSide();
+  // Hold the session, so A's transaction waits in the queue when A goes away.
+  const { promise: hold, resolve: release } = Promise.withResolvers<void>();
+  const held = db.runExclusive(() => hold);
+  a.send(message("Q", text(`begin; insert into "user" ("id", "name") values ('user-queued', 'Queued')`)));
+  const closed = a.closed();
+  a.destroy();
+  await closed;
+  release();
+  await held;
+  expect(await seenAfterCommit(["user-queued", "user-after-queued"], "user-after-queued")).toEqual([
+    { id: "user-after-queued" },
   ]);
 });
