@@ -46,7 +46,7 @@ export interface Models {
  */
 export async function consume(
   batch: MessageBatch<JobMessage>,
-  env: Pick<Env, "BASE" | "TREG_TOKEN" | "BROWSER"> & { readonly AI: Models; readonly OCR: Ocr },
+  env: Pick<Env, "BASE" | "TREG_TOKEN" | "BROWSER"> & { readonly AI?: Models; readonly OCR: Ocr },
   /** The outside world, for lookups: a test answers in its place. */
   web: Web = fetch,
   /** Sends a record's expiry reminder email; a stage that sends no email sends nothing, and counts them sent. */
@@ -108,7 +108,11 @@ export async function consume(
  * photo and a PDF's JPEGs for the checks and the MRZ parse only (`ocr`): a photo gets no pages, so it stays unread,
  * and a PDF with an image stays unread by `pdfHidesText` whatever OCR found in it. Anything else is unread.
  */
-async function extract(ai: Models, ocr: Ocr, file: Extract<JobWork, { kind: "file" }>): Promise<Extracted> {
+async function extract(
+  ai: Models | undefined,
+  ocr: Ocr,
+  file: Extract<JobWork, { kind: "file" }>,
+): Promise<Extracted> {
   if (isImage(file.mime)) {
     const reading = await ocr.read(file.bytes);
     return { text: undefined, pages: undefined, ...(reading && { ocr: [reading] }) };
@@ -117,6 +121,8 @@ async function extract(ai: Models, ocr: Ocr, file: Extract<JobWork, { kind: "fil
     const text = readText(file.bytes, file.mime);
     return { text, pages: text === undefined ? undefined : [text] };
   }
+  // Without Workers AI nothing reads a PDF's text layer, so it stays unread, as one it can't convert does.
+  if (!ai) return { text: undefined, pages: undefined };
   const result = await ai.toMarkdown(
     // Named by its id, never the person's filename.
     { name: `${file.sha256.slice(0, 16)}.pdf`, blob: new Blob([file.bytes], { type: "application/pdf" }) },
@@ -154,12 +160,16 @@ function oneAtATime(ocr: Ocr): Ocr {
 // Workers AI takes up to 100 texts per bge-m3 call.
 const BATCH = 100;
 
-/** One int8 vector per chunk, in order: the header and text together, as search will match them. */
+/**
+ * One int8 vector per chunk, in order: the header and text together, as search will match them. None without
+ * Workers AI: the chunks install without vectors, and search over them is keyword only.
+ */
 async function embed(
-  ai: Models,
+  ai: Models | undefined,
   chunks: readonly Pick<ChunkInput, "header" | "text">[],
 ): Promise<Uint8Array[]> {
   const vectors: Uint8Array[] = [];
+  if (!ai) return vectors;
   for (let i = 0; i < chunks.length; i += BATCH) {
     const text = chunks.slice(i, i + BATCH).map((chunk) => `${chunk.header}\n${chunk.text}`);
     // Too long for the model is cut, not refused: the chunk's text is still searchable whole by keyword.

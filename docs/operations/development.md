@@ -6,7 +6,8 @@
 2. `vp i` installs dependencies (pnpm 12 underneath) and `prepare` installs the git hooks.
 3. `vp run doctor` checks your machine and tells you what's missing.
 4. Optional: `vp run repos:sync` clones the reference repos into `.repos/` (see below).
-5. Secrets: set up Doppler for this folder (see [Secrets](#secrets)).
+5. Secrets: set up Doppler for this folder (see [Secrets](#secrets)). Without them, the tests and
+   [`vp run dev:standalone`](#standalone-dev) still run.
 
 In a T3 Code worktree, `t3.json` runs `scripts/setup-worktree.ts` on creation, which does steps 2 and 4 and
 links the main checkout's `.env`.
@@ -23,12 +24,13 @@ links the main checkout's `.env`.
 | `vp run test:browser`               | The site's `*.browser.test.tsx` in headless Chromium                                                |
 | `vp run bench`                      | p95 of the MCP paths in workerd against the quality bar's targets; fails over a target              |
 | `vp run dev`                        | Local Worker and site on `localhost:1337` (one per machine: a second stops), your own Neon branch   |
+| `vp run dev:standalone`             | The same on `localhost:1341` with no accounts or secrets, all in memory ([below](#standalone-dev))  |
 | `vp run plan --stage <name>`        | What a deploy would change, without applying it                                                     |
 | `vp run deploy --stage <name>`      | Deploy a stage (defaults to `live_$USER`; never `prod` from a laptop)                               |
 | `vp run destroy --stage <name>`     | Tear down a stage, Neon branch included                                                             |
 | `vp run doctor`                     | Environment check; `--stage <name>` probes a deployed stage (CI runs it after each deploy)          |
 | `vp run logs --stage <name>`        | A deployed stage's failed requests (`--ray <ref>`, `--since 2h`, `--tail`)                          |
-| `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student, her record seeded (`--stage local` for dev)  |
+| `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student, her record seeded (`local`, `standalone`)    |
 | `vp run dev:token --stage <name>`   | An access token for that stage's `/mcp`, as the fixture student                                     |
 | `vp run e2e --stage <name>`         | The scenarios in `scripts/scenarios` in a real browser (`--scenario`, `--headed`, `--evidence`)     |
 | `vp run scenarios:prove <scenario>` | Shows a scenario failing on `main` at `--at <step>` and passing on `--stage <name>`: a fix's proof  |
@@ -103,6 +105,29 @@ The token rides in the link's `#fragment`, which the browser never sends, so req
 page drops it from the address bar. Your browser's own history may still keep the link, so treat it like a password and never paste one into an issue, PR or chat. Prod has none: the
 token is never bound there, the Worker refuses `/dev/` on prod anyway, and the deploy doctor fails if the prod
 Worker ever has it bound.
+
+## Standalone dev
+
+`vp run dev:standalone` runs the real Worker and site on `http://localhost:1341` with no Doppler, no Cloudflare
+account and no Neon branch, for a contributor or a cloud agent without our secrets. Miniflare runs the Worker's own
+bundle with local bindings (`apps/worker/standalone/standalone.ts`), and Neon is an in-memory PGlite with
+`infra/migrations` applied, which the Hyperdrive binding reaches over Postgres's protocol. `BRAINIAC_PORT` moves it,
+for the server and `--stage standalone` alike.
+
+- **Signing in:** `vp run dev:sign-in --stage standalone`, `dev:token` and `vp run e2e --stage standalone` work
+  as [above](#signing-in-while-you-work). Its token is fixed and public (`standalone` in `scripts/doctor.ts`):
+  the server listens on loopback only and holds nothing but fixture data.
+- **The same as a stage:** the record, sync, `/mcp`, passkeys and approvals, uploads to R2 and the vault, the jobs
+  queue, and OCR and Typst, whose Workers run locally too.
+- **Different:**
+  - Search is keyword only, and an uploaded PDF stays unread: Workers AI has no local stand-in.
+  - Email codes and notices print to the server's console instead of sending. Asking for a code needs the
+    network, for Turnstile's test keys.
+  - Google and GitHub sign-in, the GitHub and ORCID connectors, drift checks, link snapshots and billing are off,
+    as on any stage without their settings.
+  - Everything is in memory: stopping the server ends every account and record, so sign in again after a restart.
+  - Connections share one PGlite session, so transactions aren't isolated from each other. Fine for one person;
+    never put it in front of anyone else.
 
 ## Reference repos
 

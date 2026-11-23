@@ -531,7 +531,7 @@ export class Base extends DurableObject<Env> {
   }
 
   /** Workers AI, for questions' embeddings (the jobs consumer embeds chunks with its own). */
-  protected models(): Pick<Models, "run"> {
+  protected models(): Pick<Models, "run"> | undefined {
     return this.env.AI;
   }
 
@@ -544,8 +544,8 @@ export class Base extends DurableObject<Env> {
     const embedded = this.sql.all("SELECT 1 FROM vectors WHERE model = ? LIMIT 1", EMBED_MODEL);
     if (embedded.length === 0) return undefined;
     try {
-      const { data } = await this.models().run(EMBED_MODEL, { text: [text], truncate_inputs: true });
-      return data?.[0];
+      const answer = await this.models()?.run(EMBED_MODEL, { text: [text], truncate_inputs: true });
+      return answer?.data?.[0];
     } catch (error) {
       console.error("question embedding failed", error);
       return undefined;

@@ -1,4 +1,4 @@
-import { build } from "vite-plus";
+import { build, defaultClientConditions } from "vite-plus";
 
 /**
  * Bundles a Worker entry into one ES module, as a deploy would, so tests can load it into workerd with
@@ -15,7 +15,12 @@ export async function bundleWorker(entry: string): Promise<string> {
       // Wasm stays an import: workerd takes it as its own module, compiled (scripts/ocr-worker.ts).
       rolldownOptions: { external: [/^node:/, /^cloudflare:/, /\.wasm$/] },
     },
-    ssr: { noExternal: true, target: "webworker" },
+    // `workerd` picks a package's Workers build, as a deploy does: pg's sockets are an empty stub without it.
+    ssr: {
+      noExternal: true,
+      target: "webworker",
+      resolve: { conditions: ["workerd", ...defaultClientConditions] },
+    },
   });
   const [result] = Array.isArray(output) ? output : [output];
   const chunk = result && "output" in result ? result.output[0] : undefined;
