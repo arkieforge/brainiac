@@ -26,7 +26,8 @@ const git = (args: string[], separator = "\n") => {
 function changedFiles(from: string): string[] {
   // -z: paths come NUL-separated and unquoted, so one with spaces or non-ASCII letters still matches the rules below.
   const files = [
-    ...git(["diff", "--name-only", "-z", from], "\0"),
+    // --no-renames: a moved file counts at both paths, so moving one out of a watched folder still picks its tests.
+    ...git(["diff", "--name-only", "--no-renames", "-z", from], "\0"),
     ...git(["ls-files", "-z", "--others", "--exclude-standard"], "\0"),
   ];
   return [...new Set(files)].toSorted();
@@ -93,7 +94,7 @@ function main() {
         run("Format and lint", "vp", ["check", "--no-error-on-unmatched-pattern", ...present]),
     run("Typecheck", "vp", ["run", "typecheck"]),
     tests.all
-      ? run("Tests (all: a fixture or the skill changed)", "vp", ["test", "run"])
+      ? run("Tests (all: a file tests read from disk changed)", "vp", ["test", "run"])
       : run("Tests", "vp", [
           "test",
           "run",
