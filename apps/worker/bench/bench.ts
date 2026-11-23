@@ -113,33 +113,39 @@ const INDEX_MS = 120_000;
  * after INDEX_MS with the jobs still waiting, so a job that never installs fails the bench instead of hanging CI.
  */
 async function indexAll(base: DurableObjectStub<BenchBase>) {
+  // What drain saw last, for the deadline's message: the timer itself asks the DO nothing, so a DO that stopped
+  // answering can't hold the deadline up too.
+  let waiting: readonly unknown[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(async () => {
-      const left = (await base.jobs()).filter((job) => job.kind === "index");
-      reject(
-        new Error(`indexing didn't finish in ${INDEX_MS} ms; waiting: ${JSON.stringify(left.slice(0, 5))}`),
-      );
-    }, INDEX_MS);
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `indexing didn't finish in ${INDEX_MS} ms; waiting: ${JSON.stringify(waiting.slice(0, 5))}`,
+          ),
+        ),
+      INDEX_MS,
+    );
   });
+  const drain = async () => {
+    for (;;) {
+      // Registered before the check, so an install between the two still wakes this loop.
+      const installed = base.nextInstall();
+      waiting = (await base.jobs()).filter((job) => job.kind === "index");
+      if (waiting.length === 0) {
+        // The last waiter never resolves; the first cold sample's crash ends it.
+        installed.catch(() => {});
+        return;
+      }
+      await base.dispatch();
+      await installed;
+    }
+  };
   try {
-    await Promise.race([drain(base), deadline]);
+    await Promise.race([drain(), deadline]);
   } finally {
     clearTimeout(timer);
-  }
-}
-
-async function drain(base: DurableObjectStub<BenchBase>) {
-  for (;;) {
-    // Registered before the check, so an install between the two still wakes this loop.
-    const installed = base.nextInstall();
-    if (!(await base.jobs()).some((job) => job.kind === "index")) {
-      // The last waiter never resolves; the first cold sample's crash ends it.
-      installed.catch(() => {});
-      return;
-    }
-    await base.dispatch();
-    await installed;
   }
 }
 
