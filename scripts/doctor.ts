@@ -219,14 +219,15 @@ export async function stageOrigin(stage: string) {
 /**
  * A Worker deployed for the first time takes a few seconds before its workers.dev hostname answers, so the doctor
  * run right after a preview's first deploy failed every check that came early. Wait up to a minute for /health;
- * if it never answers, the checks run anyway and say so.
+ * if it never answers, the checks run anyway and say so. Says whether it answered.
  */
-export async function waitForWorker(origin: string) {
+export async function waitForWorker(origin: string): Promise<boolean> {
   for (let attempt = 0; attempt < 30; attempt++) {
     const res = await get(`${origin}/health`).catch(() => undefined);
-    if (res?.ok) return;
+    if (res?.ok) return true;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
+  return false;
 }
 
 async function stageCheckList(stage: string): Promise<Check[]> {

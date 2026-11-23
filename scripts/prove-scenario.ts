@@ -53,15 +53,10 @@ async function withBaseStage<T>(commit: string, use: (stage: string) => Promise<
       run("vp", ["run", "deploy", "--stage", stage, "--yes", "--no-input"], dir);
       // A first deploy's workers.dev hostname takes a few seconds to answer.
       const origin = await stageOrigin(stage);
-      await waitForWorker(origin);
-      // The wait gives up quietly; say so, or a base that never came up reads as a sign-in failure.
-      if (
-        !(await fetch(`${origin}/health`)
-          .then((res) => res.ok)
-          .catch(() => false))
-      )
+      // Said aloud, or a base that never came up reads as a sign-in failure.
+      if (!(await waitForWorker(origin)))
         console.warn(
-          `WARN: ${origin}/health still doesn't answer; the base run will likely fail before its steps.`,
+          `WARN: ${origin}/health never answered; the base run will likely fail before its steps.`,
         );
       return await use(stage);
     } finally {
