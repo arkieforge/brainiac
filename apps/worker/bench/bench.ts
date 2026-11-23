@@ -5,7 +5,9 @@
 // Each sample is the round trip of one `Base.tool` call over RPC on localhost, timed in Node: workerd's clock
 // doesn't advance during CPU work inside the DO, so timing there reads low. The round trip is an upper bound on
 // server time. Questions are embedded by a stand-in (worker.ts), so a real Workers AI call isn't in it.
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 
 import type { Answer } from "@brainiac/base";
 import { ulid } from "@brainiac/core";
@@ -13,6 +15,7 @@ import { Miniflare } from "miniflare";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
 import { fixtureNotes } from "../../../scripts/dev-auth.ts";
+import { baselineOf, overBudget, parseTable, type Row } from "./verdict.ts";
 import type { BenchBase } from "./worker.ts";
 
 /** The fixture's TUM application (fixtures/nadia/applications/), the heaviest note to read: it carries checks. */
@@ -105,7 +108,7 @@ const namespace = await mf.getDurableObjectNamespace("BASE");
 const record = (name: string) =>
   namespace.get(namespace.idFromName(name)) as unknown as DurableObjectStub<BenchBase>;
 
-/** How long indexing may take before the bench gives up, well inside CI's five-minute job. */
+/** How long indexing may take before the bench gives up, well inside CI's Bench job, which runs two benches. */
 const INDEX_MS = 120_000;
 
 /**
@@ -245,12 +248,21 @@ const rows = results.flatMap(({ bench, warm, cold }) =>
   })),
 );
 
+// `--baseline <file>`: main's bench output, printed on the same runner (CI writes it with `> file`).
+const { values } = parseArgs({ options: { baseline: { type: "string" } } });
+const baseline = values.baseline ? parseTable(readFileSync(values.baseline, "utf8")) : undefined;
+if (baseline?.length === 0) throw new Error(`${values.baseline} holds no bench table.`);
+const failed = rows.filter((row) => overBudget(row, baseline));
+
 const ms = (n: number) => `${n.toFixed(1)} ms`.padStart(9);
+const base = (row: Row) => baselineOf(row, baseline);
 console.log(
-  `${"record".padEnd(11)} ${"path".padEnd(12)} ${"mode".padEnd(5)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"target".padStart(9)}`,
+  `${"record".padEnd(11)} ${"path".padEnd(12)} ${"mode".padEnd(5)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"target".padStart(9)}${baseline ? ` ${"main p50".padStart(9)}` : ""}`,
 );
-for (const row of rows)
+for (const row of rows) {
+  const was = base(row);
   console.log(
-    `${row.record.padEnd(11)} ${row.path.padEnd(12)} ${row.mode.padEnd(5)} ${ms(row.p50)} ${ms(row.p95)} ${ms(row.target)}  ${row.p95 < row.target ? "PASS" : "FAIL"}`,
+    `${row.record.padEnd(11)} ${row.path.padEnd(12)} ${row.mode.padEnd(5)} ${ms(row.p50)} ${ms(row.p95)} ${ms(row.target)}${baseline ? ` ${was ? ms(was.p50) : "     none"}` : ""}  ${failed.includes(row) ? "FAIL" : "PASS"}`,
   );
-if (rows.some((row) => !(row.p95 < row.target))) process.exitCode = 1;
+}
+if (failed.length > 0) process.exitCode = 1;

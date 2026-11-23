@@ -142,7 +142,8 @@ calling work done, walk this list and say which entries applied:
   and passing on the fix. Add a new scenario to `scripts/scenarios/index.ts`.
   A purely visual bug gets before/after screenshots instead.
 - A change to a record's queries, search or tools: `vp run bench` measures their p95 in workerd against the
-  [quality bar](docs/operations/quality-bar.md) and fails over a target (CI runs it).
+  [quality bar](docs/operations/quality-bar.md) and fails over a target. On a PR, CI measures `main` first on the
+  same runner and fails a row only when it is over its target and clearly slower than `main` there.
 - `vp run doctor` when something about the environment looks wrong.
 - Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the
   [`doctor`](.agents/skills/doctor/SKILL.md) skill before guessing. It starts from

@@ -18,7 +18,7 @@ jobs:
   # minutes) was measured on the deploy and lost: 11s queue vs 3s, same setup and deploy time, since these
   # jobs wait on the network, not the CPU. Set the RUNNER repo variable (e.g. blacksmith-2vcpu-ubuntu-2404)
   # to move every job there if a CPU-heavy job ever lands.
-  # Every job stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
+  # Every job on the way to prod stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
   # One job per check, all in parallel, so the slowest check sets the wall time and a failure names itself.
   check:
     name: ${{ matrix.name }}
@@ -36,9 +36,6 @@ jobs:
             run: vp test run
           - name: Unused code
             run: knip
-          # p95 of the MCP paths in workerd, on the fixture and a 20k-chunk record (docs/operations/quality-bar.md).
-          - name: Bench
-            run: vp run bench
           # The site's component tests in headless Chromium (apps/web *.browser.test.tsx).
           - name: Browser tests
             run: playwright install --with-deps --only-shell chromium && vp run test:browser
@@ -52,6 +49,42 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: ${{ matrix.run }}
+
+  # p95 of the MCP paths in workerd, on the fixture and a 20k-chunk record (docs/operations/quality-bar.md). PRs
+  # only, and never between main and the prod deploy: GitHub's runners differ by half again in speed from run to run,
+  # so main is measured first on the same runner, and a row fails only when it is over its target and also clearly
+  # slower than main there (apps/worker/bench/verdict.ts).
+  bench:
+    name: Bench
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: ./.github/actions/setup
+      # The checkout is the PR merged onto main, so its first parent is main as the PR would land on it.
+      - name: Bench main on this runner
+        run: |
+          set -o pipefail
+          git worktree add "$RUNNER_TEMP/main" HEAD^1
+          cd "$RUNNER_TEMP/main"
+          # Main's own verdict only warns: this job judges the PR, but main drifting over a target should show.
+          if [ -f apps/worker/bench/bench.ts ] && vp i --frozen-lockfile; then
+            node apps/worker/bench/bench.ts | tee "$RUNNER_TEMP/main.txt" ||
+              echo "::warning::main's own bench failed or went over a target on this runner."
+          fi
+          grep -q " ms " "$RUNNER_TEMP/main.txt" 2>/dev/null ||
+            echo "::warning::main wasn't measured; this PR is judged by the targets alone."
+      - name: Bench this PR
+        run: |
+          if grep -q " ms " "$RUNNER_TEMP/main.txt" 2>/dev/null; then
+            node apps/worker/bench/bench.ts --baseline "$RUNNER_TEMP/main.txt"
+          else
+            node apps/worker/bench/bench.ts
+          fi
 
   # The daemon on Windows, where the swap is ReplaceFileW and the login service a scheduled task: its
   # real-filesystem cases and unit tests, on NTFS.
