@@ -62,17 +62,31 @@ const SAMPLES = { warm: 100, cold: 20 } as const;
 /** An MCP client at the floor (propose, no sensitive notes), as a new connection is. */
 const VIA = { oauthClientId: "bench" };
 
-/** 1000 fictional notes of 20 chunks each: their fields, then 19 sections long enough to be cut apart. */
+/** The big record's size: 1000 notes of 20 chunks, a lead paragraph and 19 sections each. */
+const NOTES = 1000;
+const CHUNKS = 20_000;
+
+/**
+ * NOTES fictional notes of CHUNKS / NOTES chunks: a lead paragraph (the body before the first heading is a chunk of
+ * its own), then sections long enough to be cut apart. Every word appears plain, so keyword search matches it, beside a
+ * numbered variant that keeps the chunks from being alike.
+ */
 function bigNotes() {
   const words =
     "thesis lab robotics swahili corpus tokens grant award python seminar kernel draft metric baseline".split(
       " ",
     );
-  const section = (n: number, s: number) =>
-    `## Section ${s}\n${Array.from({ length: 24 }, (_, w) => `${words[(n + s + w) % words.length]}${(n * 7 + s * 3 + w) % 97}`).join(" ")}.\n`;
-  return Array.from({ length: 1000 }, (_, n) => ({
+  const word = (i: number) => words[i % words.length] ?? "";
+  const text = (n: number, s: number) =>
+    Array.from(
+      { length: 12 },
+      (_, w) => `${word(n + s + w)} ${word(n + s + w + 5)}${(n * 7 + s * 3 + w) % 97}`,
+    ).join(" ");
+  return Array.from({ length: NOTES }, (_, n) => ({
     path: `facts/bench/note-${n}.md`,
-    raw: `---\nid: ${ulid()}\ntype: Fact\ntitle: Bench note ${n}\n---\n${[...Array(19).keys()].map((s) => section(n, s)).join("\n")}`,
+    raw:
+      `---\nid: ${ulid()}\ntype: Fact\ntitle: Bench note ${n}\n---\n${text(n, 99)}.\n\n` +
+      [...Array(CHUNKS / NOTES - 1).keys()].map((s) => `## Section ${s}\n${text(n, s)}.\n`).join("\n"),
     class: "normal" as const,
   }));
 }
@@ -91,8 +105,31 @@ const namespace = await mf.getDurableObjectNamespace("BASE");
 const record = (name: string) =>
   namespace.get(namespace.idFromName(name)) as unknown as DurableObjectStub<BenchBase>;
 
-/** Runs the jobs outbox until every note is in the search index, waiting on installs rather than sleeping. */
+/** How long indexing may take before the bench gives up, well inside CI's five-minute job. */
+const INDEX_MS = 120_000;
+
+/**
+ * Runs the jobs outbox until every note is in the search index, waiting on installs rather than sleeping. Gives up
+ * after INDEX_MS with the jobs still waiting, so a job that never installs fails the bench instead of hanging CI.
+ */
 async function indexAll(base: DurableObjectStub<BenchBase>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(async () => {
+      const left = (await base.jobs()).filter((job) => job.kind === "index");
+      reject(
+        new Error(`indexing didn't finish in ${INDEX_MS} ms; waiting: ${JSON.stringify(left.slice(0, 5))}`),
+      );
+    }, INDEX_MS);
+  });
+  try {
+    await Promise.race([drain(base), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function drain(base: DurableObjectStub<BenchBase>) {
   for (;;) {
     // Registered before the check, so an install between the two still wakes this loop.
     const installed = base.nextInstall();
@@ -124,42 +161,67 @@ async function time(base: DurableObjectStub<BenchBase>, bench: (typeof CASES)[nu
 const percentile = (samples: readonly number[], p: number) =>
   samples.toSorted((a, b) => a - b)[Math.ceil(p * samples.length) - 1] ?? Number.NaN;
 
-// As /dev/seed fills a new account (apps/worker/src/dev.ts).
-const seeded = await record(FIXTURE).seedIfEmpty(
-  fixtureNotes().map((note) => ({ op: "create" as const, ...note })),
-  { actor: "human" },
-);
-if (seeded.status !== "applied") throw new Error(`seed refused: ${JSON.stringify(seeded)}`);
-// One create per note: a bulk change this big would take the person's passkey.
-await record(BIG).seed(bigNotes());
-for (const name of [FIXTURE, BIG]) {
-  await indexAll(record(name));
-  // A record without vectors searches by keyword only, which would time the cheaper path.
-  const found = await call(record(name), { tool: "search", args: { text: "corpus" } });
-  if (!(typeof found === "object" && found !== null && "mode" in found && found.mode === "hybrid"))
-    throw new Error(`${name} has no vectors: ${JSON.stringify(found)}`);
+/** Fills both records, then times every case warm and cold. */
+async function measure() {
+  // As /dev/seed fills a new account (apps/worker/src/dev.ts).
+  const seeded = await record(FIXTURE).seedIfEmpty(
+    fixtureNotes().map((note) => ({ op: "create" as const, ...note })),
+    { actor: "human" },
+  );
+  if (seeded.status !== "applied") throw new Error(`seed refused: ${JSON.stringify(seeded)}`);
+  // One create per note: a bulk change this big would take the person's passkey.
+  await record(BIG).seed(bigNotes());
+  for (const [name, word] of [
+    [FIXTURE, "Swahili"],
+    [BIG, "corpus"],
+  ] as const) {
+    await indexAll(record(name));
+    // Both halves of search must run, or the bench times a cheaper path: hybrid means the vectors took part, and a hit
+    // matched by words means the keyword index did.
+    const found = await call(record(name), { tool: "search", args: { text: word } });
+    if (!isHybridWithWords(found))
+      throw new Error(`${name} doesn't search both ways: ${JSON.stringify(found)}`);
+  }
+  const vectors = (await record(BIG).vectorModels()).length;
+  if (vectors !== CHUNKS) throw new Error(`the big record has ${vectors} vectors, not ${CHUNKS}`);
+
+  // Round robin over the cases, so a burst of other load on the machine costs every case one sample rather than one
+  // case many: a run's p95 then moves with the code, not with what else the machine was doing.
+  const results = CASES.map((bench) => ({ bench, warm: [] as number[], cold: [] as number[] }));
+  const warmed = { [FIXTURE]: record(FIXTURE), [BIG]: record(BIG) };
+  for (let round = 0; round < WARMUP + SAMPLES.warm; round++)
+    for (const result of results) {
+      const elapsed = await time(warmed[result.bench.record], result.bench);
+      if (round >= WARMUP) result.warm.push(elapsed);
+    }
+  // Cold: the instance is evicted before each sample, so the call pays the constructor (migrate, re-index check) and
+  // reads everything from storage again. Miniflare can't evict the isolate, so module load isn't in it.
+  for (let round = 0; round < SAMPLES.cold; round++)
+    for (const result of results) {
+      // crash() always rejects: the call it runs in is the one it aborts.
+      await record(result.bench.record)
+        .crash()
+        .catch(() => {});
+      result.cold.push(await time(record(result.bench.record), result.bench));
+    }
+  return results;
 }
 
-// Round robin over the cases, so a burst of other load on the machine costs every case one sample rather than one
-// case many: a run's p95 then moves with the code, not with what else the machine was doing.
-const results = CASES.map((bench) => ({ bench, warm: [] as number[], cold: [] as number[] }));
-const warmed = { [FIXTURE]: record(FIXTURE), [BIG]: record(BIG) };
-for (let round = 0; round < WARMUP + SAMPLES.warm; round++)
-  for (const result of results) {
-    const elapsed = await time(warmed[result.bench.record], result.bench);
-    if (round >= WARMUP) result.warm.push(elapsed);
-  }
-// Cold: the instance is evicted before each sample, so the call pays the constructor (migrate, re-index check) and
-// reads everything from storage again. Miniflare can't evict the isolate, so module load isn't in it.
-for (let round = 0; round < SAMPLES.cold; round++)
-  for (const result of results) {
-    // crash() always rejects: the call it runs in is the one it aborts.
-    await record(result.bench.record)
-      .crash()
-      .catch(() => {});
-    result.cold.push(await time(record(result.bench.record), result.bench));
-  }
-await mf.dispose();
+/** A search answer that ran both ways: vectors (hybrid) and at least one hit matched by its words. */
+function isHybridWithWords(found: unknown) {
+  if (!found || typeof found !== "object" || !("mode" in found) || found.mode !== "hybrid") return false;
+  if (!("hits" in found) || !Array.isArray(found.hits)) return false;
+  return found.hits.some(
+    (hit: unknown) =>
+      !!hit &&
+      typeof hit === "object" &&
+      "matched" in hit &&
+      (hit.matched === "words" || hit.matched === "both"),
+  );
+}
+
+// Disposed however the run ends, so a failure exits rather than leaving workerd running.
+const results = await measure().finally(() => mf.dispose());
 
 const rows = results.flatMap(({ bench, warm, cold }) =>
   (

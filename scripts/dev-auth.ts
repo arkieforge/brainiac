@@ -102,13 +102,21 @@ async function main() {
     console.log(url);
     return;
   }
-  const res = await fetch(`${origin}/dev/token${values.as ? `?as=${encodeURIComponent(values.as)}` : ""}`, {
+  console.log(JSON.stringify(await mcpToken(origin, token, values.as), null, 2));
+}
+
+/** A one-hour `/mcp` access token for the fixture account (the `as` one, if given), from /dev/token (dev.ts). */
+export async function mcpToken(origin: string, token: string, as: string | undefined) {
+  const res = await fetch(`${origin}/dev/token${as ? `?as=${encodeURIComponent(as)}` : ""}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok)
     throw new Error(`/dev/token answered ${res.status}. Is the stage deployed with DEV_SIGN_IN_TOKEN?`);
-  console.log(JSON.stringify(await res.json(), null, 2));
+  const body: unknown = await res.json();
+  if (!body || typeof body !== "object" || !("access_token" in body) || typeof body.access_token !== "string")
+    throw new Error("/dev/token answered no access token.");
+  return { ...body, access_token: body.access_token };
 }
 
 if (import.meta.main) {
