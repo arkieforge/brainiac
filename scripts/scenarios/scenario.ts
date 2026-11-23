@@ -1,5 +1,7 @@
 import type { Page } from "playwright";
 
+import type { Agent } from "./agent.ts";
+
 /**
  * One behaviour shown in the real site: a deployed stage or `vp run dev`, a real browser, and a fresh fixture
  * account per run. Each file beside this one default-exports one; scripts/e2e.ts runs them, and
@@ -23,4 +25,6 @@ export interface Step {
 export interface Account {
   /** What makes this run's account its own: the `+<tag>` in its address (dev.ts). */
   readonly tag: string;
+  /** Its scripted agent (agent.ts): MCP calls on this account's record, as an agent connected at the floor. */
+  readonly agent: Agent;
 }
