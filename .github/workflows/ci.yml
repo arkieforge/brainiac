@@ -18,7 +18,7 @@ jobs:
   # minutes) was measured on the deploy and lost: 11s queue vs 3s, same setup and deploy time, since these
   # jobs wait on the network, not the CPU. Set the RUNNER repo variable (e.g. blacksmith-2vcpu-ubuntu-2404)
   # to move every job there if a CPU-heavy job ever lands.
-  # Every job stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
+  # Every job on the way to prod stops at 5 minutes, so the longest chain (a check, then the prod deploy) ends under 10.
   # One job per check, all in parallel, so the slowest check sets the wall time and a failure names itself.
   check:
     name: ${{ matrix.name }}
@@ -68,16 +68,20 @@ jobs:
       # The checkout is the PR merged onto main, so its first parent is main as the PR would land on it.
       - name: Bench main on this runner
         run: |
+          set -o pipefail
           git worktree add "$RUNNER_TEMP/main" HEAD^1
           cd "$RUNNER_TEMP/main"
+          # Main's own verdict only warns: this job judges the PR, but main drifting over a target should show.
           if [ -f apps/worker/bench/bench.ts ] && vp i --frozen-lockfile; then
-            node apps/worker/bench/bench.ts --out "$RUNNER_TEMP/main.json" || true
+            node apps/worker/bench/bench.ts | tee "$RUNNER_TEMP/main.txt" ||
+              echo "::warning::main itself is over a bench target on this runner."
           fi
-          [ -f "$RUNNER_TEMP/main.json" ] || echo "::warning::main wasn't measured; this PR is judged by the targets alone."
+          grep -q " ms " "$RUNNER_TEMP/main.txt" 2>/dev/null ||
+            echo "::warning::main wasn't measured; this PR is judged by the targets alone."
       - name: Bench this PR
         run: |
-          if [ -f "$RUNNER_TEMP/main.json" ]; then
-            node apps/worker/bench/bench.ts --baseline "$RUNNER_TEMP/main.json"
+          if grep -q " ms " "$RUNNER_TEMP/main.txt" 2>/dev/null; then
+            node apps/worker/bench/bench.ts --baseline "$RUNNER_TEMP/main.txt"
           else
             node apps/worker/bench/bench.ts
           fi
