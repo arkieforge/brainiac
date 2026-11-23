@@ -48,7 +48,7 @@ async function runScenario(
   const { origin, url, token } = await signInLink(stage, { as: tag, next: scenario.next });
   // Playwright quotes the URL it was loading in errors, and CI logs are public; the link carries the token.
   const redact = (text: string) => text.replaceAll(token, "***");
-  const account = { email: `nadia.karim+${tag}@example.edu` };
+  const account = { tag };
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -71,14 +71,19 @@ async function runScenario(
   let inSteps = false;
   try {
     if (!scenario.empty) await seed(origin, token, tag);
-    current = "open the dev sign-in link";
+    current = "sign in with the dev link";
     await page.goto(url);
+    // The link's page posts the token and then moves on; the steps start once the session exists.
+    await page.waitForURL((at) => !at.pathname.startsWith("/dev/"));
     inSteps = true;
     for (const step of scenario.steps) {
       current = step.name;
       await step.run(page, account);
+      // Evidence only: a screenshot that can't be saved never fails the scenario.
       if (evidence)
-        await page.screenshot({ path: join(evidence, name, `${step.name.replaceAll(/\W+/g, "-")}.png`) });
+        await page
+          .screenshot({ path: join(evidence, name, `${step.name.replaceAll(/\W+/g, "-")}.png`) })
+          .catch((error: unknown) => console.warn(`      no screenshot of ${step.name}: ${String(error)}`));
       console.log(`ok    ${name} › ${step.name}`);
     }
     return { name };

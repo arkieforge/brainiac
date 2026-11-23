@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
-import { listNotes, migrate, mutateAll } from "@brainiac/base";
-import { nodeSql } from "@brainiac/base/node";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -20,22 +17,24 @@ const landsOn = async (res: Response) => {
   return body && typeof body === "object" && "location" in body ? body.location : undefined;
 };
 
-/** A person's record on node:sqlite, seeded the way the Base DO's seedIfEmpty does (tested in workerd). */
-function memoryRecord() {
-  const sql = nodeSql(new DatabaseSync(":memory:"));
-  migrate(sql);
+type SeedAnswer = Awaited<ReturnType<SeedRecord["seedIfEmpty"]>>;
+
+/**
+ * A record that answers every seed with `answer` and keeps what it was asked. The real seedIfEmpty (all or none, only
+ * while empty) is tested on the Base DO in workerd (test/base.test.ts); this tests the route around it.
+ */
+function stubRecord(answer: SeedAnswer) {
+  const asked: Parameters<SeedRecord["seedIfEmpty"]>[] = [];
   const record: SeedRecord = {
-    seedIfEmpty: async (mutations, caller) => {
-      const notes = listNotes(sql).length;
-      return notes > 0
-        ? { status: "notEmpty", notes }
-        : mutateAll(sql, mutations, { ...caller, now: Date.now() });
+    seedIfEmpty: async (...args) => {
+      asked.push(args);
+      return answer;
     },
   };
-  return { record, paths: () => listNotes(sql).map((note) => note.path) };
+  return { record, asked };
 }
 
-function setup() {
+function setup(answer: SeedAnswer = { status: "applied" }) {
   const config: AuthConfig = {
     database: memoryAdapter({
       user: [],
@@ -55,9 +54,9 @@ function setup() {
   };
   const auth = createAuth(config);
   /** Each person's record by user id, made on first use like the base registry's. */
-  const bases = new Map<string, ReturnType<typeof memoryRecord>>();
+  const bases = new Map<string, ReturnType<typeof stubRecord>>();
   const recordOf = async (userId: string) => {
-    const base = bases.get(userId) ?? memoryRecord();
+    const base = bases.get(userId) ?? stubRecord(answer);
     bases.set(userId, base);
     return base.record;
   };
@@ -192,55 +191,46 @@ const note = (from: string, path = from) => ({
 const ROLE = "facts/roles/acme-intern-2025.md";
 const PERSON = "people/dr-okafor.md";
 
+/** A /dev/seed request with `body`, as scripts/dev-auth.ts sends it. */
+const seedRequest = (body: unknown, authorization = `Bearer ${TOKEN}`, query = "") =>
+  new Request(`${ORIGIN}/dev/seed${query}`, {
+    method: "POST",
+    headers: { authorization },
+    body: JSON.stringify(body),
+  });
+
 describe("dev seed", () => {
-  it("fills a new account's record once, through the record's own mutation path", async () => {
+  it("hands the notes to the account's own record as creates by the person", async () => {
     const { config, bases, recordOf } = setup();
-    const seed = (body: unknown, authorization = `Bearer ${TOKEN}`, query = "") =>
-      serveDev(
-        new Request(`${ORIGIN}/dev/seed${query}`, {
-          method: "POST",
-          headers: { authorization },
-          body: JSON.stringify(body),
-        }),
-        config,
-        TOKEN,
-        recordOf,
-      );
+    const seed = (...args: Parameters<typeof seedRequest>) =>
+      serveDev(seedRequest(...args), config, TOKEN, recordOf);
     const notes = [note(ROLE), note(PERSON)];
 
     expect((await seed({ notes }, "Bearer wrong")).status).toBe(404);
-    expect(bases.size).toBe(0);
     expect((await seed({ notes: [{ path: "x.md", raw: 1, class: "normal" }] })).status).toBe(400);
+    expect(bases.size).toBe(0);
 
-    const first = await seed({ notes });
-    expect(await first.json()).toEqual({ seeded: 2, existing: 0 });
+    expect(await (await seed({ notes })).json()).toEqual({ seeded: 2, existing: 0 });
     const [base] = bases.values();
-    expect(base?.paths().toSorted()).toEqual([ROLE, PERSON]);
-
-    // A record someone has used is never added to, even by a second seed with other notes.
-    const again = await seed({ notes: [note("facts/papers/swahili-ner-2026.md")] });
-    expect(await again.json()).toEqual({ seeded: 0, existing: 2 });
-    expect(base?.paths()).toHaveLength(2);
-
+    expect(base?.asked).toEqual([[notes.map((n) => ({ op: "create", ...n })), { actor: "human" }]]);
     // A tagged account gets a record of its own.
-    expect(await (await seed({ notes }, `Bearer ${TOKEN}`, "?as=e2e-1")).json()).toMatchObject({ seeded: 2 });
+    await seed({ notes }, `Bearer ${TOKEN}`, "?as=e2e-1");
     expect(bases.size).toBe(2);
   });
 
-  it("makes nothing when the record refuses any note of the seed", async () => {
-    const { config, bases, recordOf } = setup();
-    const res = await serveDev(
-      new Request(`${ORIGIN}/dev/seed`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${TOKEN}` },
-        body: JSON.stringify({ notes: [note(PERSON), note(ROLE, "../outside.md")] }),
-      }),
-      config,
+  it("says how many notes a used record already held, and passes on a refusal", async () => {
+    const used = setup({ status: "notEmpty", notes: 3 });
+    const kept = await serveDev(seedRequest({ notes: [note(ROLE)] }), used.config, TOKEN, used.recordOf);
+    expect(await kept.json()).toEqual({ seeded: 0, existing: 3 });
+
+    const refusing = setup({ status: "invalid" });
+    const refused = await serveDev(
+      seedRequest({ notes: [note(ROLE)] }),
+      refusing.config,
       TOKEN,
-      recordOf,
+      refusing.recordOf,
     );
-    expect(res.status).toBe(422);
-    const [base] = bases.values();
-    expect(base?.paths()).toEqual([]);
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toMatchObject({ result: { status: "invalid" } });
   });
 });

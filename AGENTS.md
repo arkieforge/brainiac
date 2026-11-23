@@ -137,7 +137,8 @@ calling work done, walk this list and say which entries applied:
   tests. First run on a machine: `pnpm exec playwright install --only-shell chromium`.
 - A bug fix starts with a test that fails on `main`. A bug a person sees on the site can instead get a scenario
   in `scripts/scenarios` (a real browser on a stage, a fresh account on the fixture student's seeded record):
-  `vp run scenarios:prove <scenario> --stage <pr-n|local>` shows it failing on `main` and passing on the fix.
+  `vp run scenarios:prove <scenario> --at "<step>" --stage <pr-n|local>` shows it failing on `main` at that step
+  and passing on the fix. Add a new scenario to `scripts/scenarios/index.ts`.
   A purely visual bug gets before/after screenshots instead.
 - `vp run doctor` when something about the environment looks wrong.
 - Something broken on a deployed stage (a failing preview, a user's error or `ref`, a 500): use the

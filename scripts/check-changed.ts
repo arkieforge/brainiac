@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `vp run check:changed [--base origin/main]`: CI's checks, cut to what this branch changed, for the loop before a
 // push. CI still runs every check in full.
-//   format and lint   the changed files only
+//   format and lint   the changed files, or every file when the lint rules or their config changed
 //   typecheck         every package (cached per package, so unchanged ones cost nothing)
 //   tests             those whose imports reach a changed file (Vitest's --changed), plus the ones that reach files
 //                     without importing them, which no import graph shows: workerd suites bundle a Worker by path,
@@ -21,10 +21,8 @@ const git = (...args: string[]) => {
   return out.stdout.split("\n").filter(Boolean);
 };
 
-/** Files changed since the branch left `base`, committed or not, deleted ones included. */
-function changedFiles(base: string): string[] {
-  const [from] = git("merge-base", base, "HEAD");
-  if (!from) throw new Error(`No merge base with ${base}. Fetch it first: git fetch origin main`);
+/** Files changed since `from`, committed or not, deleted ones included. */
+function changedFiles(from: string): string[] {
   const files = [...git("diff", "--name-only", from), ...git("ls-files", "--others", "--exclude-standard")];
   return [...new Set(files)].toSorted();
 }
@@ -33,8 +31,10 @@ function changedFiles(base: string): string[] {
 const REACHES_A_WORKER = /^(apps\/(worker|ocr|typst)\/|packages\/|scripts\/(bundle|ocr|typst)-worker\.ts$)/;
 /** Files tests read from disk rather than import: the fixture student, and the skill the evals hand to a model. */
 const READ_BY_PATH = /^(fixtures\/|apps\/cli\/plugin\/)/;
-/** The site, and the packages it bundles. */
-const REACHES_THE_SITE = /^(apps\/web\/|packages\/)/;
+/** The site, the packages it bundles, and the fixture notes its browser tests import. */
+const REACHES_THE_SITE = /^(apps\/web\/|packages\/|fixtures\/)/;
+/** The lint rules and their config, which judge files nobody changed. */
+const LINTS_EVERYTHING = /^(oxlint-plugin-brainiac\/|vite\.config\.ts$)/;
 
 /** Test files that load a Worker into workerd from a bundle (scripts/bundle-worker.ts), found by what they import. */
 function bundledSuites(): string[] {
@@ -53,6 +53,8 @@ export function testsFor(changed: readonly string[], suites: readonly string[]) 
   return {
     /** Every test, since one read a changed file by path. */
     all: changed.some((path) => READ_BY_PATH.test(path)),
+    /** Every file to lint, since the rules changed. */
+    lintAll: changed.some((path) => LINTS_EVERYTHING.test(path)),
     bundled: changed.some((path) => REACHES_A_WORKER.test(path)) ? [...suites] : [],
     browser: changed.some((path) => REACHES_THE_SITE.test(path)),
   };
@@ -67,7 +69,9 @@ function run(name: string, cmd: string, args: string[]): boolean {
 
 function main() {
   const { values } = parseArgs({ options: { base: { type: "string", default: "origin/main" } } });
-  const changed = changedFiles(values.base);
+  const [from] = git("merge-base", values.base, "HEAD");
+  if (!from) throw new Error(`No merge base with ${values.base}. Fetch it first: git fetch origin main`);
+  const changed = changedFiles(from);
   if (changed.length === 0) {
     console.log(`Nothing changed since ${values.base}.`);
     return;
@@ -77,8 +81,10 @@ function main() {
   // A deleted file has nothing to format or lint; its absence still picks the tests above.
   const present = changed.filter((path) => existsSync(join(ROOT, path)));
   const results = [
-    present.length === 0 ||
-      run("Format and lint", "vp", ["check", "--no-error-on-unmatched-pattern", ...present]),
+    tests.lintAll
+      ? run("Format and lint (all: the lint rules changed)", "vp", ["check"])
+      : present.length === 0 ||
+        run("Format and lint", "vp", ["check", "--no-error-on-unmatched-pattern", ...present]),
     run("Typecheck", "vp", ["run", "typecheck"]),
     tests.all
       ? run("Tests (all: a fixture or the skill changed)", "vp", ["test", "run"])
@@ -86,7 +92,7 @@ function main() {
           "test",
           "run",
           "--changed",
-          values.base,
+          from,
           "--passWithNoTests",
           // Run once, below, rather than again here when the import graph happens to reach one.
           ...tests.bundled.flatMap((suite) => ["--exclude", suite]),

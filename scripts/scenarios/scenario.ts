@@ -21,5 +21,6 @@ export interface Step {
 
 /** The fresh fixture account a run signs in as. */
 export interface Account {
-  readonly email: string;
+  /** What makes this run's account its own: the `+<tag>` in its address (dev.ts). */
+  readonly tag: string;
 }

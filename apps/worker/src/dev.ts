@@ -151,12 +151,18 @@ export async function serveDev(
 
   const auth = devAuth(config);
   const context = await auth.$context;
-  const found = await context.internalAdapter.findUserByEmail(email);
+  const find = async () => (await context.internalAdapter.findUserByEmail(email))?.user;
   const user =
-    found?.user ??
-    (await context.test.saveUser(
-      context.test.createUser({ email, name: FIXTURE_STUDENT.name, emailVerified: true }),
-    ));
+    (await find()) ??
+    (await context.test
+      .saveUser(context.test.createUser({ email, name: FIXTURE_STUDENT.name, emailVerified: true }))
+      // Two first requests for one account (a seed and a sign-in at once) both find none and both insert; the
+      // loser's insert fails on the unique email, and it takes the winner's account.
+      .catch(async (error: unknown) => {
+        const winner = await find();
+        if (!winner) throw error;
+        return winner;
+      }));
 
   if (notes) {
     const record = await recordOf(user.id);

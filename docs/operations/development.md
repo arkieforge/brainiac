@@ -30,7 +30,7 @@ links the main checkout's `.env`.
 | `vp run dev:sign-in --stage <name>` | A link that signs a browser in as the fixture student, her record seeded (`--stage local` for dev)  |
 | `vp run dev:token --stage <name>`   | An access token for that stage's `/mcp`, as the fixture student                                     |
 | `vp run e2e --stage <name>`         | The scenarios in `scripts/scenarios` in a real browser (`--scenario`, `--headed`, `--evidence`)     |
-| `vp run scenarios:prove <scenario>` | Shows a scenario failing on `main` and passing on `--stage <name>`, for a fix's proof               |
+| `vp run scenarios:prove <scenario>` | Shows a scenario failing on `main` at `--at <step>` and passing on `--stage <name>`: a fix's proof  |
 
 The pre-commit hook (`.vite-hooks/pre-commit`) runs `vp staged`: format, then lint, on staged files.
 
