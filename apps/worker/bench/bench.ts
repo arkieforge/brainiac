@@ -15,7 +15,7 @@ import { Miniflare } from "miniflare";
 
 import { bundleWorker } from "../../../scripts/bundle-worker.ts";
 import { fixtureNotes } from "../../../scripts/dev-auth.ts";
-import { overBudget, parseTable, sameCase, type Row } from "./verdict.ts";
+import { baselineOf, overBudget, parseTable, type Row } from "./verdict.ts";
 import type { BenchBase } from "./worker.ts";
 
 /** The fixture's TUM application (fixtures/nadia/applications/), the heaviest note to read: it carries checks. */
@@ -255,7 +255,7 @@ if (baseline?.length === 0) throw new Error(`${values.baseline} holds no bench t
 const failed = rows.filter((row) => overBudget(row, baseline));
 
 const ms = (n: number) => `${n.toFixed(1)} ms`.padStart(9);
-const base = (row: Row) => baseline?.find((was) => sameCase(was, row));
+const base = (row: Row) => baselineOf(row, baseline);
 console.log(
   `${"record".padEnd(11)} ${"path".padEnd(12)} ${"mode".padEnd(5)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"target".padStart(9)}${baseline ? ` ${"main p50".padStart(9)}` : ""}`,
 );

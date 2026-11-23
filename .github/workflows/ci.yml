@@ -74,7 +74,7 @@ jobs:
           # Main's own verdict only warns: this job judges the PR, but main drifting over a target should show.
           if [ -f apps/worker/bench/bench.ts ] && vp i --frozen-lockfile; then
             node apps/worker/bench/bench.ts | tee "$RUNNER_TEMP/main.txt" ||
-              echo "::warning::main itself is over a bench target on this runner."
+              echo "::warning::main's own bench failed or went over a target on this runner."
           fi
           grep -q " ms " "$RUNNER_TEMP/main.txt" 2>/dev/null ||
             echo "::warning::main wasn't measured; this PR is judged by the targets alone."
