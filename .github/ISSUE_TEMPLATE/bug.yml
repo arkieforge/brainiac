@@ -93,6 +93,15 @@ body:
       description: The few relevant lines only. Redact tokens, emails and paths with your name.
       render: shell
 
+  - type: textarea
+    id: eval
+    attributes:
+      label: Eval case
+      description: Only when a model's behaviour caused it (a tool description, the skill or a prompt misled it). The case that fails before the fix and passes after, in its eval's format ([evals/README.md](https://github.com/arkieforge/brainiac/blob/main/evals/README.md)), so the fix adds it.
+      placeholder: |
+        {"id":"band-without-verify","kind":"bad","source":"#<this issue>","prompt":"What was my overall band on my latest IELTS?","expect":{"calls":[{"tool":"ask","args":{"mode":"verify"}}]}}
+      render: json
+
   - type: upload
     id: attachments
     attributes:

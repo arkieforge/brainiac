@@ -4,7 +4,8 @@
 //   vp run dev:sign-in --stage pr-12 [--as <tag>] [--next /path]   a link that signs a browser in; open it once
 //   vp run dev:token --stage pr-12 [--as <tag>]                     an access token for that stage's /mcp
 // Both first fill a new account's empty record with the fixture student's notes (fixtures/nadia), so whoever
-// signs in tests against a real record, not an empty one; `--empty` skips that. `--stage local` is `vp run dev`.
+// signs in tests against a real record, not an empty one; `--empty` skips that. `--stage local` is `vp run dev`,
+// `--stage standalone` is `vp run dev:standalone` (no Doppler: its token is fixed).
 // `--as` picks a separate fixture account (nadia.karim+<tag>@example.edu). Prod has no dev sign-in, so this
 // refuses it.
 import { readdirSync, readFileSync } from "node:fs";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 import type { Seeded } from "../apps/worker/src/dev.ts";
-import { stageOrigin } from "./doctor.ts";
+import { stageOrigin, standalone } from "./doctor.ts";
 import { secret } from "./logs.ts";
 
 /** The dev sign-in link for a stage, token included. Treat it like a password. */
@@ -21,7 +22,7 @@ export async function signInLink(
   opts: { as?: string | undefined; next?: string | undefined } = {},
 ) {
   if (stage === "prod") throw new Error("Prod has no dev sign-in. Sign in the normal way.");
-  const token = secret("DEV_SIGN_IN_TOKEN", "dev");
+  const token = stage === "standalone" ? standalone.token : secret("DEV_SIGN_IN_TOKEN", "dev");
   if (!token) throw new Error("DEV_SIGN_IN_TOKEN isn't in Doppler dev; see infra/README.md.");
   const origin = await stageOrigin(stage);
   const query = new URLSearchParams({
@@ -88,7 +89,7 @@ async function main() {
   const [command] = positionals;
   if (!values.stage || (command !== "sign-in" && command !== "token")) {
     throw new Error(
-      "Usage: vp run dev:sign-in --stage <stage|local> [--as tag] [--next /path] [--empty], or dev:token.",
+      "Usage: vp run dev:sign-in --stage <stage|local|standalone> [--as tag] [--next /path] [--empty], or dev:token.",
     );
   }
   const { origin, token, url } = await signInLink(values.stage, values);

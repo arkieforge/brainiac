@@ -113,6 +113,9 @@ calling work done, walk this list and say which entries applied:
   didn't run; `vp run doctor` says what's missing.
 - `vp run dev` starts the Worker on `localhost:1337` against your own Neon branch. Secrets come from
   Doppler, never `.env` ([Development](docs/operations/development.md#secrets)).
+- No Doppler access (an outside contributor, a cloud agent): `vp run dev:standalone` runs the real Worker and site
+  on `localhost:1341` with an in-memory database and no accounts; `--stage standalone` for dev sign-in and the
+  scenarios. Search there is keyword only ([Standalone dev](docs/operations/development.md#standalone-dev)).
 - Stop what you started, by the task you started it with. Run dev servers from your own shell so they end
   with your session; don't detach them with `nohup`, `setsid` or `tmux` unless asked.
 - Need a second checkout? `git worktree add` it next to this one, not in `/tmp`. Remove it when done.
@@ -181,7 +184,8 @@ Settings for this repo, which the skills read from here:
 - **Babysitting**: no review bots are installed yet; CI and CodeQL code scanning are the checks.
 
 Repo skills live in `.agents/skills` (Codex reads them there; `.claude/skills` links to the same folder):
-`triage`, `test-brainiac`, `doctor`.
+`triage`, `test-brainiac`, `doctor`, and playbooks for the changes most often missed somewhere: `add-mcp-tool`,
+`add-note-type`, `debug-sync`.
 
 ## Issues are briefs
 

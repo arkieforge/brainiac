@@ -5,8 +5,11 @@ import type { Ocr } from "./jobs.ts";
 export interface Env {
   /** The web app's build (apps/web): its shell and static assets. */
   ASSETS: Fetcher;
-  /** Workers AI: document-to-text and embeddings for search (jobs.ts). Brainiac runs no generation model. */
-  AI: Ai;
+  /**
+   * Workers AI: document-to-text and embeddings for search (jobs.ts). Brainiac runs no generation model. Only
+   * `vp run dev:standalone` has none, so its search is keyword only and its PDFs stay unread.
+   */
+  AI?: Ai;
   /** The OCR Worker (apps/ocr), over RPC: the text of photos and scans, for the vault's checks only (jobs.ts). */
   OCR: Ocr;
   /** The Typst Worker (apps/typst), over RPC: a draft's PDF for the person's download (drafts.ts). */

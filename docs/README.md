@@ -20,7 +20,7 @@ Decisions and constraints that span components, and the traps that are hard to s
 - [Record format](internals/record-format.md): the OKF bundle, files, the knowledge graph, structure that grows
 - [Sync engine](internals/sync-engine.md): protocol, merge rules, the local daemon
 - [Retrieval](internals/retrieval.md): authorization projection, ingest, search, verify
-- [Agent interface](internals/agent-interface.md): the 14 MCP tools, the filter, levels
+- [Agent interface](internals/agent-interface.md): the MCP tools, the filter, levels
 - [Data model](internals/data-model.md), [Security and privacy](internals/security.md), [Failure modes](internals/failure-modes.md)
 
 ## Operations

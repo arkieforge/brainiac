@@ -74,7 +74,7 @@ export const checks: Check[] = [
 ];
 
 // Cloudflare's always-pass Turnstile key, which only non-prod stages may use (alchemy.run.ts).
-const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
+export const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
 
 const get = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 
@@ -199,11 +199,21 @@ export const stageChecks = (
 };
 
 /**
- * The stage's public origin: `local` is `vp run dev`, prod is its DOMAIN when it has one, and the rest are on
- * workers.dev.
+ * `vp run dev:standalone` (apps/worker/standalone): its default port, and its dev sign-in token, which is fixed
+ * and public because that Worker only listens on loopback and holds nothing but fixture data.
+ */
+export const standalone = {
+  port: Number(process.env.BRAINIAC_PORT ?? 1341),
+  token: "standalone-dev-sign-in",
+};
+
+/**
+ * The stage's public origin: `local` is `vp run dev`, `standalone` is `vp run dev:standalone`, prod is its DOMAIN
+ * when it has one, and the rest are on workers.dev.
  */
 export async function stageOrigin(stage: string) {
   if (stage === "local") return "http://localhost:1337";
+  if (stage === "standalone") return `http://localhost:${standalone.port}`;
   const config = dopplerConfig(stage);
   const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
   if (!accountId) throw new Error(`Couldn't read Doppler config ${config}; run \`vp run doctor\` first.`);
@@ -230,7 +240,16 @@ export async function waitForWorker(origin: string): Promise<boolean> {
   return false;
 }
 
+/** Checks a standalone server can't pass, having no HTTPS and no Cloudflare account to keep logs. */
+const NOT_STANDALONE = new Set(["Plain HTTP redirects to HTTPS", "Stored logs readable (vp run logs)"]);
+const noCloudflare = () => Promise.reject(new Error("a standalone server has no Cloudflare account"));
+
 async function stageCheckList(stage: string): Promise<Check[]> {
+  if (stage === "standalone") {
+    return stageChecks(await stageOrigin(stage), false, noCloudflare, noCloudflare).filter(
+      (check) => !NOT_STANDALONE.has(check.name),
+    );
+  }
   const config = dopplerConfig(stage);
   const accountId = secret("CLOUDFLARE_ACCOUNT_ID", config);
   if (!accountId) throw new Error(`Couldn't read Doppler config ${config}; run \`vp run doctor\` first.`);
